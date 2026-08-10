@@ -5,6 +5,7 @@
 
 # local data + index (built at runtime)
 /data/
+/runtime/
 *.db
 *.db-wal
 *.db-shm

@@ -150,9 +150,9 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// RAG: retrieve grounding context, then ask the model.
-	results, err := s.store.Search(r.Context(), corpus, req.Question, 6)
-	if err != nil && err != index.ErrEmptyQuery {
+	// RAG: retrieve grounding context (lenient OR match), then ask the model.
+	results, err := s.store.Retrieve(r.Context(), corpus, req.Question, 6)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

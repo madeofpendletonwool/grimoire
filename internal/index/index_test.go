@@ -107,6 +107,41 @@ func TestCorpusMeta(t *testing.T) {
 	}
 }
 
+func TestToFTSQueryOR_StripsStopwords(t *testing.T) {
+	got, err := toFTSQueryOR("what does ward do and its rule number")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != `"ward"* OR "rule"* OR "number"*` {
+		t.Errorf("toFTSQueryOR = %q", got)
+	}
+}
+
+func TestRetrieve(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	_ = s.Index(ctx, sampleDataset())
+
+	// A natural-language question should retrieve the relevant rule despite
+	// stopwords and extra words (OR + bm25 ranking).
+	res, err := s.Retrieve(ctx, data.CorpusMTG, "what does ward do", 5)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	if len(res) == 0 || res[0].Number != "702.21" {
+		t.Errorf("retrieve did not surface ward rule: %+v", res)
+	}
+
+	// All-stopword query returns no error, no docs.
+	res, err = s.Retrieve(ctx, data.CorpusMTG, "what does the", 5)
+	if err != nil {
+		t.Fatalf("retrieve all-stopword err: %v", err)
+	}
+	if len(res) != 0 {
+		t.Errorf("expected no docs for all-stopword query, got %d", len(res))
+	}
+}
+
 func TestToFTSQuery(t *testing.T) {
 	cases := []struct {
 		in   string

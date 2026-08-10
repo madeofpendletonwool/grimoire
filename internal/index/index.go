@@ -254,3 +254,63 @@ func toFTSQuery(q string) (string, error) {
 func nowRFC3339() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
+
+// stopwords are dropped before building RAG retrieval queries so that common
+// question words ("what does the …") don't drown out the salient terms.
+var stopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "and": true, "or": true, "of": true,
+	"to": true, "in": true, "is": true, "it": true, "its": true, "for": true,
+	"on": true, "with": true, "what": true, "do": true, "does": true, "how": true,
+	"why": true, "when": true, "who": true, "can": true, "are": true, "be": true,
+	"my": true, "i": true, "you": true, "this": true, "that": true, "at": true,
+	"as": true, "if": true, "me": true, "so": true,
+}
+
+// toFTSQueryOR builds an OR-joined FTS5 query with stopwords removed. Used for
+// RAG retrieval, where recall matters more than precision: bm25 ranking still
+// floats the rare, relevant terms (e.g. "ward") above the common ones.
+func toFTSQueryOR(q string) (string, error) {
+	var parts []string
+	for _, tok := range strings.Fields(q) {
+		tok = strings.Trim(tok, "\"'*()?,.;:!")
+		if tok == "" {
+			continue
+		}
+		if stopwords[strings.ToLower(tok)] {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%q*", tok))
+	}
+	if len(parts) == 0 {
+		return "", ErrEmptyQuery
+	}
+	return strings.Join(parts, " OR "), nil
+}
+
+// Retrieve runs a lenient OR search used to gather grounding context for the
+// Q&A model. It never returns an error for an unsalvageable query — it simply
+// returns no docs, letting the model answer without context.
+func (s *Store) Retrieve(ctx context.Context, corpus data.Corpus, query string, limit int) ([]Result, error) {
+	q := strings.TrimSpace(query)
+	if limit <= 0 {
+		limit = 6
+	}
+	matches, err := toFTSQueryOR(q)
+	if err != nil {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, ftsSearchSQL, matches, corpus, limit)
+	if err != nil {
+		return nil, fmt.Errorf("retrieve: %w", err)
+	}
+	defer rows.Close()
+	var out []Result
+	for rows.Next() {
+		var r Result
+		if err := rows.Scan(&r.Number, &r.Title, &r.Body, &r.Source, &r.Score); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
