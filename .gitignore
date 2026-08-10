@@ -1,0 +1,21 @@
+# binaries
+/grimoire
+/bin/
+/dist/
+
+# local data + index (built at runtime)
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

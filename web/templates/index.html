@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en" data-corpus="mtg">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>The Grimoire — Rules Reference</title>
+	<link rel="stylesheet" href="/static/style.css">
+	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%9C%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+	<div class="vignette"></div>
+	<header class="mantle">
+		<div class="crest">📜</div>
+		<h1>The Grimoire</h1>
+		<p class="subtitle">A tome of binding rules &mdash; ask, and it shall answer</p>
+		<nav class="corpus-switch" role="tablist" aria-label="Rules corpus">
+			<button id="tab-mtg" class="corpus-tab active" data-corpus="mtg" role="tab" aria-selected="true">✦ Magic: The Gathering</button>
+			<button id="tab-dnd" class="corpus-tab" data-corpus="dnd" role="tab" aria-selected="false">⚔ D&amp;D 5e SRD</button>
+		</nav>
+	</header>
+
+	<main class="tome">
+		<nav class="mode-switch" role="tablist" aria-label="Mode">
+			<button id="mode-search" class="mode-tab active" data-mode="search">🔎 Search the Rules</button>
+			<button id="mode-ask" class="mode-tab" data-mode="ask">💬 Ask the Sage</button>
+		</nav>
+
+		<section id="pane-search" class="pane">
+			<form id="search-form" class="bar" autocomplete="off">
+				<input id="search-input" type="search" placeholder="Search by word, phrase, or rule number (e.g. 205.1a)…" aria-label="Search query">
+				<button type="submit">Consult</button>
+			</form>
+			<p id="search-status" class="status" aria-live="polite"></p>
+			<div id="search-results" class="results"></div>
+		</section>
+
+		<section id="pane-ask" class="pane hidden">
+			<div id="chat-log" class="chat-log" aria-live="polite">
+				<div class="chat-sage">
+					<div class="chat-bubble">Greetings, seeker of rules. Ask me anything about the tomes &mdash; I shall divine an answer from the entries before me.</div>
+				</div>
+			</div>
+			<form id="ask-form" class="bar" autocomplete="off">
+				<input id="ask-input" type="text" placeholder="Ask a question about the rules…" aria-label="Question">
+				<button type="submit" id="ask-btn">Inquire</button>
+			</form>
+			<p id="chat-foot" class="status small"></p>
+		</section>
+	</main>
+
+	<footer class="parchment-foot">
+		<span id="corpus-meta"></span>
+		<span class="sep">·</span>
+		<a href="https://github.com/madeofpendletonwool/grimoire" target="_blank" rel="noopener">grimoire</a>
+	</footer>
+
+	<script src="/static/app.js"></script>
+</body>
+</html>

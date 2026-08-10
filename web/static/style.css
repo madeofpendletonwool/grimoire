@@ -1,0 +1,273 @@
+/* The Grimoire — spellbook themed rules reference */
+
+:root {
+	--ink: #2b1d0e;
+	--parchment: #efe2c4;
+	--parchment-dark: #ddc89a;
+	--gold: #9a7b2e;
+	--gold-bright: #d4af37;
+	--shadow: rgba(43, 29, 14, 0.35);
+	--accent: #1d4699;       /* MTG mana blue */
+	--accent-soft: #c9d8f3;
+	--rule-bg: #f6ecd8;
+}
+
+html[data-corpus="dnd"] {
+	--accent: #8a1c1c;       /* D&D dragon red */
+	--accent-soft: #f3d2cd;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+	margin: 0;
+	padding: 0;
+	min-height: 100%;
+}
+
+body {
+	font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+	color: var(--ink);
+	background:
+		radial-gradient(ellipse at top, #6b4f2a 0%, #3a2a14 70%, #211608 100%) fixed;
+	line-height: 1.55;
+	-webkit-font-smoothing: antialiased;
+}
+
+.vignette {
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	box-shadow: inset 0 0 220px 40px rgba(0,0,0,0.65);
+	z-index: 0;
+}
+
+/* ---------- Header ---------- */
+.mantle {
+	position: relative;
+	z-index: 1;
+	text-align: center;
+	color: var(--parchment);
+	padding: 2.4rem 1rem 1.2rem;
+	border-bottom: 2px solid var(--gold);
+	background: linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0));
+}
+.mantle .crest { font-size: 2.6rem; line-height: 1; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.5)); }
+.mantle h1 {
+	margin: 0.2rem 0 0;
+	font-size: clamp(2rem, 6vw, 3.4rem);
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	color: var(--gold-bright);
+	text-shadow: 0 2px 6px rgba(0,0,0,0.7), 0 0 24px rgba(212,175,55,0.25);
+	font-variant: small-caps;
+}
+.mantle .subtitle {
+	margin: 0.2rem 0 1.1rem;
+	font-style: italic;
+	opacity: 0.85;
+	font-size: 0.98rem;
+}
+
+/* corpus switch */
+.corpus-switch {
+	display: inline-flex;
+	gap: 0.4rem;
+	flex-wrap: wrap;
+	justify-content: center;
+}
+.corpus-tab {
+	font-family: inherit;
+	font-size: 0.95rem;
+	color: var(--parchment);
+	background: rgba(0,0,0,0.28);
+	border: 1px solid var(--gold);
+	border-radius: 999px;
+	padding: 0.5rem 1.1rem;
+	cursor: pointer;
+	transition: all 0.18s ease;
+}
+.corpus-tab:hover { background: rgba(0,0,0,0.45); }
+.corpus-tab.active {
+	background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+	color: #1a1208;
+	border-color: var(--gold-bright);
+	box-shadow: 0 2px 10px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.4);
+	font-weight: 700;
+}
+
+/* ---------- Tome (main card) ---------- */
+.tome {
+	position: relative;
+	z-index: 1;
+	max-width: 880px;
+	margin: 1.6rem auto 2rem;
+	padding: 1.4rem clamp(1rem, 4vw, 2.4rem) 1.8rem;
+	background:
+		linear-gradient(180deg, var(--parchment) 0%, var(--parchment-dark) 100%);
+	border: 3px double var(--gold);
+	border-radius: 10px;
+	box-shadow: 0 14px 50px rgba(0,0,0,0.55), inset 0 0 60px rgba(120,90,40,0.18);
+}
+.tome::before, .tome::after {
+	content: "❦";
+	position: absolute;
+	color: var(--gold);
+	opacity: 0.5;
+	font-size: 1.1rem;
+}
+.tome::before { top: 0.5rem; left: 0.8rem; }
+.tome::after { top: 0.5rem; right: 0.8rem; }
+
+.mode-switch {
+	display: flex;
+	gap: 0.4rem;
+	border-bottom: 2px solid var(--parchment-dark);
+	margin-bottom: 1.2rem;
+}
+.mode-tab {
+	flex: 1;
+	font-family: inherit;
+	font-size: 1rem;
+	background: none;
+	border: none;
+	border-bottom: 3px solid transparent;
+	color: var(--ink);
+	opacity: 0.6;
+	padding: 0.55rem 0.5rem;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+.mode-tab:hover { opacity: 0.9; }
+.mode-tab.active {
+	opacity: 1;
+	font-weight: 700;
+	border-bottom-color: var(--accent);
+}
+
+.pane { animation: fade 0.25s ease; }
+.hidden { display: none; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- Search bar ---------- */
+.bar {
+	display: flex;
+	gap: 0.5rem;
+	margin: 0.4rem 0 0.9rem;
+}
+.bar input {
+	flex: 1;
+	font-family: inherit;
+	font-size: 1.05rem;
+	color: var(--ink);
+	background: var(--rule-bg);
+	border: 1px solid var(--parchment-dark);
+	border-bottom: 2px solid var(--accent);
+	border-radius: 6px;
+	padding: 0.7rem 0.9rem;
+	transition: box-shadow 0.15s ease;
+}
+.bar input:focus {
+	outline: none;
+	box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.bar button {
+	font-family: inherit;
+	font-size: 1rem;
+	font-weight: 700;
+	color: var(--parchment);
+	background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 75%, #000));
+	border: 1px solid color-mix(in srgb, var(--accent) 60%, #000);
+	border-radius: 6px;
+	padding: 0.7rem 1.2rem;
+	cursor: pointer;
+	transition: filter 0.15s ease;
+}
+.bar button:hover { filter: brightness(1.1); }
+.bar button:disabled { opacity: 0.55; cursor: default; }
+
+.status { margin: 0 0 0.8rem; font-size: 0.9rem; opacity: 0.7; font-style: italic; min-height: 1.2em; }
+.status.small { font-size: 0.82rem; }
+
+/* ---------- Results ---------- */
+.results { display: flex; flex-direction: column; gap: 0.7rem; }
+.rule {
+	background: var(--rule-bg);
+	border: 1px solid var(--parchment-dark);
+	border-left: 4px solid var(--accent);
+	border-radius: 5px;
+	padding: 0.8rem 1rem;
+}
+.rule-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.rule-num {
+	font-weight: 700;
+	color: var(--accent);
+	font-variant: small-caps;
+	letter-spacing: 0.02em;
+}
+.rule-title { font-weight: 700; opacity: 0.85; }
+.rule-source { margin-left: auto; font-size: 0.75rem; opacity: 0.55; font-style: italic; }
+.rule-body { margin-top: 0.3rem; white-space: pre-wrap; }
+mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; padding: 0 1px; }
+
+.empty { text-align: center; opacity: 0.6; font-style: italic; padding: 1.5rem; }
+
+/* ---------- Chat ---------- */
+.chat-log {
+	display: flex;
+	flex-direction: column;
+	gap: 0.8rem;
+	margin-bottom: 1rem;
+	max-height: 52vh;
+	overflow-y: auto;
+	padding: 0.3rem;
+}
+.chat-sage, .chat-user { display: flex; }
+.chat-user { justify-content: flex-end; }
+.chat-bubble {
+	max-width: 82%;
+	padding: 0.7rem 1rem;
+	border-radius: 12px;
+	font-size: 0.98rem;
+	white-space: pre-wrap;
+}
+.chat-sage .chat-bubble {
+	background: var(--rule-bg);
+	border: 1px solid var(--parchment-dark);
+	border-top-left-radius: 2px;
+}
+.chat-user .chat-bubble {
+	background: var(--accent);
+	color: #fff;
+	border-top-right-radius: 2px;
+}
+.chat-bubble.writing { opacity: 0.7; font-style: italic; }
+.sources { margin-top: 0.6rem; font-size: 0.82rem; opacity: 0.7; }
+.sources .src-chip {
+	display: inline-block;
+	margin: 0.15rem 0.3rem 0 0;
+	padding: 0.05rem 0.45rem;
+	background: var(--accent-soft);
+	border-radius: 4px;
+	color: var(--ink);
+}
+
+/* ---------- Footer ---------- */
+.parchment-foot {
+	position: relative;
+	z-index: 1;
+	text-align: center;
+	color: var(--parchment);
+	opacity: 0.6;
+	font-size: 0.8rem;
+	padding: 0.8rem 1rem 2rem;
+}
+.parchment-foot a { color: var(--gold-bright); text-decoration: none; }
+.parchment-foot a:hover { text-decoration: underline; }
+.parchment-foot .sep { margin: 0 0.5rem; opacity: 0.5; }
+
+@media (max-width: 560px) {
+	.bar { flex-direction: column; }
+	.bar button { width: 100%; }
+	.mode-tab { font-size: 0.9rem; }
+}
