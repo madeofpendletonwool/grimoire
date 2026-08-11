@@ -25,6 +25,41 @@ func TestSystemPrompt_WithCards(t *testing.T) {
 	}
 }
 
+func TestSystemPrompt_ReasoningDiscipline(t *testing.T) {
+	for _, corpus := range []string{"Magic: The Gathering", "D&D 5e SRD"} {
+		got := systemPrompt(corpus, false)
+		if !strings.Contains(got, "Do NOT adopt a conclusion asserted by the question") {
+			t.Errorf("%s: prompt missing anti-sycophancy directive: %q", corpus, got)
+		}
+		if !strings.Contains(got, "Do not change a correct answer because the questioner pushes back") {
+			t.Errorf("%s: prompt missing hold-firm directive: %q", corpus, got)
+		}
+	}
+}
+
+func TestSystemPrompt_MTGInteractionTraps(t *testing.T) {
+	got := systemPrompt("Magic: The Gathering", true)
+	if !strings.Contains(got, "a card's own name in its text means") {
+		t.Errorf("MTG prompt missing self-reference trap: %q", got)
+	}
+	if !strings.Contains(got, "refer to that card's controller") {
+		t.Errorf("MTG prompt missing controller-resolution trap: %q", got)
+	}
+	if !strings.Contains(got, "Comprehensive Rule 201.4") {
+		t.Errorf("MTG prompt missing self-reference rule citation: %q", got)
+	}
+}
+
+func TestSystemPrompt_NoMTGTrapsForDND(t *testing.T) {
+	got := systemPrompt("D&D 5e SRD", false)
+	if strings.Contains(got, "MTG INTERACTIONS") {
+		t.Errorf("D&D prompt should not include MTG interaction block: %q", got)
+	}
+	if strings.Contains(got, "self-reference") || strings.Contains(got, "Controller resolution") {
+		t.Errorf("D&D prompt should not include MTG-specific traps: %q", got)
+	}
+}
+
 func TestBuildUserMessage_RulesAndCards(t *testing.T) {
 	docs := []ContextDoc{
 		{Number: "702.21", Title: "Ward", Body: "Ward is a triggered ability."},
