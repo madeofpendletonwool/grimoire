@@ -13,6 +13,7 @@
 //	ANTHROPIC_BASE_URL  LLM endpoint (default https://api.anthropic.com; z.ai: https://api.z.ai/api/anthropic)
 //	ANTHROPIC_API_KEY   LLM secret key (enables the Q&A chat)
 //	ANTHROPIC_MODEL     model name (e.g. glm-4.6, claude-3-5-sonnet-20241022)
+//	SCRYFALL_BASE_URL   MTG card lookup endpoint (default https://api.scryfall.com; no key needed)
 //	MTG_RULES_URL       override MTG comp rules source
 //	DND_REPO            override D&D SRD repo "owner/name"
 //	DND_REF             override D&D SRD git ref
@@ -29,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -71,7 +73,7 @@ Usage:
 
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY,
-  ANTHROPIC_MODEL, MTG_RULES_URL, DND_REPO, DND_REF`)
+  ANTHROPIC_MODEL, SCRYFALL_BASE_URL, MTG_RULES_URL, DND_REPO, DND_REF`)
 }
 
 func env(key, def string) string {
@@ -90,6 +92,10 @@ func llmConfig() llm.Config {
 		APIKey:  os.Getenv("ANTHROPIC_API_KEY"),
 		Model:   env("ANTHROPIC_MODEL", "glm-4.6"),
 	}
+}
+
+func cardsService() *cards.Service {
+	return cards.NewWithBase(env("SCRYFALL_BASE_URL", cards.DefaultBaseURL))
 }
 
 func fetchOpts() data.FetchOptions {
@@ -171,7 +177,7 @@ func runServe() error {
 		return fmt.Errorf("ensure index: %w", err)
 	}
 
-	srv, err := server.New(store, llm.New(llmConfig()))
+	srv, err := server.New(store, llm.New(llmConfig()), cardsService())
 	if err != nil {
 		return err
 	}

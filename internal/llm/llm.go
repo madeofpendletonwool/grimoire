@@ -64,15 +64,24 @@ type ContextDoc struct {
 	Body   string
 }
 
+// CardDoc is a real card's oracle text fed to the model so it answers card
+// questions from authoritative text rather than fabricating effects.
+type CardDoc struct {
+	Name       string
+	ManaCost   string
+	TypeLine   string
+	OracleText string
+}
+
 // Answer runs a single Messages API turn: the question plus grounding context
-// documents are sent as the user message, with a system prompt that constrains
-// the answer to the provided rules.
-func (c *Client) Answer(ctx context.Context, corpusName string, docs []ContextDoc, question string) (string, error) {
+// documents (and any looked-up cards) are sent as the user message, with a
+// system prompt that constrains the answer to the provided rules and card text.
+func (c *Client) Answer(ctx context.Context, corpusName string, docs []ContextDoc, cards []CardDoc, question string) (string, error) {
 	if !c.Configured() {
 		return "", ErrNotConfigured
 	}
-	system := systemPrompt(corpusName)
-	user := buildUserMessage(corpusName, docs, question)
+	system := systemPrompt(corpusName, len(cards) > 0)
+	user := buildUserMessage(corpusName, docs, cards, question)
 
 	reqBody := messagesRequest{
 		Model:     c.cfg.Model,
@@ -128,21 +137,33 @@ func (c *Client) Answer(ctx context.Context, corpusName string, docs []ContextDo
 	return out, nil
 }
 
-func systemPrompt(corpusName string) string {
-	return strings.TrimSpace(fmt.Sprintf(
+func systemPrompt(corpusName string, hasCards bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b,
 		`You are the Grimoire, a knowledgeable keeper of %s rules.
 
-Answer the player's question using ONLY the provided rule excerpts. Be precise and cite rule numbers (e.g. 205.1a) or section titles when they support your answer. If the provided excerpts do not contain the answer, say so plainly rather than inventing rules. Keep answers concise and practical for a player or judge at the table.`,
-		corpusName))
+GROUNDING RULES — follow these strictly:
+1. Answer using ONLY the provided rule excerpts and (if present) the provided card oracle text. Do NOT rely on your own memory of cards or rules for any specific fact.
+2. Cite rule numbers (e.g. 205.1a) or section titles that support your answer.`, corpusName)
+	if hasCards {
+		b.WriteString("\n3. For any card, use ONLY the provided oracle text for its name, mana cost, type, and effects — quote it faithfully. Do not invent or guess mana costs, types, or abilities.")
+		b.WriteString("\n4. If a card is named in the question but its oracle text was NOT provided, say plainly that you could not look it up — do NOT describe what you think it does.")
+		b.WriteString("\n5. If the provided excerpts and card text do not contain the answer, say so plainly rather than inventing anything.")
+	} else {
+		b.WriteString("\n3. If a card is named in the question but no card oracle text was provided, say plainly that you could not look the card up — do NOT guess what the card does.")
+		b.WriteString("\n4. If the provided excerpts do not contain the answer, say so plainly rather than inventing rules or card text.")
+	}
+	b.WriteString("\n\nKeep answers concise and practical for a player or judge at the table.")
+	return strings.TrimSpace(b.String())
 }
 
-func buildUserMessage(corpusName string, docs []ContextDoc, question string) string {
+func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, question string) string {
 	var b strings.Builder
 	b.WriteString("Relevant " + corpusName + " rules:\n\n")
 	if len(docs) == 0 {
 		b.WriteString("(no directly matching rules found)\n\n")
 	}
-	for i, d := range docs {
+	for _, d := range docs {
 		header := d.Title
 		if d.Number != "" {
 			if header != "" {
@@ -152,8 +173,26 @@ func buildUserMessage(corpusName string, docs []ContextDoc, question string) str
 			}
 		}
 		fmt.Fprintf(&b, "### %s\n%s\n\n", header, truncate(d.Body, 1500))
-		_ = i
 	}
+
+	if len(cards) > 0 {
+		b.WriteString("Card oracle text (authoritative — from Scryfall):\n\n")
+		for _, c := range cards {
+			fmt.Fprintf(&b, "### %s\n", c.Name)
+			if c.ManaCost != "" {
+				fmt.Fprintf(&b, "Mana cost: %s  ·  ", c.ManaCost)
+			}
+			if c.TypeLine != "" {
+				fmt.Fprintf(&b, "Type: %s\n", c.TypeLine)
+			}
+			body := strings.TrimSpace(c.OracleText)
+			if body == "" {
+				body = "(no oracle text)"
+			}
+			fmt.Fprintf(&b, "Oracle text: %s\n\n", truncate(body, 1200))
+		}
+	}
+
 	b.WriteString("Question: " + question)
 	return b.String()
 }

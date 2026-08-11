@@ -22,6 +22,7 @@
 	<main class="tome">
 		<nav class="mode-switch" role="tablist" aria-label="Mode">
 			<button id="mode-search" class="mode-tab active" data-mode="search">🔎 Search the Rules</button>
+			<button id="mode-card" class="mode-tab" data-mode="card">🃏 Card Lookup</button>
 			<button id="mode-ask" class="mode-tab" data-mode="ask">💬 Ask the Sage</button>
 		</nav>
 
@@ -32,6 +33,16 @@
 			</form>
 			<p id="search-status" class="status" aria-live="polite"></p>
 			<div id="search-results" class="results"></div>
+		</section>
+
+		<section id="pane-card" class="pane hidden">
+			<form id="card-form" class="bar" autocomplete="off">
+				<input id="card-input" type="search" placeholder="Look up a card by name (e.g. Lightning Bolt)…" aria-label="Card name">
+				<button type="submit">Reveal</button>
+			</form>
+			<p id="card-status" class="status" aria-live="polite"></p>
+			<div id="card-results" class="results"></div>
+			<p class="status small">Card text via <a href="https://scryfall.com" target="_blank" rel="noopener">Scryfall</a>. Rule text remains property of Wizards of the Coast.</p>
 		</section>
 
 		<section id="pane-ask" class="pane hidden">

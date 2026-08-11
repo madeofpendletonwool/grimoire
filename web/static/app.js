@@ -12,6 +12,7 @@ document.addEventListener("DOMContentLoaded", () => {
 	bindCorpus();
 	bindMode();
 	$("search-form").addEventListener("submit", onSearch);
+	$("card-form").addEventListener("submit", onCard);
 	$("ask-form").addEventListener("submit", onAsk);
 	loadMeta();
 	// focus search on load
@@ -57,9 +58,16 @@ function setCorpus(c) {
 		btn.classList.toggle("active", on);
 		btn.setAttribute("aria-selected", on ? "true" : "false");
 	});
+	// Card lookup is MTG-only (Scryfall is the MTG card authority).
+	const cardSupported = c === "mtg";
+	$("mode-card").classList.toggle("hidden", !cardSupported);
+	if (!cardSupported && state.mode === "card") {
+		setMode("search");
+	}
 	updateCorpusMeta();
 	// re-focus the active pane
 	if (state.mode === "search") $("search-input").focus();
+	else if (state.mode === "card") $("card-input").focus();
 	else $("ask-input").focus();
 }
 
@@ -70,13 +78,19 @@ function bindMode() {
 	});
 }
 function setMode(m) {
+	// Guard: card mode only exists for MTG.
+	if (m === "card" && state.corpus !== "mtg") {
+		m = "search";
+	}
 	state.mode = m;
 	document.querySelectorAll(".mode-tab").forEach((btn) => {
 		btn.classList.toggle("active", btn.dataset.mode === m);
 	});
 	$("pane-search").classList.toggle("hidden", m !== "search");
+	$("pane-card").classList.toggle("hidden", m !== "card");
 	$("pane-ask").classList.toggle("hidden", m !== "ask");
 	if (m === "search") $("search-input").focus();
+	else if (m === "card") $("card-input").focus();
 	else $("ask-input").focus();
 }
 
@@ -120,6 +134,88 @@ function renderSearch(q, results) {
 	$("search-results").appendChild(wrap);
 }
 
+/* ---------- Card lookup ---------- */
+async function onCard(e) {
+	e.preventDefault();
+	const q = $("card-input").value.trim();
+	if (!q) return;
+	$("card-status").textContent = "Consulting Scryfall…";
+	$("card-results").innerHTML = "";
+	try {
+		const res = await fetch(`/api/card?q=${encodeURIComponent(q)}`);
+		const data = await res.json();
+		renderCardResponse(q, data);
+	} catch (err) {
+		$("card-status").textContent = "The card could not be reached: " + err;
+	}
+}
+
+function renderCardResponse(q, data) {
+	if (data.card) {
+		$("card-status").textContent = "";
+		$("card-results").innerHTML = "";
+		$("card-results").appendChild(renderCard(data.card));
+		return;
+	}
+	if (data.error) {
+		$("card-status").textContent = data.error;
+		$("card-results").innerHTML = "";
+		return;
+	}
+	const matches = data.matches || [];
+	if (matches.length === 0) {
+		$("card-status").textContent = `No card found for “${q}”.`;
+		$("card-results").innerHTML = '<div class="empty">Try the full card name, or check the spelling.</div>';
+		return;
+	}
+	$("card-status").textContent = `No exact match — did you mean one of these?`;
+	const wrap = document.createElement("div");
+	wrap.className = "results";
+	matches.forEach((m) => wrap.appendChild(renderCard(m, true)));
+	$("card-results").innerHTML = "";
+	$("card-results").appendChild(wrap);
+}
+
+function renderCard(c, compact) {
+	const el = document.createElement("article");
+	el.className = "card";
+	let head = `<span class="card-name">${esc(c.name)}</span>`;
+	if (c.mana_cost) head += `<span class="card-cost">${esc(c.mana_cost)}</span>`;
+	let img = "";
+	if (c.image_url && !compact) {
+		img = `<img class="card-img" src="${esc(c.image_url)}" alt="${esc(c.name)}" loading="lazy">`;
+	}
+	let stats = "";
+	if (c.power && c.toughness) stats = `<span class="card-pt">${esc(c.power)}/${esc(c.toughness)}</span>`;
+	else if (c.loyalty) stats = `<span class="card-pt">${esc(c.loyalty)}</span>`;
+	const uri = c.scryfall_uri ? `<a class="card-link" href="${esc(c.scryfall_uri)}" target="_blank" rel="noopener">Scryfall ↗</a>` : "";
+
+	const facesHTML = (c.faces && c.faces.length)
+		? c.faces.map((f) => renderCardFace(f)).join("")
+		: `<div class="card-oracle">${highlight(c.oracle_text || "(no oracle text)", c.name)}</div>`;
+
+	el.innerHTML = `
+		<div class="card-inner">
+			<div class="card-head">${head}</div>
+			<div class="card-type">${esc(c.type_line || "")}${stats}</div>
+			<div class="card-text">${facesHTML}</div>
+			<div class="card-foot">${c.set ? `<span class="card-set">${esc(c.set.toUpperCase())}</span>` : ""}${uri}</div>
+		</div>${img}`;
+	return el;
+}
+
+function renderCardFace(f) {
+	let head = `<span class="card-face-name">${esc(f.name)}</span>`;
+	if (f.mana_cost) head += `<span class="card-cost">${esc(f.mana_cost)}</span>`;
+	let stats = "";
+	if (f.power && f.toughness) stats = ` <span class="card-pt">${esc(f.power)}/${esc(f.toughness)}</span>`;
+	return `<div class="card-face">
+		<div class="card-face-head">${head}</div>
+		<div class="card-face-type">${esc(f.type_line || "")}${stats}</div>
+		<div class="card-oracle">${esc(f.oracle_text || "")}</div>
+	</div>`;
+}
+
 /* ---------- Ask (Q&A chat) ---------- */
 async function onAsk(e) {
 	e.preventDefault();
@@ -139,8 +235,12 @@ async function onAsk(e) {
 		const data = await res.json();
 		writing.querySelector(".chat-bubble").classList.remove("writing");
 		writing.querySelector(".chat-bubble").textContent = data.answer || "(no answer)";
+		const bubble = writing.querySelector(".chat-bubble");
+		if (data.cards && data.cards.length) {
+			renderCardsCited(bubble, data.cards);
+		}
 		if (data.sources && data.sources.length) {
-			renderSources(writing.querySelector(".chat-bubble"), data.sources);
+			renderSources(bubble, data.sources);
 		}
 		if (data.configured === false) {
 			$("chat-foot").textContent = "Q&A chat needs an API key (ANTHROPIC_API_KEY) to be enabled on the server.";
@@ -177,6 +277,31 @@ function renderSources(bubble, sources) {
 		chip.title = (s.title ? s.title + " — " : "") + truncate(s.body, 120);
 		wrap.appendChild(chip);
 		if (i < Math.min(sources.length, 8) - 1) wrap.appendChild(document.createTextNode(" "));
+	});
+	bubble.appendChild(wrap);
+}
+
+function renderCardsCited(bubble, cards) {
+	const wrap = document.createElement("div");
+	wrap.className = "sources";
+	wrap.appendChild(document.createTextNode("Cards looked up: "));
+	cards.slice(0, 8).forEach((c, i) => {
+		const chip = document.createElement("span");
+		chip.className = "src-chip card-chip";
+		chip.textContent = c.name;
+		chip.title = (c.type_line ? c.type_line + " — " : "") + truncate(c.oracle_text, 120);
+		if (c.scryfall_uri) {
+			const a = document.createElement("a");
+			a.href = c.scryfall_uri;
+			a.target = "_blank";
+			a.rel = "noopener";
+			a.textContent = c.name;
+			a.title = chip.title;
+			chip.textContent = "";
+			chip.appendChild(a);
+		}
+		wrap.appendChild(chip);
+		if (i < Math.min(cards.length, 8) - 1) wrap.appendChild(document.createTextNode(" "));
 	});
 	bubble.appendChild(wrap);
 }

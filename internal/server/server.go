@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -23,12 +24,14 @@ import (
 type Server struct {
 	store  *index.Store
 	llm    *llm.Client
+	cards  *cards.Service
 	tmpl   *template.Template
 	static fs.FS
 }
 
-// New builds a Server from an open index store and an LLM client.
-func New(store *index.Store, client *llm.Client) (*Server, error) {
+// New builds a Server from an open index store, an LLM client, and a card
+// lookup service. A nil card service disables card features gracefully.
+func New(store *index.Store, client *llm.Client, cardSvc *cards.Service) (*Server, error) {
 	tmpl, err := template.New("").ParseFS(web.Templates, "templates/index.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -37,7 +40,7 @@ func New(store *index.Store, client *llm.Client) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{store: store, llm: client, tmpl: tmpl, static: static}, nil
+	return &Server{store: store, llm: client, cards: cardSvc, tmpl: tmpl, static: static}, nil
 }
 
 // Handler returns the HTTP handler tree.
@@ -46,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
+	mux.HandleFunc("GET /api/card", s.handleCard)
 	mux.HandleFunc("POST /api/ask", s.handleAsk)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
@@ -160,16 +164,23 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	for _, res := range results {
 		docs = append(docs, llm.ContextDoc{Number: res.Number, Title: res.Title, Body: res.Body})
 	}
+
+	// Ground any card mentions in real oracle text (MTG only — Scryfall is the
+	// MTG card authority). This is the fix for the chat fabricating card
+	// effects: we hand the model authoritative text instead.
+	cardDocs, cardHits := s.lookupQuestionCards(r.Context(), corpus, req.Question)
+
 	corpusName := corpusDisplayName(corpus)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	answer, err := s.llm.Answer(ctx, corpusName, docs, req.Question)
+	answer, err := s.llm.Answer(ctx, corpusName, docs, cardDocs, req.Question)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"configured": true,
 			"answer":     fmt.Sprintf("I couldn't reach the model: %v", err),
 			"sources":    toSources(results),
+			"cards":      cardHits,
 		})
 		return
 	}
@@ -177,7 +188,30 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		"configured": true,
 		"answer":     answer,
 		"sources":    toSources(results),
+		"cards":      cardHits,
 	})
+}
+
+// lookupQuestionCards extracts candidate card names from the question and
+// resolves each to real oracle text via Scryfall. Misses are silent (Scryfall
+// is the arbiter); only resolved cards are returned. MTG-only.
+func (s *Server) lookupQuestionCards(ctx context.Context, corpus data.Corpus, question string) ([]llm.CardDoc, []cardView) {
+	if s.cards == nil || corpus != data.CorpusMTG {
+		return nil, nil
+	}
+	var cardDocs []llm.CardDoc
+	var hits []cardView
+	for _, name := range cards.ExtractCandidates(question) {
+		c, err := s.cards.Lookup(ctx, name)
+		if err != nil || c == nil {
+			continue
+		}
+		cardDocs = append(cardDocs, llm.CardDoc{
+			Name: c.Name, ManaCost: c.ManaCost, TypeLine: c.TypeLine, OracleText: c.OracleText,
+		})
+		hits = append(hits, toCardView(c))
+	}
+	return cardDocs, hits
 }
 
 func toSources(results []index.Result) []searchHit {
@@ -186,6 +220,95 @@ func toSources(results []index.Result) []searchHit {
 		out = append(out, searchHit{Number: r.Number, Title: r.Title, Body: r.Body, Source: r.Source})
 	}
 	return out
+}
+
+// cardView is the JSON shape for a card returned to the UI. It carries the
+// fields needed to render a card and to attribute its source (Scryfall).
+type cardView struct {
+	Name        string     `json:"name"`
+	ManaCost    string     `json:"mana_cost,omitempty"`
+	TypeLine    string     `json:"type_line,omitempty"`
+	OracleText  string     `json:"oracle_text,omitempty"`
+	Power       string     `json:"power,omitempty"`
+	Toughness   string     `json:"toughness,omitempty"`
+	Loyalty     string     `json:"loyalty,omitempty"`
+	Set         string     `json:"set,omitempty"`
+	SetName     string     `json:"set_name,omitempty"`
+	ImageURL    string     `json:"image_url,omitempty"`
+	ScryfallURI string     `json:"scryfall_uri,omitempty"`
+	Faces       []cardFace `json:"faces,omitempty"`
+}
+
+type cardFace struct {
+	Name       string `json:"name"`
+	ManaCost   string `json:"mana_cost,omitempty"`
+	TypeLine   string `json:"type_line,omitempty"`
+	OracleText string `json:"oracle_text,omitempty"`
+	Power      string `json:"power,omitempty"`
+	Toughness  string `json:"toughness,omitempty"`
+	Loyalty    string `json:"loyalty,omitempty"`
+	ImageURL   string `json:"image_url,omitempty"`
+}
+
+func toCardView(c *cards.Card) cardView {
+	if c == nil {
+		return cardView{}
+	}
+	v := cardView{
+		Name: c.Name, ManaCost: c.ManaCost, TypeLine: c.TypeLine, OracleText: c.OracleText,
+		Power: c.Power, Toughness: c.Toughness, Loyalty: c.Loyalty, Set: c.Set,
+		SetName: c.SetName, ImageURL: c.ImageURL, ScryfallURI: c.ScryfallURI,
+	}
+	for i := range c.Faces {
+		f := c.Faces[i]
+		v.Faces = append(v.Faces, cardFace{
+			Name: f.Name, ManaCost: f.ManaCost, TypeLine: f.TypeLine, OracleText: f.OracleText,
+			Power: f.Power, Toughness: f.Toughness, Loyalty: f.Loyalty, ImageURL: f.ImageURL,
+		})
+	}
+	return v
+}
+
+// handleCard looks up a single MTG card by fuzzy name for the UI. On an
+// unambiguous match it returns the card; otherwise it falls back to a search
+// so the caller can offer alternatives.
+func (s *Server) handleCard(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("q (card name) is required"))
+		return
+	}
+	if s.cards == nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("card lookup is not configured"))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+
+	if c, err := s.cards.Lookup(ctx, q); err == nil && c != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"card": toCardView(c)})
+		return
+	} else if err != nil && err != cards.ErrNotFound {
+		// Upstream Scryfall error (timeout, 5xx) — surface it.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"card":  nil,
+			"error": fmt.Sprintf("card lookup failed: %v", err),
+		})
+		return
+	}
+
+	// No single match — offer alternatives from a name search.
+	matches, err := s.cards.Search(ctx, q, 6)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"card": nil, "matches": []cardView{}})
+		return
+	}
+	views := make([]cardView, 0, len(matches))
+	for _, m := range matches {
+		views = append(views, toCardView(m))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"card": nil, "matches": views})
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
