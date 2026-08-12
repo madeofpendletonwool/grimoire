@@ -128,13 +128,13 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var views []corpusView
-	for _, c := range []data.Corpus{data.CorpusMTG, data.CorpusDND} {
-		m := meta[c]
+	for _, d := range data.Registered() {
+		m := meta[d.Corpus]
 		if m.Name == "" {
 			continue
 		}
 		views = append(views, corpusView{
-			ID: string(c), Name: m.Name, Version: m.Version, Count: m.RecordCount,
+			ID: string(d.Corpus), Name: m.Name, Version: m.Version, Count: m.RecordCount,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -500,20 +500,24 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// parseCorpus resolves a corpus slug from the request. An unknown or empty
+// value falls back to the default registered corpus (MTG), preserving the
+// prior behavior. The set of valid corpora is whatever is registered, so a new
+// corpus is valid the moment it is registered — no edit here.
 func parseCorpus(v string) data.Corpus {
-	if v == string(data.CorpusDND) {
-		return data.CorpusDND
+	if d, ok := data.Lookup(data.Corpus(v)); ok {
+		return d.Corpus
 	}
-	return data.CorpusMTG
+	return data.Default().Corpus
 }
 
+// corpusDisplayName returns a corpus's registered display name, falling back to
+// the default corpus's name for an unknown value.
 func corpusDisplayName(c data.Corpus) string {
-	switch c {
-	case data.CorpusDND:
-		return "D&D 5e SRD"
-	default:
-		return "Magic: The Gathering"
+	if d, ok := data.Lookup(c); ok {
+		return d.Name
 	}
+	return data.Default().Name
 }
 
 func parseLimit(v string, def int) int {

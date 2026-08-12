@@ -139,7 +139,6 @@ func fetchOpts() data.FetchOptions {
 		MTGURL:  os.Getenv("MTG_RULES_URL"),
 		DNDRepo: os.Getenv("DND_REPO"),
 		DNDRef:  os.Getenv("DND_REF"),
-		Include: map[data.Corpus]bool{data.CorpusMTG: true, data.CorpusDND: true},
 	}
 }
 
