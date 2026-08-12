@@ -3,80 +3,111 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>The Grimoire — Rules Reference</title>
+	<meta name="color-scheme" content="dark">
+	<title>Grimoire</title>
 	<link rel="stylesheet" href="/static/style.css">
 	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%9C%3C/text%3E%3C/svg%3E">
 </head>
 <body>
-	<div class="vignette"></div>
-	<header class="mantle">
-		<div class="crest">📜</div>
-		<h1>The Grimoire</h1>
-		<p class="subtitle">A tome of binding rules &mdash; ask, and it shall answer</p>
-		<nav class="corpus-switch" role="tablist" aria-label="Rules corpus">
-			<button id="tab-mtg" class="corpus-tab active" data-corpus="mtg" role="tab" aria-selected="true">✦ Magic: The Gathering</button>
-			<button id="tab-dnd" class="corpus-tab" data-corpus="dnd" role="tab" aria-selected="false">⚔ D&amp;D 5e SRD</button>
-		</nav>
-	</header>
+	<div class="app" id="app">
 
-	<main class="tome">
-		<nav class="mode-switch" role="tablist" aria-label="Mode">
-			<button id="mode-search" class="mode-tab active" data-mode="search">🔎 Search the Rules</button>
-			<button id="mode-card" class="mode-tab" data-mode="card">🃏 Card Lookup</button>
-			<button id="mode-ask" class="mode-tab" data-mode="ask">💬 Ask the Sage</button>
-		</nav>
+		<!-- ---------- Sidebar ---------- -->
+		<aside class="rail" id="rail" aria-label="Conversations">
+			<div class="rail-head">
+				<span class="wordmark"><span class="sigil">📜</span> Grimoire</span>
+				<button type="button" class="icon-btn rail-collapse" id="rail-collapse" aria-label="Hide sidebar" title="Hide sidebar">‹</button>
+			</div>
 
-		<section id="pane-search" class="pane">
-			<form id="search-form" class="bar" autocomplete="off">
-				<input id="search-input" type="search" placeholder="Search by word, phrase, or rule number (e.g. 205.1a)…" aria-label="Search query">
-				<button type="submit">Consult</button>
-			</form>
-			<p id="search-status" class="status" aria-live="polite"></p>
-			<div id="search-results" class="results"></div>
-		</section>
+			<button type="button" class="new-chat" id="new-chat">
+				<span class="plus" aria-hidden="true">✧</span> New chat
+			</button>
 
-		<section id="pane-card" class="pane hidden">
-			<form id="card-form" class="bar suggest-form" autocomplete="off">
-				<input id="card-input" type="search" placeholder="Type a card name — matches appear as you type (e.g. Our Market, Asmoranomardi)" aria-label="Card name" aria-autocomplete="list" aria-expanded="false" aria-controls="card-suggest">
-				<button type="submit">Reveal</button>
-				<ul id="card-suggest" class="card-suggest hidden" role="listbox" aria-label="Card name suggestions"></ul>
-			</form>
-			<p id="card-status" class="status" aria-live="polite"></p>
-			<div id="card-results" class="results"></div>
-			<p class="status small">Card text via <a href="https://scryfall.com" target="_blank" rel="noopener">Scryfall</a>. Rule text remains property of Wizards of the Coast.</p>
-		</section>
+			<div class="corpus-picker" role="radiogroup" aria-label="Rules corpus">
+				<button type="button" class="corpus-opt is-active" data-corpus="mtg" role="radio" aria-checked="true">✦ Magic</button>
+				<button type="button" class="corpus-opt" data-corpus="dnd" role="radio" aria-checked="false">⚔ D&amp;D</button>
+			</div>
 
-		<section id="pane-ask" class="pane hidden">
-			<div id="chat-log" class="chat-log" aria-live="polite">
-				<div class="chat-sage">
-					<div class="chat-bubble">Greetings, seeker of rules. Ask me anything about the tomes &mdash; I shall divine an answer from the entries before me.</div>
+			<nav class="history" id="history" aria-label="Chat history"></nav>
+
+			<div class="rail-foot">
+				<button type="button" class="rail-action" id="rail-search">
+					<span aria-hidden="true">🔎</span> Search rules
+					<kbd id="palette-kbd">Ctrl K</kbd>
+				</button>
+				<p class="model-badge" id="model-badge"></p>
+			</div>
+		</aside>
+
+		<div class="rail-scrim" id="rail-scrim" hidden></div>
+
+		<!-- ---------- Conversation ---------- -->
+		<main class="main">
+			<header class="topbar">
+				<button type="button" class="icon-btn rail-open" id="rail-open" aria-label="Show sidebar" title="Show sidebar">☰</button>
+				<h1 class="conv-title" id="conv-title">New chat</h1>
+				<span class="corpus-chip" id="corpus-chip" title="This conversation's rule set"></span>
+				<div class="topbar-actions">
+					<button type="button" class="icon-btn" id="topbar-search" aria-label="Search rules and cards" title="Search rules and cards">🔎</button>
+					<button type="button" class="icon-btn" id="topbar-rename" aria-label="Rename conversation" title="Rename conversation" hidden>✎</button>
+					<button type="button" class="icon-btn danger" id="topbar-delete" aria-label="Delete conversation" title="Delete conversation" hidden>🗑</button>
 				</div>
-			</div>
-			<form id="ask-form" class="bar" autocomplete="off">
-				<input id="ask-input" type="text" placeholder="Ask a question about the rules…" aria-label="Question">
-				<button type="submit" id="ask-btn">Inquire</button>
-			</form>
-			<p id="chat-foot" class="status small"></p>
-		</section>
-	</main>
+			</header>
 
-	<footer class="parchment-foot">
-		<span id="corpus-meta"></span>
-		<span class="sep">·</span>
-		<a href="https://github.com/madeofpendletonwool/grimoire" target="_blank" rel="noopener">grimoire</a>
-	</footer>
-
-	<div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-		<div class="modal-backdrop" data-modal-close></div>
-		<div class="modal-card">
-			<div class="modal-head">
-				<h2 id="modal-title" class="modal-title"></h2>
-				<button type="button" class="modal-close" data-modal-close aria-label="Close">✕</button>
+			<div class="transcript" id="transcript" tabindex="-1">
+				<section class="welcome" id="welcome">
+					<div class="welcome-sigil" aria-hidden="true">📜</div>
+					<h2 class="welcome-title">Grimoire</h2>
+					<p class="welcome-sub" id="welcome-sub">Ask, and the tome shall answer.</p>
+					<div class="suggestions" id="suggestions"></div>
+				</section>
+				<div class="messages" id="messages"></div>
 			</div>
-			<div id="modal-body" class="modal-body"></div>
+
+			<div class="composer-dock">
+				<form class="composer" id="composer" autocomplete="off">
+					<textarea id="composer-input" class="composer-input" rows="1"
+						placeholder="Ask the sage…  (/card, /rule, Ctrl+K to search)"
+						aria-label="Ask a question"></textarea>
+					<div class="composer-side">
+						<button type="submit" class="send-btn" id="send-btn" aria-label="Send" title="Send">➤</button>
+						<button type="button" class="send-btn stop-btn" id="stop-btn" aria-label="Stop generating" title="Stop generating" hidden>■</button>
+					</div>
+					<ul class="slash-hints" id="slash-hints" role="listbox" aria-label="Commands" hidden></ul>
+				</form>
+				<p class="composer-foot" id="composer-foot"></p>
+			</div>
+		</main>
+
+		<!-- ---------- Reference drawer ---------- -->
+		<aside class="drawer" id="drawer" aria-label="Reference" hidden>
+			<div class="drawer-head">
+				<h2 class="drawer-title" id="drawer-title"></h2>
+				<button type="button" class="icon-btn" id="drawer-close" aria-label="Close reference">✕</button>
+			</div>
+			<div class="drawer-body" id="drawer-body"></div>
+		</aside>
+	</div>
+
+	<!-- ---------- Command palette ---------- -->
+	<div class="palette-layer" id="palette" hidden>
+		<div class="palette-scrim" data-palette-close></div>
+		<div class="palette-box" role="dialog" aria-modal="true" aria-label="Search rules and cards">
+			<div class="palette-inputwrap">
+				<span class="palette-icon" aria-hidden="true">🔎</span>
+				<input type="text" id="palette-input" class="palette-input"
+					placeholder="Search rules, or a card name…"
+					aria-label="Search rules and cards" aria-controls="palette-results" autocomplete="off">
+				<kbd>Esc</kbd>
+			</div>
+			<div class="palette-results" id="palette-results" role="listbox" aria-label="Results"></div>
+			<div class="palette-foot">
+				<span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+				<span><kbd>↵</kbd> open</span>
+				<span id="palette-scope"></span>
+			</div>
 		</div>
 	</div>
 
-	<script src="/static/app.js"></script>
+	<script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

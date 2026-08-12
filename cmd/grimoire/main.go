@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
+	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -177,7 +178,14 @@ func runServe() error {
 		return fmt.Errorf("ensure index: %w", err)
 	}
 
-	srv, err := server.New(store, llm.New(llmConfig()), cardsService())
+	// Chat history shares the index's SQLite file and connection pool.
+	// Rebuilding the rules index does not touch these tables.
+	chats, err := chat.New(store.DB())
+	if err != nil {
+		return err
+	}
+
+	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), chats)
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -42,8 +43,10 @@ func New(cfg Config) *Client {
 		cfg.BaseURL = DefaultBaseURL
 	}
 	return &Client{
-		cfg:  cfg,
-		http: &http.Client{Timeout: 60 * time.Second},
+		cfg: cfg,
+		// Generous ceiling only: a streamed answer is alive for as long as
+		// tokens keep arriving, so the real deadline is the caller's context.
+		http: &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
@@ -77,23 +80,54 @@ type CardDoc struct {
 	OracleText string
 }
 
-// Answer runs a single Messages API turn: the question plus grounding context
-// documents (and any looked-up cards) are sent as the user message, with a
-// system prompt that constrains the answer to the provided rules and card text.
-// unresolved names are card mentions we failed to look up; they are named in
-// the prompt so the model reports the gap instead of guessing.
-func (c *Client) Answer(ctx context.Context, corpusName string, docs []ContextDoc, cards []CardDoc, unresolved []string, question string) (string, error) {
+// Turn is one prior exchange in a saved conversation, replayed so follow-up
+// questions ("what if it were tapped instead?") resolve against what was
+// already said.
+type Turn struct {
+	Role    string // "user" or "assistant"
+	Content string
+}
+
+// Request is one grounded question: the retrieved rules and cards, the earlier
+// turns of the conversation, and the question itself.
+type Request struct {
+	CorpusName string
+	Docs       []ContextDoc
+	Cards      []CardDoc
+	Unresolved []string
+	History    []Turn
+	Question   string
+}
+
+// Answer runs a Messages API call and returns the complete answer.
+func (c *Client) Answer(ctx context.Context, req Request) (string, error) {
+	return c.run(ctx, req, nil)
+}
+
+// Stream runs the same call with server-sent events enabled, invoking onDelta
+// for each chunk of text as it arrives. It returns the full concatenated
+// answer. A non-nil error from onDelta aborts the stream — that is how a
+// disconnected browser stops work that no longer has a reader.
+func (c *Client) Stream(ctx context.Context, req Request, onDelta func(string) error) (string, error) {
+	if onDelta == nil {
+		return c.Answer(ctx, req)
+	}
+	return c.run(ctx, req, onDelta)
+}
+
+// run performs the HTTP call. With onDelta nil it reads a single JSON body;
+// otherwise it asks for SSE and decodes the event stream.
+func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error) (string, error) {
 	if !c.Configured() {
 		return "", ErrNotConfigured
 	}
-	system := systemPrompt(corpusName, len(cards) > 0)
-	user := buildUserMessage(corpusName, docs, cards, unresolved, question)
-
+	streaming := onDelta != nil
 	reqBody := messagesRequest{
 		Model:     c.cfg.Model,
 		MaxTokens: maxAnswerTokens,
-		System:    system,
-		Messages:  []message{{Role: "user", Content: user}},
+		System:    systemPrompt(r.CorpusName, len(r.Cards) > 0),
+		Messages:  buildMessages(r),
+		Stream:    streaming,
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -111,6 +145,9 @@ func (c *Client) Answer(ctx context.Context, corpusName string, docs []ContextDo
 	// (Anthropic uses x-api-key; some compatible gateways expect Bearer).
 	req.Header.Set("x-api-key", c.cfg.APIKey)
 	req.Header.Set("authorization", "Bearer "+c.cfg.APIKey)
+	if streaming {
+		req.Header.Set("accept", "text/event-stream")
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -118,14 +155,18 @@ func (c *Client) Answer(ctx context.Context, corpusName string, docs []ContextDo
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("llm request failed: %s: %s", resp.Status, truncate(string(raw), 300))
+	}
+	if streaming {
+		return readStream(resp.Body, onDelta)
+	}
+
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
-	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("llm request failed: %s: %s", resp.Status, truncate(string(raw), 300))
-	}
-
 	var mr messagesResponse
 	if err := json.Unmarshal(raw, &mr); err != nil {
 		return "", fmt.Errorf("decode llm response: %w", err)
@@ -137,6 +178,95 @@ func (c *Client) Answer(ctx context.Context, corpusName string, docs []ContextDo
 		}
 	}
 	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return "", fmt.Errorf("llm returned no text")
+	}
+	return out, nil
+}
+
+// buildMessages lays out the Messages API exchange: prior turns verbatim, then
+// the current question with its freshly retrieved grounding attached. Only the
+// latest turn carries rule and card text — re-sending grounding for every
+// historical turn would blow the context window on stale excerpts.
+func buildMessages(r Request) []message {
+	msgs := make([]message, 0, len(r.History)+1)
+	for _, t := range r.History {
+		role := t.Role
+		if role != "assistant" {
+			role = "user"
+		}
+		if strings.TrimSpace(t.Content) == "" {
+			continue
+		}
+		msgs = append(msgs, message{Role: role, Content: t.Content})
+	}
+	// The API rejects two consecutive messages with the same role, which a
+	// truncated or interrupted history can produce; fold those together.
+	merged := msgs[:0]
+	for _, m := range msgs {
+		if n := len(merged); n > 0 && merged[n-1].Role == m.Role {
+			merged[n-1].Content += "\n\n" + m.Content
+			continue
+		}
+		merged = append(merged, m)
+	}
+	msgs = merged
+
+	user := buildUserMessage(r.CorpusName, r.Docs, r.Cards, r.Unresolved, r.Question)
+	if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
+		msgs[n-1].Content += "\n\n" + user
+		return msgs
+	}
+	return append(msgs, message{Role: "user", Content: user})
+}
+
+// readStream decodes an Anthropic SSE body, forwarding text deltas as they
+// arrive. Event framing is "data: {json}" lines separated by blank lines; we
+// only care about content_block_delta payloads and inline error events.
+func readStream(body io.Reader, onDelta func(string) error) (string, error) {
+	sc := bufio.NewScanner(body)
+	// Long single-line JSON payloads are normal here; the default 64KB scanner
+	// limit would truncate one and desync the decode.
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var full strings.Builder
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var ev streamEvent
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			continue // ignore keep-alives and any framing we don't model
+		}
+		switch ev.Type {
+		case "content_block_delta":
+			if ev.Delta.Type != "" && ev.Delta.Type != "text_delta" {
+				continue // thinking / tool deltas are not answer text
+			}
+			if ev.Delta.Text == "" {
+				continue
+			}
+			full.WriteString(ev.Delta.Text)
+			if err := onDelta(ev.Delta.Text); err != nil {
+				return full.String(), err
+			}
+		case "error":
+			msg := ev.Error.Message
+			if msg == "" {
+				msg = "stream error"
+			}
+			return full.String(), fmt.Errorf("llm stream: %s", msg)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return full.String(), fmt.Errorf("read llm stream: %w", err)
+	}
+	out := strings.TrimSpace(full.String())
 	if out == "" {
 		return "", fmt.Errorf("llm returned no text")
 	}
@@ -228,6 +358,7 @@ type messagesRequest struct {
 	MaxTokens int       `json:"max_tokens"`
 	System    string    `json:"system,omitempty"`
 	Messages  []message `json:"messages"`
+	Stream    bool      `json:"stream,omitempty"`
 }
 
 type message struct {
@@ -240,6 +371,18 @@ type messagesResponse struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+}
+
+// streamEvent is the subset of the Anthropic SSE event shape we consume.
+type streamEvent struct {
+	Type  string `json:"type"`
+	Delta struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"delta"`
+	Error struct {
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
 func truncate(s string, n int) string {

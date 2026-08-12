@@ -53,6 +53,11 @@ func Open(path string) (*Store, error) {
 // Close closes the underlying database.
 func (s *Store) Close() error { return s.db.Close() }
 
+// DB exposes the underlying handle so sibling stores (chat history) can share
+// the same SQLite file and connection pool. Reset only clears the docs tables,
+// so a reindex leaves those sibling tables intact.
+func (s *Store) DB() *sql.DB { return s.db }
+
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(schema)
 	if err != nil {

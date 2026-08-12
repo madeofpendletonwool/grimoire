@@ -1,6 +1,6 @@
 # 📜 Grimoire
 
-A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** and **D&D 5e (SRD)** — full-text search plus an optional LLM-backed Q&A "sage" chat, toggle between the two corpora with a click. Ships as a single Go binary in a tiny Docker container.
+A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** and **D&D 5e (SRD)** — a chat-first sage that answers grounded in the real rules and real card text, with full-text search and card lookup a keystroke away. Ships as a single Go binary in a tiny Docker container.
 
 ![status](https://img.shields.io/badge/status-ready-green) ![go](https://img.shields.io/badge/go-1.26-00ADD8) ![docker](https://img.shields.io/badge/docker-multistage-2496ED)
 
@@ -8,11 +8,13 @@ A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** a
 
 ## Features
 
-- **🔎 Full-text search** across both rule sets (SQLite + FTS5). Search by word, phrase, or a direct rule number like `205.1a`. Results for a mechanic (e.g. "deathtouch") cluster into the full rule section — the parent plus every sub-rule — so you see how it actually works.
-- **🃏 Card lookup** — pull the real oracle text of any Magic card by name via Scryfall (no API key required). The chat consults it automatically when a card is mentioned, so it never invents card effects. The Card Lookup tab autocompletes as you type — start typing a name and matching cards pop up below the input to click on, so you never have to type out a long card name in full.
-- **💬 Ask the Sage** — an optional RAG chat that grounds answers in the retrieved rules and cards, and cites the entries it used. Cited rules and cards are clickable and open in an in-app pop-up (the full mechanic section for a rule, the full card for a card) instead of sending you out to Scryfall.
-- **✦ / ⚔ Corpus toggle** — flip between MTG and D&D; the whole UI re-themes (mana-blue vs. dragon-red).
-- **📜 Spellbook UI** — parchment, gold, small-caps. No build step, no JS framework.
+- **💬 Chat first** — the app is a conversation. Ask a question, get an answer streamed token by token, grounded in retrieved rules and real card text, with every rule and card it consulted cited beneath. Follow-up questions carry the earlier turns, so "what if it were tapped instead?" resolves against what was already said.
+- **📚 Conversations are saved** — threads persist in SQLite with auto-generated titles, and the sidebar groups them by date. Rename, delete, resume across reloads and devices. A conversation's rule set is locked when it is created, because the grounding differs per corpus.
+- **⌘K Command palette** — one search box over both rule sets and Scryfall. Results open in a reference drawer beside the conversation, so consulting a rule never takes you out of the chat. Slash commands work in the composer too: `/card Lightning Bolt`, `/rule 702.2`, `/search`.
+- **🔎 Full-text search** across both rule sets (SQLite + FTS5). Search by word, phrase, or a direct rule number like `205.1a`. Opening a numbered rule expands it to the full mechanic section — the parent plus every sub-rule — so you see how it actually works.
+- **🃏 Card lookup** — pull the real oracle text of any Magic card by name via Scryfall (no API key required). The chat consults it automatically when a card is mentioned, so it never invents card effects; when it cannot resolve a name it says so instead of guessing. The palette autocompletes as you type, so you never have to spell out "Asmoranomardicadaistinaculdacar" in full.
+- **✦ / ⚔ Two corpora** — Magic and D&D, each with its own accent (mana-blue vs. dragon-red). Pick one per conversation.
+- **📜 Medieval, not mid-2000s** — parchment reserved for the content surfaces (answers, rules, cards) against candlelit-stone chrome. Serif for prose, sans for UI, gold for emphasis. No build step, no JS framework, no bundler — just ES modules.
 - **🐳 One command to run** — `docker compose up`. The index builds itself on first start.
 - **No hard dependencies** — pure-Go SQLite (FTS5), no CGO, single static binary.
 
@@ -61,9 +63,18 @@ Environment variables are the same as above (`GRIMOIRE_ADDR`, `GRIMOIRE_DB`, `AN
 | `GET`  | `/api/section` | `number`, `corpus=mtg\|dnd`                     | `{ parent:{…}, children:[…] }` (full mechanic section) |
 | `GET`  | `/api/card`    | `q` (MTG card name)                             | `{ card: {...} }` or `{ card: null, matches: [...] }` |
 | `GET`  | `/api/card/search` | `q`, `limit` (MTG card name fragment)     | `{ matches: [{name,mana_cost,type_line,…}] }` |
-| `POST` | `/api/ask`     | `{corpus, question}`                            | `{configured, answer, sources:[…], cards:[…]}`  |
+| `POST` | `/api/ask`     | `{corpus, question}`                            | `{configured, answer, sources:[…], cards:[…]}` — stateless one-shot |
+| `GET`  | `/api/chats`   | —                                               | `{chats:[…]}`                        |
+| `POST` | `/api/chats`   | `{corpus}`                                      | `{chat:{…}}`                         |
+| `GET`  | `/api/chats/{id}` | —                                            | `{chat:{…}, messages:[…]}`           |
+| `PATCH`| `/api/chats/{id}` | `{title}`                                    | `{chat:{…}}`                         |
+| `DELETE`| `/api/chats/{id}` | —                                           | `204`                                |
+| `POST` | `/api/chats/{id}/messages` | `{question}`                         | SSE: `meta`, `delta`, `done`, `error` |
 | `GET`  | `/api/meta`    | —                                               | `{corpora:[…], chat_configured, chat_model}` |
 | `GET`  | `/healthz`     | —                                               | `{status, indexed}`                  |
+
+`/api/ask` remains for scripted one-off questions. The UI uses the `/api/chats`
+endpoints, which save the thread and stream the answer.
 
 Example:
 
@@ -102,14 +113,21 @@ Both are fetched and indexed at first run. Overrides: `MTG_RULES_URL`, `DND_REPO
 cmd/grimoire      CLI entrypoint: `serve` (default) | `index`
 internal/
   cards/          Scryfall card lookup (named + search), cached + rate-limited
+  chat/           saved conversations + messages (same SQLite file as the index)
   data/           fetch + parse MTG (.txt) and D&D (markdown) into records
   index/          SQLite + FTS5 store; full-text + rule-number search
-  llm/            Anthropic Messages client (configurable base URL) + RAG
-  server/         HTTP handlers + JSON API
-web/              embedded templates + static assets (the spellbook UI)
+  llm/            Anthropic Messages client (configurable base URL), RAG + streaming
+  server/         HTTP handlers, JSON API, SSE chat endpoint
+web/
+  templates/      the app shell
+  static/js/      ES modules: app, chat, palette, drawer, render, markdown, api
 ```
 
 The binary embeds all front-end assets, so the runtime image is just the binary + CA certs.
+
+Chat history lives in the **same SQLite file** as the rules index. That is safe:
+`grimoire index` only clears the document tables, so rebuilding the index never
+drops a conversation. Keep the `/data` volume and your chats survive upgrades.
 
 ## Development
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
+	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -25,13 +26,15 @@ type Server struct {
 	store  *index.Store
 	llm    *llm.Client
 	cards  *cards.Service
+	chats  *chat.Store
 	tmpl   *template.Template
 	static fs.FS
 }
 
-// New builds a Server from an open index store, an LLM client, and a card
-// lookup service. A nil card service disables card features gracefully.
-func New(store *index.Store, client *llm.Client, cardSvc *cards.Service) (*Server, error) {
+// New builds a Server from an open index store, an LLM client, a card lookup
+// service, and a chat store. A nil card service disables card features
+// gracefully; a nil chat store disables saved conversations.
+func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, chats *chat.Store) (*Server, error) {
 	tmpl, err := template.New("").ParseFS(web.Templates, "templates/index.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -40,7 +43,7 @@ func New(store *index.Store, client *llm.Client, cardSvc *cards.Service) (*Serve
 	if err != nil {
 		return nil, err
 	}
-	return &Server{store: store, llm: client, cards: cardSvc, tmpl: tmpl, static: static}, nil
+	return &Server{store: store, llm: client, cards: cardSvc, chats: chats, tmpl: tmpl, static: static}, nil
 }
 
 // Handler returns the HTTP handler tree.
@@ -53,9 +56,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/card", s.handleCard)
 	mux.HandleFunc("GET /api/card/search", s.handleCardSearch)
 	mux.HandleFunc("POST /api/ask", s.handleAsk)
+	mux.HandleFunc("GET /api/chats", s.handleListChats)
+	mux.HandleFunc("POST /api/chats", s.handleCreateChat)
+	mux.HandleFunc("GET /api/chats/{id}", s.handleGetChat)
+	mux.HandleFunc("PATCH /api/chats/{id}", s.handleRenameChat)
+	mux.HandleFunc("DELETE /api/chats/{id}", s.handleDeleteChat)
+	mux.HandleFunc("POST /api/chats/{id}/messages", s.handleChatMessage)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(mux))
+}
+
+// userID identifies the caller who owns a conversation. Authentication is not
+// wired up yet, so every request resolves to the anonymous owner; this is the
+// single seam an auth layer replaces to make chat history per-user.
+func userID(r *http.Request) string {
+	return chat.AnonymousUser
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -205,52 +221,69 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// RAG: retrieve grounding context (lenient OR match), then ask the model.
-	// The hits seed the answer's source list; the model gets those hits grown
-	// out to whole rule sections, so a mechanic arrives complete rather than as
-	// the one sub-rule that happened to rank.
-	results, err := s.store.Retrieve(r.Context(), corpus, req.Question, retrieveSeeds)
+	g, err := s.ground(r.Context(), corpus, req.Question)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	grounding, err := s.store.Expand(r.Context(), corpus, results)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	docs := make([]llm.ContextDoc, 0, len(grounding))
-	for _, res := range grounding {
-		docs = append(docs, llm.ContextDoc{Number: res.Number, Title: res.Title, Body: res.Body})
-	}
-
-	// Ground any card mentions in real oracle text (MTG only — Scryfall is the
-	// MTG card authority). This is the fix for the chat fabricating card
-	// effects: we hand the model authoritative text instead.
-	cardDocs, cardHits, unresolved := s.lookupQuestionCards(r.Context(), corpus, req.Question)
-
-	corpusName := corpusDisplayName(corpus)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	answer, err := s.llm.Answer(ctx, corpusName, docs, cardDocs, unresolved, req.Question)
+	answer, err := s.llm.Answer(ctx, g.request(corpus, req.Question, nil))
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"configured":       true,
-			"answer":           fmt.Sprintf("I couldn't reach the model: %v", err),
-			"sources":          toSources(results),
-			"cards":            cardHits,
-			"unresolved_cards": unresolved,
-		})
-		return
+		answer = fmt.Sprintf("I couldn't reach the model: %v", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"configured":       true,
 		"answer":           answer,
-		"sources":          toSources(results),
-		"cards":            cardHits,
-		"unresolved_cards": unresolved,
+		"sources":          g.sources,
+		"cards":            g.cards,
+		"unresolved_cards": g.unresolved,
 	})
+}
+
+// grounded is the retrieval result for one question: what the model is shown,
+// and what the reader is shown as citations.
+type grounded struct {
+	docs       []llm.ContextDoc
+	cardDocs   []llm.CardDoc
+	sources    []searchHit
+	cards      []cardView
+	unresolved []string
+}
+
+func (g grounded) request(corpus data.Corpus, question string, history []llm.Turn) llm.Request {
+	return llm.Request{
+		CorpusName: corpusDisplayName(corpus),
+		Docs:       g.docs,
+		Cards:      g.cardDocs,
+		Unresolved: g.unresolved,
+		History:    history,
+		Question:   question,
+	}
+}
+
+// ground runs retrieval for a question: a lenient OR match seeds the citation
+// list, those seeds are grown out to whole rule sections for the model (so a
+// mechanic arrives complete rather than as the one sub-rule that ranked), and
+// any card mentions are resolved to real oracle text.
+func (s *Server) ground(ctx context.Context, corpus data.Corpus, question string) (grounded, error) {
+	var g grounded
+	results, err := s.store.Retrieve(ctx, corpus, question, retrieveSeeds)
+	if err != nil {
+		return g, err
+	}
+	expanded, err := s.store.Expand(ctx, corpus, results)
+	if err != nil {
+		return g, err
+	}
+	g.docs = make([]llm.ContextDoc, 0, len(expanded))
+	for _, res := range expanded {
+		g.docs = append(g.docs, llm.ContextDoc{Number: res.Number, Title: res.Title, Body: res.Body})
+	}
+	g.sources = toSources(results)
+	g.cardDocs, g.cards, g.unresolved = s.lookupQuestionCards(ctx, corpus, question)
+	return g, nil
 }
 
 // retrieveSeeds is how many search hits seed a Q&A answer. They are the

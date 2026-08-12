@@ -6,6 +6,8 @@ services:
     ports:
       - "${GRIMOIRE_PORT:-8080}:8080"
     volumes:
+      # grimoire.db holds the rules index *and* saved chat history. Keep this
+      # volume or every conversation is lost when the container is recreated.
       - grimoire-data:/data
     environment:
       # Q&A chat targets z.ai's Anthropic-compatible endpoint by default.
@@ -15,6 +17,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-glm-4.6}
       GRIMOIRE_ADDR: ${GRIMOIRE_ADDR:-:8080}
+      # Index + chat history, on the named volume mounted above.
+      GRIMOIRE_DB: ${GRIMOIRE_DB:-/data/grimoire.db}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
