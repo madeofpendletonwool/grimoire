@@ -66,6 +66,27 @@ func TestExtractCandidates(t *testing.T) {
 			in:   `tell me about "lightning bolt"`,
 			want: []string{"lightning bolt"},
 		},
+		{
+			// Regression: a comma-separated list used to collapse into one
+			// bogus candidate ("Humility Opalescence"), so neither card was
+			// ever looked up.
+			name: "comma separated list splits",
+			in:   "You control Humility, Opalescence, and Enchanted Evening. Your opponent controls a Blood Moon.",
+			want: []string{"Humility", "Opalescence", "Enchanted Evening", "Blood Moon"},
+		},
+		{
+			// "Board" is emitted too — a lone capital costs one cached
+			// Scryfall miss, which is cheaper than adding words like it to the
+			// stopword list and breaking real names ("Board the Weatherlight").
+			name: "colon and semicolon are boundaries",
+			in:   "Board: Sol Ring; Lightning Bolt",
+			want: []string{"Board", "Sol Ring", "Lightning Bolt"},
+		},
+		{
+			name: "slash separates names",
+			in:   "Does Sol Ring/Lightning Bolt matter?",
+			want: []string{"Sol Ring", "Lightning Bolt"},
+		},
 	}
 
 	for _, c := range cases {

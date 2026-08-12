@@ -67,7 +67,7 @@ func TestBuildUserMessage_RulesAndCards(t *testing.T) {
 	cards := []CardDoc{
 		{Name: "Lightning Bolt", ManaCost: "{R}", TypeLine: "Instant", OracleText: "Lightning Bolt deals 3 damage to any target."},
 	}
-	got := buildUserMessage("Magic: The Gathering", docs, cards, "What does Lightning Bolt do?")
+	got := buildUserMessage("Magic: The Gathering", docs, cards, nil, "What does Lightning Bolt do?")
 
 	if !strings.Contains(got, "702.21 — Ward") {
 		t.Errorf("missing rule header: %q", got)
@@ -90,7 +90,7 @@ func TestBuildUserMessage_RulesAndCards(t *testing.T) {
 }
 
 func TestBuildUserMessage_NoCards(t *testing.T) {
-	got := buildUserMessage("D&D 5e SRD", nil, nil, "How does stealth work?")
+	got := buildUserMessage("D&D 5e SRD", nil, nil, nil, "How does stealth work?")
 	if strings.Contains(got, "Card oracle text") {
 		t.Errorf("card section should be omitted without cards: %q", got)
 	}

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -199,6 +201,110 @@ func (s *Store) lookupNumber(ctx context.Context, corpus data.Corpus, number str
 	return out, rows.Err()
 }
 
+// ruleNumberFullRe matches a numbered rule with at least one sub-level and an
+// optional trailing letter run, e.g. "702.2" or "702.2a". Group 1 is the
+// numeric section root; group 2 is the trailing letters (may be empty).
+var ruleNumberFullRe = regexp.MustCompile(`^(\d{1,3}(?:\.\d+)+)([a-z]+)?$`)
+
+const ftsSectionSQL = `
+SELECT number, title, body, source
+FROM docs
+WHERE docs MATCH ? AND corpus = ?;
+`
+
+// Section returns the complete set of rules that share a numbered rule's
+// section: the parent rule (e.g. "702.2") plus every lettered sub-rule
+// ("702.2a", "702.2b", ...). Results are ordered parent-first then by number.
+// A query that is not a numbered rule (or a section with no stored rules)
+// returns nil with no error. MTG-style numbered rules only; other corpora
+// simply return nil.
+func (s *Store) Section(ctx context.Context, corpus data.Corpus, number string) ([]Result, error) {
+	num := strings.TrimSpace(number)
+	m := ruleNumberFullRe.FindStringSubmatch(num)
+	if m == nil {
+		return nil, nil
+	}
+	root := m[1] // e.g. "702.2"
+	chapter := strings.SplitN(root, ".", 2)[0]
+
+	// Coarse fetch: every rule in the chapter whose number column leads with
+	// the chapter token, then keep only the requested section in Go. The
+	// chapter token is digits-only (from the regex), so it is safe to splice
+	// into the MATCH expression. Go filtering guarantees we exclude sibling
+	// sections (e.g. "702.21" is not part of "702.2").
+	match := fmt.Sprintf("number:%s*", chapter)
+	rows, err := s.db.QueryContext(ctx, ftsSectionSQL, match, corpus)
+	if err != nil {
+		return nil, fmt.Errorf("section: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Result
+	for rows.Next() {
+		var r Result
+		if err := rows.Scan(&r.Number, &r.Title, &r.Body, &r.Source); err != nil {
+			return nil, err
+		}
+		if sectionKey(r.Number) != root {
+			continue
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Parent first (the rule whose number is the bare root), then children
+	// ascending so "702.2a" precedes "702.2b".
+	sort.SliceStable(out, func(i, j int) bool {
+		return lessRuleNumber(out[i].Number, out[j].Number)
+	})
+	return out, nil
+}
+
+// lessRuleNumber orders numbered rules the way the rulebook does: each dotted
+// segment compares numerically (so "613.2" precedes "613.10"), and a bare rule
+// precedes its lettered sub-rules ("702.2" before "702.2a").
+func lessRuleNumber(a, b string) bool {
+	an, al := splitRuleNumber(a)
+	bn, bl := splitRuleNumber(b)
+	for i := 0; i < len(an) && i < len(bn); i++ {
+		if an[i] != bn[i] {
+			return an[i] < bn[i]
+		}
+	}
+	if len(an) != len(bn) {
+		return len(an) < len(bn)
+	}
+	return al < bl
+}
+
+// splitRuleNumber breaks "613.10a" into its numeric segments ([613, 10]) and
+// its trailing letters ("a"). A number it cannot parse yields no segments, so
+// it sorts before parsable ones by its letter tail (the raw string).
+func splitRuleNumber(number string) ([]int, string) {
+	num := strings.TrimRight(number, "abcdefghijklmnopqrstuvwxyz")
+	letters := number[len(num):]
+	if num == "" {
+		return nil, number
+	}
+	var segs []int
+	for _, part := range strings.Split(num, ".") {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, number
+		}
+		segs = append(segs, n)
+	}
+	return segs, letters
+}
+
+// sectionKey reduces a numbered rule to its section root by stripping any
+// trailing letters: "702.2a" -> "702.2", "702.2" -> "702.2".
+func sectionKey(number string) string {
+	return strings.TrimRight(number, "abcdefghijklmnopqrstuvwxyz")
+}
+
 // CorpusMeta returns stored metadata for a corpus.
 func (s *Store) CorpusMeta(ctx context.Context) (map[data.Corpus]data.CorpusMeta, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT corpus, name, version, source_url, record_count FROM corpus_meta`)
@@ -285,6 +391,149 @@ func toFTSQueryOR(q string) (string, error) {
 		return "", ErrEmptyQuery
 	}
 	return strings.Join(parts, " OR "), nil
+}
+
+// maxGroundingDocs caps how many rules Expand hands back for one question.
+const maxGroundingDocs = 60
+
+// maxGroupDocs is the largest whole rule group we will pull in. Groups above
+// it (702, the keyword-ability list, is nearly 800 rules) fall back to
+// per-seed section expansion.
+const maxGroupDocs = 60
+
+// maxExpandGroups bounds how many whole rule groups one question pulls in.
+const maxExpandGroups = 2
+
+// Expand grows a set of search hits into the grounding context handed to the
+// Q&A model.
+//
+// A flat top-N search returns fragments of a mechanic — a layers question
+// comes back with 613.6 but not 613.1, the rule that actually lists the
+// layers — so the model can only report that the rules it needs are missing.
+// Expand fixes that by pulling in whole units around the hits: the rule groups
+// the hits cluster in (all of 613), and each remaining hit's own section
+// (702.21 plus its sub-rules). Seeds stay first and in rank order; expansion
+// follows in rule order.
+func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) ([]Result, error) {
+	if len(seeds) == 0 {
+		return nil, nil
+	}
+	out := make([]Result, 0, len(seeds))
+	seen := map[string]bool{}
+	// push adds a doc, reporting false once the budget is spent.
+	push := func(r Result) bool {
+		key := r.Number
+		if key == "" {
+			key = r.Title + "\x00" + r.Body // unnumbered corpora (D&D)
+		}
+		if seen[key] {
+			return true
+		}
+		if len(out) >= maxGroundingDocs {
+			return false
+		}
+		seen[key] = true
+		out = append(out, r)
+		return true
+	}
+	for _, r := range seeds {
+		if !push(r) {
+			return out, nil
+		}
+	}
+
+	// Rank groups by how many seeds landed in them: the mechanic a question is
+	// really about is the one the search kept hitting.
+	counts := map[string]int{}
+	var order []string
+	for _, r := range seeds {
+		g := ruleGroup(r.Number)
+		if g == "" {
+			continue
+		}
+		if counts[g] == 0 {
+			order = append(order, g)
+		}
+		counts[g]++
+	}
+	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
+
+	expanded := map[string]bool{}
+	for _, g := range order {
+		if len(expanded) >= maxExpandGroups {
+			break
+		}
+		docs, err := s.groupDocs(ctx, corpus, g)
+		if err != nil {
+			return nil, err
+		}
+		if len(docs) == 0 || len(docs) > maxGroupDocs {
+			continue
+		}
+		expanded[g] = true
+		for _, d := range docs {
+			if !push(d) {
+				return out, nil
+			}
+		}
+	}
+
+	// Seeds in groups too large to pull whole still get their own section.
+	for _, r := range seeds {
+		if expanded[ruleGroup(r.Number)] {
+			continue
+		}
+		sec, err := s.Section(ctx, corpus, r.Number)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range sec {
+			if !push(d) {
+				return out, nil
+			}
+		}
+	}
+	return out, nil
+}
+
+// ruleGroup returns the chapter token of a numbered rule ("613.6c" -> "613").
+// A number that isn't a numbered rule yields "".
+func ruleGroup(number string) string {
+	m := ruleNumberFullRe.FindStringSubmatch(strings.TrimSpace(number))
+	if m == nil {
+		return ""
+	}
+	return strings.SplitN(m[1], ".", 2)[0]
+}
+
+// groupDocs returns every rule in a chapter, in rule order.
+func (s *Store) groupDocs(ctx context.Context, corpus data.Corpus, group string) ([]Result, error) {
+	if group == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, ftsSectionSQL, fmt.Sprintf("number:%s*", group), corpus)
+	if err != nil {
+		return nil, fmt.Errorf("group: %w", err)
+	}
+	defer rows.Close()
+	var out []Result
+	for rows.Next() {
+		var r Result
+		if err := rows.Scan(&r.Number, &r.Title, &r.Body, &r.Source); err != nil {
+			return nil, err
+		}
+		// The MATCH is a prefix match on the number column; keep only exact
+		// chapter members.
+		if ruleGroup(r.Number) != group {
+			continue
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool { return lessRuleNumber(out[i].Number, out[j].Number) })
+	return out, nil
 }
 
 // Retrieve runs a lenient OR search used to gather grounding context for the

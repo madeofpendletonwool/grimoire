@@ -149,7 +149,7 @@ func titleCasePhrases(q string) []string {
 		default:
 			flush()
 		}
-		if tok.sentenceEnd {
+		if tok.breakAfter {
 			flush()
 		}
 	}
@@ -158,29 +158,47 @@ func titleCasePhrases(q string) []string {
 }
 
 type token struct {
-	word        string
-	sentenceEnd bool
+	word string
+	// breakAfter marks punctuation directly after the word that a card name
+	// can never span, so the phrase run ends here.
+	breakAfter bool
 }
 
 // wordRe keeps apostrophes and hyphens inside a word (e.g. "Sol'Kanar").
 var wordRe = regexp.MustCompile(`[A-Za-z][A-Za-z'\-]*`)
 
+// tokenize splits free text into words, marking the punctuation that ends a
+// phrase. Any character that isn't a letter, digit, apostrophe, or hyphen is a
+// hard boundary: without this, "Humility, Opalescence" reads as one four-word
+// candidate and resolves to nothing. Names that genuinely contain a comma
+// ("Kokusho, the Evening Star") still resolve, because the leading span alone
+// is enough for a fuzzy lookup.
 func tokenize(q string) []token {
 	var toks []token
-	for _, raw := range strings.Fields(q) {
-		w := strings.Trim(raw, "`\"()[]")
-		if w == "" {
-			continue
-		}
-		end := strings.HasSuffix(raw, ".") || strings.HasSuffix(raw, "?") || strings.HasSuffix(raw, "!")
+	var cur strings.Builder
+	flush := func(brk bool) {
+		w := cur.String()
+		cur.Reset()
 		if m := wordRe.FindString(w); m != "" {
-			w = m
+			toks = append(toks, token{word: m, breakAfter: brk})
+			return
 		}
-		if w == "" {
-			continue
+		// Punctuation with no word in front of it still ends the run.
+		if brk && len(toks) > 0 {
+			toks[len(toks)-1].breakAfter = true
 		}
-		toks = append(toks, token{word: w, sentenceEnd: end})
 	}
+	for _, r := range q {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '\'' || r == '-':
+			cur.WriteRune(r)
+		case unicode.IsSpace(r):
+			flush(false)
+		default:
+			flush(true)
+		}
+	}
+	flush(false)
 	return toks
 }
 

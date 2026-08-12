@@ -49,7 +49,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
+	mux.HandleFunc("GET /api/section", s.handleSection)
 	mux.HandleFunc("GET /api/card", s.handleCard)
+	mux.HandleFunc("GET /api/card/search", s.handleCardSearch)
 	mux.HandleFunc("POST /api/ask", s.handleAsk)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
@@ -128,6 +130,55 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"results": hits})
 }
 
+// sectionResponse is the JSON shape for /api/section: the parent rule (the
+// bare numbered rule, e.g. "702.2") when it exists, and its lettered
+// sub-rules in order. Together they describe a full mechanic.
+type sectionResponse struct {
+	Parent   *searchHit  `json:"parent,omitempty"`
+	Children []searchHit `json:"children"`
+}
+
+func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
+	corpus := parseCorpus(r.URL.Query().Get("corpus"))
+	number := strings.TrimSpace(r.URL.Query().Get("number"))
+	if number == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("number is required"))
+		return
+	}
+
+	entries, err := s.store.Section(r.Context(), corpus, number)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	resp := sectionResponse{Children: []searchHit{}}
+	for _, e := range entries {
+		hit := searchHit{Number: e.Number, Title: e.Title, Body: e.Body, Source: e.Source}
+		// The parent is the entry whose number carries no trailing letter.
+		if resp.Parent == nil && e.Number != "" && sectionRoot(e.Number) == e.Number {
+			parent := hit
+			resp.Parent = &parent
+			continue
+		}
+		resp.Children = append(resp.Children, hit)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// sectionRoot strips a trailing letter run from a numbered rule, returning its
+// section root: "702.2a" -> "702.2". A number without a trailing letter is
+// returned unchanged.
+func sectionRoot(number string) string {
+	for i := len(number) - 1; i >= 0; i-- {
+		c := number[i]
+		if c >= 'a' && c <= 'z' {
+			continue
+		}
+		return number[:i+1]
+	}
+	return number
+}
+
 type askRequest struct {
 	Corpus   string `json:"corpus"`
 	Question string `json:"question"`
@@ -155,63 +206,80 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// RAG: retrieve grounding context (lenient OR match), then ask the model.
-	results, err := s.store.Retrieve(r.Context(), corpus, req.Question, 6)
+	// The hits seed the answer's source list; the model gets those hits grown
+	// out to whole rule sections, so a mechanic arrives complete rather than as
+	// the one sub-rule that happened to rank.
+	results, err := s.store.Retrieve(r.Context(), corpus, req.Question, retrieveSeeds)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	docs := make([]llm.ContextDoc, 0, len(results))
-	for _, res := range results {
+	grounding, err := s.store.Expand(r.Context(), corpus, results)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	docs := make([]llm.ContextDoc, 0, len(grounding))
+	for _, res := range grounding {
 		docs = append(docs, llm.ContextDoc{Number: res.Number, Title: res.Title, Body: res.Body})
 	}
 
 	// Ground any card mentions in real oracle text (MTG only — Scryfall is the
 	// MTG card authority). This is the fix for the chat fabricating card
 	// effects: we hand the model authoritative text instead.
-	cardDocs, cardHits := s.lookupQuestionCards(r.Context(), corpus, req.Question)
+	cardDocs, cardHits, unresolved := s.lookupQuestionCards(r.Context(), corpus, req.Question)
 
 	corpusName := corpusDisplayName(corpus)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	answer, err := s.llm.Answer(ctx, corpusName, docs, cardDocs, req.Question)
+	answer, err := s.llm.Answer(ctx, corpusName, docs, cardDocs, unresolved, req.Question)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"configured": true,
-			"answer":     fmt.Sprintf("I couldn't reach the model: %v", err),
-			"sources":    toSources(results),
-			"cards":      cardHits,
+			"configured":       true,
+			"answer":           fmt.Sprintf("I couldn't reach the model: %v", err),
+			"sources":          toSources(results),
+			"cards":            cardHits,
+			"unresolved_cards": unresolved,
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"configured": true,
-		"answer":     answer,
-		"sources":    toSources(results),
-		"cards":      cardHits,
+		"configured":       true,
+		"answer":           answer,
+		"sources":          toSources(results),
+		"cards":            cardHits,
+		"unresolved_cards": unresolved,
 	})
 }
 
+// retrieveSeeds is how many search hits seed a Q&A answer. They are the
+// sources shown to the reader, and the anchors Expand grows the model's
+// grounding context from.
+const retrieveSeeds = 12
+
 // lookupQuestionCards extracts candidate card names from the question and
-// resolves each to real oracle text via Scryfall. Misses are silent (Scryfall
-// is the arbiter); only resolved cards are returned. MTG-only.
-func (s *Server) lookupQuestionCards(ctx context.Context, corpus data.Corpus, question string) ([]llm.CardDoc, []cardView) {
+// resolves each to real oracle text via Scryfall. It returns the cards for the
+// model, the cards for the UI, and the names it could not resolve — a miss is
+// reported rather than dropped, so "we failed to look it up" never reads as
+// "no card was mentioned". MTG-only.
+func (s *Server) lookupQuestionCards(ctx context.Context, corpus data.Corpus, question string) ([]llm.CardDoc, []cardView, []string) {
 	if s.cards == nil || corpus != data.CorpusMTG {
-		return nil, nil
+		return nil, nil, nil
 	}
+	res := cards.Resolve(ctx, s.cards, cards.ExtractCandidates(question))
 	var cardDocs []llm.CardDoc
 	var hits []cardView
-	for _, name := range cards.ExtractCandidates(question) {
-		c, err := s.cards.Lookup(ctx, name)
-		if err != nil || c == nil {
-			continue
-		}
+	for _, c := range res.Cards {
 		cardDocs = append(cardDocs, llm.CardDoc{
 			Name: c.Name, ManaCost: c.ManaCost, TypeLine: c.TypeLine, OracleText: c.OracleText,
 		})
 		hits = append(hits, toCardView(c))
 	}
-	return cardDocs, hits
+	if len(res.Unresolved) > 0 {
+		log.Printf("card lookup: no match for %q", strings.Join(res.Unresolved, ", "))
+	}
+	return cardDocs, hits, res.Unresolved
 }
 
 func toSources(results []index.Result) []searchHit {
@@ -309,6 +377,48 @@ func (s *Server) handleCard(w http.ResponseWriter, r *http.Request) {
 		views = append(views, toCardView(m))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"card": nil, "matches": views})
+}
+
+// handleCardSearch returns name suggestions for the card lookup autocomplete.
+// It calls Scryfall's name-order search directly so it doesn't burn the
+// /cards/named round-trip that handleCard does on every keystroke. Misses
+// return an empty matches slice rather than a 404 so the dropdown just
+// collapses instead of erroring out.
+func (s *Server) handleCardSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("q (card name) is required"))
+		return
+	}
+	if s.cards == nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("card lookup is not configured"))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+
+	matches, err := s.cards.Search(ctx, q, 8)
+	if err != nil {
+		// ErrNotFound is a normal "no matches" outcome — return an empty
+		// list so the client can collapse the dropdown cleanly. Any other
+		// error (timeout, upstream 5xx) surfaces as a non-fatal error field
+		// alongside the empty list.
+		if err == cards.ErrNotFound {
+			writeJSON(w, http.StatusOK, map[string]any{"matches": []cardView{}})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"matches": []cardView{},
+			"error":   fmt.Sprintf("card search failed: %v", err),
+		})
+		return
+	}
+	views := make([]cardView, 0, len(matches))
+	for _, m := range matches {
+		views = append(views, toCardView(m))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"matches": views})
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

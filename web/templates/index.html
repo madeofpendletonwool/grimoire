@@ -36,9 +36,10 @@
 		</section>
 
 		<section id="pane-card" class="pane hidden">
-			<form id="card-form" class="bar" autocomplete="off">
-				<input id="card-input" type="search" placeholder="Look up a card by name (e.g. Lightning Bolt)…" aria-label="Card name">
+			<form id="card-form" class="bar suggest-form" autocomplete="off">
+				<input id="card-input" type="search" placeholder="Type a card name — matches appear as you type (e.g. Our Market, Asmoranomardi)" aria-label="Card name" aria-autocomplete="list" aria-expanded="false" aria-controls="card-suggest">
 				<button type="submit">Reveal</button>
+				<ul id="card-suggest" class="card-suggest hidden" role="listbox" aria-label="Card name suggestions"></ul>
 			</form>
 			<p id="card-status" class="status" aria-live="polite"></p>
 			<div id="card-results" class="results"></div>
@@ -64,6 +65,17 @@
 		<span class="sep">·</span>
 		<a href="https://github.com/madeofpendletonwool/grimoire" target="_blank" rel="noopener">grimoire</a>
 	</footer>
+
+	<div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+		<div class="modal-backdrop" data-modal-close></div>
+		<div class="modal-card">
+			<div class="modal-head">
+				<h2 id="modal-title" class="modal-title"></h2>
+				<button type="button" class="modal-close" data-modal-close aria-label="Close">✕</button>
+			</div>
+			<div id="modal-body" class="modal-body"></div>
+		</div>
+	</div>
 
 	<script src="/static/app.js"></script>
 </body>

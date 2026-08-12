@@ -25,6 +25,10 @@ type Config struct {
 // DefaultBaseURL is the canonical Anthropic endpoint.
 const DefaultBaseURL = "https://api.anthropic.com"
 
+// maxAnswerTokens caps the answer length. A layer-by-layer rules walkthrough
+// runs long, and a truncated answer is worse than a verbose one.
+const maxAnswerTokens = 4096
+
 // Client is an Anthropic Messages API client.
 type Client struct {
 	cfg  Config
@@ -76,16 +80,18 @@ type CardDoc struct {
 // Answer runs a single Messages API turn: the question plus grounding context
 // documents (and any looked-up cards) are sent as the user message, with a
 // system prompt that constrains the answer to the provided rules and card text.
-func (c *Client) Answer(ctx context.Context, corpusName string, docs []ContextDoc, cards []CardDoc, question string) (string, error) {
+// unresolved names are card mentions we failed to look up; they are named in
+// the prompt so the model reports the gap instead of guessing.
+func (c *Client) Answer(ctx context.Context, corpusName string, docs []ContextDoc, cards []CardDoc, unresolved []string, question string) (string, error) {
 	if !c.Configured() {
 		return "", ErrNotConfigured
 	}
 	system := systemPrompt(corpusName, len(cards) > 0)
-	user := buildUserMessage(corpusName, docs, cards, question)
+	user := buildUserMessage(corpusName, docs, cards, unresolved, question)
 
 	reqBody := messagesRequest{
 		Model:     c.cfg.Model,
-		MaxTokens: 1024,
+		MaxTokens: maxAnswerTokens,
 		System:    system,
 		Messages:  []message{{Role: "user", Content: user}},
 	}
@@ -171,7 +177,7 @@ GROUNDING RULES — follow these strictly:
 	return strings.TrimSpace(b.String())
 }
 
-func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, question string) string {
+func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, unresolved []string, question string) string {
 	var b strings.Builder
 	b.WriteString("Relevant " + corpusName + " rules:\n\n")
 	if len(docs) == 0 {
@@ -205,6 +211,12 @@ func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, que
 			}
 			fmt.Fprintf(&b, "Oracle text: %s\n\n", truncate(body, 1200))
 		}
+	}
+
+	if len(unresolved) > 0 {
+		fmt.Fprintf(&b, "Names in the question that could not be looked up: %s\n"+
+			"Do not describe these from memory — say the lookup failed.\n\n",
+			strings.Join(unresolved, ", "))
 	}
 
 	b.WriteString("Question: " + question)
