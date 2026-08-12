@@ -96,6 +96,40 @@ func ExtractCandidates(question string) []string {
 	return out
 }
 
+// ExtractCandidatesWithDict augments the heuristic extractor with a card-name
+// dictionary. The dictionary catches the mentions the heuristics cannot —
+// lowercase, unquoted, no Title Case (e.g. "prize fight") — by matching
+// against known MTG card names. A nil or empty dictionary degrades to the
+// plain heuristic extractor, so callers without one are unaffected.
+//
+// Dictionary hits are placed first because they are higher-confidence than a
+// lone guessed capital, so they win the candidate cap when a question
+// mentions several names at once.
+func ExtractCandidatesWithDict(question string, d *Dictionary) []string {
+	var out []string
+	seen := map[string]bool{}
+	if d != nil {
+		for _, name := range d.Mentions(question) {
+			k := alnum(name)
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, name)
+			}
+		}
+	}
+	for _, c := range ExtractCandidates(question) {
+		k := alnum(c)
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, c)
+		}
+	}
+	if len(out) > maxCandidates {
+		out = out[:maxCandidates]
+	}
+	return out
+}
+
 // quotedRe captures double-quoted or [bracketed] phrases (bracketed must be
 // non-empty).
 var quotedRe = regexp.MustCompile(`"([^"]+)"|\[([^\]]+)\]`)

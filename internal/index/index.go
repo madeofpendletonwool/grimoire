@@ -86,11 +86,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(
 	source UNINDEXED,
 	tokenize = 'porter unicode61 remove_diacritics 2'
 );
+CREATE TABLE IF NOT EXISTS card_names (
+	name TEXT PRIMARY KEY
+);
 `
 
 // Reset drops and rebuilds the docs tables (used on reindex).
 func (s *Store) Reset() error {
-	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta;`)
+	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names;`)
 	return err
 }
 
@@ -137,6 +140,56 @@ func (s *Store) Index(ctx context.Context, ds *data.Dataset) error {
 	}
 
 	return tx.Commit()
+}
+
+// IndexCards replaces the card-name dictionary, populated from MTGJSON's
+// AtomicCards during an index build. The chat uses it to spot card mentions
+// the text heuristics miss (lowercase, unquoted). Safe to call with an empty
+// slice, which clears the table. card_names lives alongside the rules tables
+// and is rebuilt by Reset, but is independent of the rules Dataset.
+func (s *Store) IndexCards(ctx context.Context, names []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM card_names`); err != nil {
+		return fmt.Errorf("clear card_names: %w", err)
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO card_names(name) VALUES(?)`)
+	if err != nil {
+		return fmt.Errorf("prepare card_names: %w", err)
+	}
+	defer stmt.Close()
+	for _, n := range names {
+		if strings.TrimSpace(n) == "" {
+			continue
+		}
+		if _, err := stmt.ExecContext(ctx, n); err != nil {
+			return fmt.Errorf("insert card name: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// LoadCardNames returns every stored card name, used at server startup to
+// build the in-memory detection dictionary.
+func (s *Store) LoadCardNames(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM card_names`)
+	if err != nil {
+		return nil, fmt.Errorf("load card_names: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 // ruleNumberRe detects a direct rule-number reference like "205.1a".

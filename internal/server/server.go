@@ -37,6 +37,7 @@ type Server struct {
 	store            *index.Store
 	llm              *llm.Client
 	cards            *cards.Service
+	cardDict         *cards.Dictionary
 	chats            *chat.Store
 	users            *auth.Store
 	openRegistration bool
@@ -45,10 +46,12 @@ type Server struct {
 }
 
 // New builds a Server from an open index store, an LLM client, a card lookup
-// service, a chat store, and the authentication wiring. A nil card service
-// disables card features gracefully; a nil chat store disables saved
+// service, an optional card-name dictionary (powers lowercase/unquoted card
+// detection in the chat), a chat store, and the authentication wiring. A nil
+// card service disables card features gracefully; a nil dictionary leaves
+// detection on the text heuristics alone; a nil chat store disables saved
 // conversations; a zero Auth leaves the API unauthenticated.
-func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, chats *chat.Store, ac Auth) (*Server, error) {
+func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, cardDict *cards.Dictionary, chats *chat.Store, ac Auth) (*Server, error) {
 	tmpl, err := template.New("").ParseFS(web.Templates, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -58,7 +61,7 @@ func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, chats *
 		return nil, err
 	}
 	return &Server{
-		store: store, llm: client, cards: cardSvc, chats: chats,
+		store: store, llm: client, cards: cardSvc, cardDict: cardDict, chats: chats,
 		users: ac.Users, openRegistration: ac.OpenRegistration,
 		tmpl: tmpl, static: static,
 	}, nil
@@ -325,7 +328,7 @@ func (s *Server) lookupQuestionCards(ctx context.Context, corpus data.Corpus, qu
 	if s.cards == nil || corpus != data.CorpusMTG {
 		return nil, nil, nil
 	}
-	res := cards.Resolve(ctx, s.cards, cards.ExtractCandidates(question))
+	res := cards.Resolve(ctx, s.cards, cards.ExtractCandidatesWithDict(question, s.cardDict))
 	var cardDocs []llm.CardDoc
 	var hits []cardView
 	for _, c := range res.Cards {

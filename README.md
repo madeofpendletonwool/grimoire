@@ -142,9 +142,10 @@ doubling the rate-limit pressure on the public API.
 ## Data sources
 
 - **MTG** — the official [Comprehensive Rules](https://magic.wizards.com/en/rules) (parsed locally into numbered rules + glossary).
+- **MTG card names** — [MTGJSON](https://mtgjson.com)'s `AtomicCards` (one entry per unique card name). Indexed on first run into a dictionary the chat uses to detect card mentions the text heuristics miss (lowercase, unquoted, no Title Case).
 - **D&D** — the community [5e SRD in Markdown](https://github.com/downfallx/dnd-5e-srd-markdown).
 
-Both are fetched and indexed at first run. Overrides: `MTG_RULES_URL`, `DND_REPO`, `DND_REF`.
+Both are fetched and indexed at first run. Overrides: `MTG_RULES_URL`, `MTGJSON_URL`, `DND_REPO`, `DND_REF`.
 
 ## Architecture
 

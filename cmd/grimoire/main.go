@@ -18,6 +18,7 @@
 //	ANTHROPIC_MODEL     model name (e.g. glm-4.6, claude-3-5-sonnet-20241022)
 //	SCRYFALL_BASE_URL   MTG card lookup endpoint (default https://api.scryfall.com; no key needed)
 //	MTG_RULES_URL       override MTG comp rules source
+//	MTGJSON_URL         override MTGJSON AtomicCards source (card-name dictionary)
 //	DND_REPO            override D&D SRD repo "owner/name"
 //	DND_REF             override D&D SRD git ref
 package main
@@ -80,7 +81,7 @@ Usage:
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
   ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL, SCRYFALL_BASE_URL,
-  MTG_RULES_URL, DND_REPO, DND_REF`)
+  MTG_RULES_URL, MTGJSON_URL, DND_REPO, DND_REF`)
 }
 
 func env(key, def string) string {
@@ -129,6 +130,10 @@ func cardsService() *cards.Service {
 	return cards.NewWithBase(env("SCRYFALL_BASE_URL", cards.DefaultBaseURL))
 }
 
+// mtgjsonURL returns the AtomicCards endpoint used to build the card-name
+// dictionary.
+func mtgjsonURL() string { return env("MTGJSON_URL", data.DefaultMTGJSONURL) }
+
 func fetchOpts() data.FetchOptions {
 	return data.FetchOptions{
 		MTGURL:  os.Getenv("MTG_RULES_URL"),
@@ -175,7 +180,57 @@ func buildIndex(ctx context.Context, store *index.Store) error {
 		return err
 	}
 	log.Printf("index built: %d records", total)
+
+	// The card dictionary is best-effort: the chat still works without it,
+	// just with weaker card detection (text heuristics only).
+	if err := buildCardDictionary(ctx, store); err != nil {
+		log.Printf("card dictionary skipped: %v (chat will detect cards by text heuristics only)", err)
+	}
 	return nil
+}
+
+// buildCardDictionary fetches MTGJSON AtomicCards and stores the card-name
+// set so the chat can detect card mentions the text heuristics miss.
+func buildCardDictionary(ctx context.Context, store *index.Store) error {
+	names, err := data.FetchCardNames(ctx, mtgjsonURL())
+	if err != nil {
+		return fmt.Errorf("fetch mtgjson: %w", err)
+	}
+	if err := store.IndexCards(ctx, names); err != nil {
+		return fmt.Errorf("index card names: %w", err)
+	}
+	log.Printf("indexed %d card names from MTGJSON", len(names))
+	return nil
+}
+
+// loadCardDictionary builds the in-memory card dictionary from the store. If
+// the table is empty (a fresh serve that did not run a full index build, or
+// an install upgraded from before the dictionary existed) it fetches MTGJSON
+// once. A nil dictionary is returned when no names are available; the chat
+// then falls back to text heuristics.
+func loadCardDictionary(ctx context.Context, store *index.Store) *cards.Dictionary {
+	names, err := store.LoadCardNames(ctx)
+	if err != nil {
+		log.Printf("load card names: %v", err)
+		return nil
+	}
+	if len(names) == 0 {
+		if err := buildCardDictionary(ctx, store); err != nil {
+			log.Printf("card dictionary unavailable: %v", err)
+			return nil
+		}
+		names, err = store.LoadCardNames(ctx)
+		if err != nil {
+			log.Printf("load card names: %v", err)
+			return nil
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	d := cards.NewDictionary(names)
+	log.Printf("loaded card dictionary: %d names", d.Size())
+	return d
 }
 
 func runIndex() error {
@@ -208,6 +263,8 @@ func runServe() error {
 		return fmt.Errorf("ensure index: %w", err)
 	}
 
+	cardDict := loadCardDictionary(ctx, store)
+
 	// Chat history shares the index's SQLite file and connection pool.
 	// Rebuilding the rules index does not touch these tables.
 	chats, err := chat.New(store.DB())
@@ -229,7 +286,7 @@ func runServe() error {
 		log.Printf("adopted %d pre-authentication conversations", adopted)
 	}
 
-	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), chats,
+	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), cardDict, chats,
 		server.Auth{Users: users, OpenRegistration: openRegistration()})
 	if err != nil {
 		return err

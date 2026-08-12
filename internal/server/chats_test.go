@@ -46,7 +46,7 @@ func newChatServer(t *testing.T, anthropic http.HandlerFunc) *Server {
 		cfg = llm.Config{BaseURL: up.URL, APIKey: "test-key", Model: "test-model"}
 	}
 
-	s, err := New(store, llm.New(cfg), nil, chats, Auth{Users: users})
+	s, err := New(store, llm.New(cfg), nil, nil, chats, Auth{Users: users})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestChatsDisabledWithoutStore(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s, err := New(store, llm.New(llm.Config{}), nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
