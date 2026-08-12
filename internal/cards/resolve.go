@@ -121,24 +121,136 @@ func spanWorthTrying(toks []string) bool {
 }
 
 // nameMatches reports whether a card is a credible match for the span we
-// searched: every word of the span must appear in the card's name. That keeps
-// a shorthand ("Bolt" -> "Lightning Bolt") while rejecting a fuzzy match onto
-// a span carrying extra words ("Evening Star Sakashima the Impostor").
+// searched.
+//
+// Scryfall's fuzzy matcher bridges two kinds of user error that we must not
+// reject:
+//
+//   - Spacing: "prize fight" vs "Prizefight", or "lightningbolt" vs
+//     "Lightning Bolt".
+//   - Minor misspellings: "gient growth" vs "Giant Growth".
+//
+// But it must still reject an over-long span — several card names run
+// together — attaching to a single card ("Evening Star Sakashima the
+// Impostor" -> "Kokusho, the Evening Star"). A match is accepted on either:
+//
+//  1. Word subset — every word of the span is a word of the card name. Keeps
+//     shorthand ("Bolt" -> "Lightning Bolt") and ignores punctuation.
+//  2. Close spelling — the alphanumeric forms of the two are within a small
+//     edit distance, and the span is not longer than the card by more than
+//     that budget (the run-on guard).
 func nameMatches(span, cardName string) bool {
-	have := map[string]bool{}
-	for _, w := range nameWords(cardName) {
-		have[w] = true
-	}
-	words := nameWords(span)
-	if len(words) == 0 {
+	spanWords := nameWords(span)
+	if len(spanWords) == 0 {
 		return false
 	}
-	for _, w := range words {
-		if !have[w] {
-			return false
+	cardWordSet := map[string]bool{}
+	for _, w := range nameWords(cardName) {
+		cardWordSet[w] = true
+	}
+	subset := true
+	for _, w := range spanWords {
+		if !cardWordSet[w] {
+			subset = false
+			break
 		}
 	}
-	return true
+	if subset {
+		return true
+	}
+
+	s, c := alnum(span), alnum(cardName)
+	if s == "" || c == "" {
+		return false
+	}
+	budget := editBudget(s, c)
+	// Run-on guard: a span carrying a lot of extra content is probably two
+	// card names jammed together, not a fuzzy spelling of one card.
+	if len(s)-len(c) > budget {
+		return false
+	}
+	return levenshtein(s, c, budget) <= budget
+}
+
+// alnum returns the lowercased letters and digits of s with everything else
+// dropped, so spacing and punctuation no longer matter: "prize fight",
+// "Prizefight", and "Prize-Fight" all collapse to "prizefight".
+func alnum(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// editBudget is the fuzzy tolerance for a span/card pair: a couple of edits
+// for short names, growing gently with length. Scryfall's fuzzy matcher only
+// returns a card for genuinely close input, so a small budget is enough.
+func editBudget(s, c string) int {
+	longer := len(s)
+	if len(c) > longer {
+		longer = len(c)
+	}
+	b := longer / 4
+	if b < 2 {
+		b = 2
+	}
+	if b > 4 {
+		b = 4
+	}
+	return b
+}
+
+// levenshtein returns the edit distance between a and b, returning max+1 as
+// soon as the distance is known to exceed max. Inputs are short normalized
+// card names, so the bounded DP is cheap.
+func levenshtein(a, b string, max int) int {
+	if absInt(len(a)-len(b)) > max {
+		return max + 1
+	}
+	if a == b {
+		return 0
+	}
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := 0; j <= len(b); j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		rowMin := cur[0]
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			d := prev[j-1] + cost
+			if v := prev[j] + 1; v < d {
+				d = v
+			}
+			if v := cur[j-1] + 1; v < d {
+				d = v
+			}
+			cur[j] = d
+			if d < rowMin {
+				rowMin = d
+			}
+		}
+		if rowMin > max {
+			return max + 1
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
+func absInt(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // nameWords lowercases a name and splits it on everything that isn't a letter

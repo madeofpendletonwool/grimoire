@@ -87,6 +87,30 @@ func TestExtractCandidates(t *testing.T) {
 			in:   "Does Sol Ring/Lightning Bolt matter?",
 			want: []string{"Sol Ring", "Lightning Bolt"},
 		},
+		{
+			// MAD-113: single-quoted card names are extracted just like
+			// double-quoted ones, so 'prizefight' is pulled out even from a
+			// sentence with no Title Case to signal it. The contraction
+			// "It's" must NOT also be emitted as a lone capital.
+			name: "single quoted name",
+			in:   "It's 'prizefight'",
+			want: []string{"prizefight"},
+		},
+		{
+			// A single quote at the very start of the text is still a
+			// delimiter (the left boundary is start-of-string).
+			name: "single quoted name at start",
+			in:   "'Lightning Bolt' is good",
+			want: []string{"Lightning Bolt"},
+		},
+		{
+			// Contractions must not be read as quoted phrases: the apostrophe
+			// in "It's" is glued to letters, so it is not a delimiter, and as
+			// a contraction of the stopword "it" it is not a card name either.
+			name: "contraction is not a quote",
+			in:   "It's a rules question",
+			want: nil,
+		},
 	}
 
 	for _, c := range cases {

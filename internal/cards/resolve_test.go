@@ -125,6 +125,17 @@ func TestNameMatches(t *testing.T) {
 		{"Evening Star Sakashima the Impostor", "Kokusho, the Evening Star", false}, // over-long span
 		{"Humility Opalescence", "Humility", false},
 		{"", "Humility", false},
+		// Spacing differences (MAD-113): a space the user added or dropped
+		// must not defeat a Scryfall fuzzy match.
+		{"prize fight", "Prizefight", true},
+		{"Prizefight", "Prize Fight", true}, // hypothetical reverse spacing
+		{"lightningbolt", "Lightning Bolt", true},
+		// Minor misspellings (MAD-113): Scryfall's fuzzy matcher corrects
+		// these; nameMatches must accept its answer.
+		{"gient growth", "Giant Growth", true},
+		{"counterspel", "Counterspell", true},
+		// Two unrelated names must never fuzzy onto each other.
+		{"Completely Different Thing", "Lightning Bolt", false},
 	}
 	for _, c := range cases {
 		if got := nameMatches(c.span, c.card); got != c.want {
@@ -137,5 +148,41 @@ func TestResolve_NilLooker(t *testing.T) {
 	got := Resolve(context.Background(), nil, []string{"Lightning Bolt"})
 	if len(got.Cards) != 0 || len(got.Unresolved) != 0 {
 		t.Errorf("nil looker should resolve nothing, got %+v", got)
+	}
+}
+
+// mappingLooker returns a fixed card for an exact (case-insensitive) query,
+// modeling how Scryfall's fuzzy /cards/named endpoint resolves a slightly
+// mis-spaced or misspelled name to the real card. The fakeLooker above can't
+// express that, because it matches on whole-word containment.
+type mappingLooker struct {
+	byQuery map[string]*Card
+	calls   int
+}
+
+func (m *mappingLooker) Lookup(_ context.Context, name string) (*Card, error) {
+	m.calls++
+	if c, ok := m.byQuery[strings.ToLower(name)]; ok {
+		return c, nil
+	}
+	return nil, ErrNotFound
+}
+
+func TestResolve_ToleratesSpacingAndTypos(t *testing.T) {
+	// Regression for MAD-113: Scryfall resolves "prize fight" to Prizefight
+	// (one word). Before the fix, nameMatches rejected that match because
+	// "prize" and "fight" are not whole words of "Prizefight", so the card
+	// came back unresolved and the model answered from memory.
+	l := &mappingLooker{byQuery: map[string]*Card{
+		"prize fight":  {Name: "Prizefight", OracleText: "fight text"},
+		"gient growth": {Name: "Giant Growth", OracleText: "+3/+3"},
+	}}
+	got := Resolve(context.Background(), l, []string{"Prize Fight", "Gient Growth"})
+	want := []string{"Prizefight", "Giant Growth"}
+	if !sameSet(resolvedNames(got), want) {
+		t.Errorf("resolved %v, want %v", resolvedNames(got), want)
+	}
+	if len(got.Unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none", got.Unresolved)
 	}
 }

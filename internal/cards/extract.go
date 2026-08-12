@@ -35,7 +35,7 @@ func ExtractCandidates(question string) []string {
 	add := func(s string) {
 		s = strings.TrimSpace(stripTrailingPunct(s))
 		s = strings.Trim(s, `"'[]()`)
-		if s == "" || !hasLetter(s) || isStopwordLower(s) {
+		if s == "" || !hasLetter(s) || isStopwordLike(s) {
 			return
 		}
 		k := strings.ToLower(s)
@@ -57,6 +57,23 @@ func ExtractCandidates(question string) []string {
 			add(sub[2])
 		}
 		return strings.Repeat(" ", len(m))
+	})
+
+	// 1b. Single-quoted phrases ('Prizefight') — same treatment as double
+	// quotes. The boundary guards (non-letter on each side, or start/end of
+	// text) stop a contraction's apostrophe ("It's") from masquerading as a
+	// delimiter: an opener must be preceded by a non-letter, so an
+	// apostrophe glued to a word ("t's") never opens a quote.
+	q = singleQuotedRe.ReplaceAllStringFunc(q, func(m string) string {
+		sub := singleQuotedRe.FindStringSubmatch(m)
+		// sub: [1]=leading boundary, [2]=content, [3]=trailing boundary.
+		if len(sub) >= 3 && sub[2] != "" {
+			add(sub[2])
+			// Preserve length: keep the boundary chars and blank only the
+			// two quotes plus the content.
+			return sub[1] + strings.Repeat(" ", 2+len(sub[2])) + sub[3]
+		}
+		return m
 	})
 
 	// 2. "named X" / "called X" tails — capture, then blank.
@@ -83,6 +100,14 @@ func ExtractCandidates(question string) []string {
 // non-empty).
 var quotedRe = regexp.MustCompile(`"([^"]+)"|\[([^\]]+)\]`)
 
+// singleQuotedRe captures 'single-quoted' phrases. Group 1 is the leading
+// boundary (start of text or one non-letter), group 2 the content, group 3
+// the trailing boundary (one non-letter or end of text). Requiring a
+// non-letter (or text edge) around both quotes is what stops a contraction
+// apostrophe from opening or closing a phrase: the apostrophe in "It's" is
+// glued to letters on both sides, so it can never be a boundary here.
+var singleQuotedRe = regexp.MustCompile(`(^|[^A-Za-z])'([^']+)'([^A-Za-z]|$)`)
+
 // namedRe captures the phrase following "named"/"called"/"card named". The
 // keyword half is case-insensitive; the captured phrase is case-sensitive so
 // it must start with a capital and continue with capitals or connectors only.
@@ -101,12 +126,13 @@ var connectorWords = map[string]bool{
 // isPhraseCapital reports whether a token counts as a proper-noun capital for
 // the purpose of building a Title Case phrase. A capitalized common English
 // function word (Is, How, What, Will, ...) does NOT count — it is treated as a
-// phrase boundary so it never seeds a card name.
+// phrase boundary so it never seeds a card name. A contraction of a stopword
+// ("It's", "What's", "Don't") is likewise a boundary, not a card name.
 func isPhraseCapital(w string) bool {
 	if !startsUpper(w) {
 		return false
 	}
-	return !isStopwordLower(strings.ToLower(w))
+	return !isStopwordLike(w)
 }
 
 // titleCasePhrases scans tokens and emits maximal runs of [phrase capital |
@@ -277,3 +303,26 @@ var stopwordsLower = map[string]bool{
 }
 
 func isStopwordLower(s string) bool { return stopwordsLower[strings.ToLower(s)] }
+
+// contractionSuffixes are English clitics stripped before the stopword check
+// so a capitalized contraction of a stopword ("It's", "What's", "Don't") is
+// treated as its stem and acts as a phrase boundary instead of a card-name
+// candidate.
+var contractionSuffixes = []string{"'s", "'re", "'ve", "'ll", "'d", "n't"}
+
+// isStopwordLike reports whether s, or s with a trailing English clitic
+// removed, is a stopword.
+func isStopwordLike(s string) bool {
+	low := strings.ToLower(s)
+	if stopwordsLower[low] {
+		return true
+	}
+	for _, suf := range contractionSuffixes {
+		if strings.HasSuffix(low, suf) && len(low) > len(suf) {
+			if stopwordsLower[low[:len(low)-len(suf)]] {
+				return true
+			}
+		}
+	}
+	return false
+}
