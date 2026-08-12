@@ -79,7 +79,7 @@ func TestListOrdersByRecentActivity(t *testing.T) {
 	second, _ := s.Create(ctx, "u", "mtg", "second")
 
 	// A new message in the older thread should float it to the top.
-	if _, err := s.AddMessage(ctx, first.ID, RoleUser, "hello", nil, nil); err != nil {
+	if _, err := s.AddMessage(ctx, first.ID, RoleUser, "hello", nil, nil, nil); err != nil {
 		t.Fatalf("add message: %v", err)
 	}
 
@@ -104,10 +104,10 @@ func TestMessagesRoundTripCitations(t *testing.T) {
 	c, _ := s.Create(ctx, "u", "mtg", "t")
 
 	sources := json.RawMessage(`[{"number":"702.2"}]`)
-	if _, err := s.AddMessage(ctx, c.ID, RoleUser, "does deathtouch work?", nil, nil); err != nil {
+	if _, err := s.AddMessage(ctx, c.ID, RoleUser, "does deathtouch work?", nil, nil, nil); err != nil {
 		t.Fatalf("add user: %v", err)
 	}
-	if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "yes", sources, nil); err != nil {
+	if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "yes", sources, nil, nil); err != nil {
 		t.Fatalf("add assistant: %v", err)
 	}
 
@@ -129,11 +129,99 @@ func TestMessagesRoundTripCitations(t *testing.T) {
 	}
 }
 
+func TestMessagesRoundTripRulings(t *testing.T) {
+	// Rulings are a third citation payload alongside sources and cards; they
+	// must survive the store round-trip so a reopened chat still shows them.
+	s := testStore(t)
+	ctx := context.Background()
+	c, _ := s.Create(ctx, "u", "mtg", "t")
+
+	rulings := json.RawMessage(`[{"card_name":"Derevi, Empyrial Tactician","source":"wotc","published_at":"2020-11-10","comment":"You can activate only in the command zone."}]`)
+	if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "ruling applies", nil, nil, rulings); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	msgs, err := s.Messages(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("messages: %v", err)
+	}
+	if string(msgs[0].Rulings) != string(rulings) {
+		t.Errorf("rulings = %s, want %s", msgs[0].Rulings, rulings)
+	}
+}
+
+func TestMigrateAddsRulingsColumn(t *testing.T) {
+	// An install upgraded from before the rulings layer has a chat_messages
+	// table without the rulings column. Opening the store on such a database
+	// must add the column in place without losing the existing history.
+	path := filepath.Join(t.TempDir(), "chat.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+
+	// Build the pre-rulings schema by hand, then hand-upgrade via New.
+	preRulingsSchema := `
+CREATE TABLE IF NOT EXISTS conversations (
+	id         TEXT PRIMARY KEY,
+	user_id    TEXT NOT NULL DEFAULT 'anonymous',
+	corpus     TEXT NOT NULL,
+	title      TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS conversations_owner ON conversations(user_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS chat_messages (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+	role            TEXT NOT NULL,
+	content         TEXT NOT NULL,
+	sources         TEXT NOT NULL DEFAULT '',
+	cards           TEXT NOT NULL DEFAULT '',
+	created_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(conversation_id, id);`
+	if _, err := db.Exec(preRulingsSchema); err != nil {
+		t.Fatalf("seed old schema: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO conversations (id, user_id, corpus, title, created_at, updated_at) VALUES ('c1','u','mtg','t',1,1)`); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO chat_messages (conversation_id, role, content, sources, cards, created_at) VALUES ('c1','user','old question','','',1)`); err != nil {
+		t.Fatalf("seed old message: %v", err)
+	}
+
+	// The upgrade path: New() runs the migration, adding the rulings column.
+	store, err := New(db)
+	if err != nil {
+		t.Fatalf("open upgraded store: %v", err)
+	}
+
+	// Old history survives, and a new message carrying rulings round-trips.
+	msgs, err := store.Messages(context.Background(), "c1")
+	if err != nil {
+		t.Fatalf("messages after upgrade: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Content != "old question" {
+		t.Fatalf("upgrade lost history: %+v", msgs)
+	}
+	rulings := json.RawMessage(`[{"card_name":"Bolt","source":"wotc","published_at":"2020-01-01","comment":"x"}]`)
+	if _, err := store.AddMessage(context.Background(), "c1", RoleAssistant, "with rulings", nil, nil, rulings); err != nil {
+		t.Fatalf("add after upgrade: %v", err)
+	}
+	msgs, _ = store.Messages(context.Background(), "c1")
+	if string(msgs[1].Rulings) != string(rulings) {
+		t.Errorf("rulings did not round-trip after migration: %s", msgs[1].Rulings)
+	}
+}
+
 func TestDeleteCascadesMessages(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	c, _ := s.Create(ctx, "u", "mtg", "t")
-	if _, err := s.AddMessage(ctx, c.ID, RoleUser, "hi", nil, nil); err != nil {
+	if _, err := s.AddMessage(ctx, c.ID, RoleUser, "hi", nil, nil, nil); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
@@ -155,10 +243,10 @@ func TestHistoryWindow(t *testing.T) {
 	c, _ := s.Create(ctx, "u", "mtg", "t")
 
 	for i := 0; i < 4; i++ {
-		if _, err := s.AddMessage(ctx, c.ID, RoleUser, "q", nil, nil); err != nil {
+		if _, err := s.AddMessage(ctx, c.ID, RoleUser, "q", nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "a", json.RawMessage(`[1]`), nil); err != nil {
+		if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "a", json.RawMessage(`[1]`), nil, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -186,8 +274,8 @@ func TestHistoryUnboundedReturnsAll(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	c, _ := s.Create(ctx, "u", "mtg", "t")
-	s.AddMessage(ctx, c.ID, RoleUser, "q", nil, nil)
-	s.AddMessage(ctx, c.ID, RoleAssistant, "a", nil, nil)
+	s.AddMessage(ctx, c.ID, RoleUser, "q", nil, nil, nil)
+	s.AddMessage(ctx, c.ID, RoleAssistant, "a", nil, nil, nil)
 
 	got, err := s.History(ctx, c.ID, 0)
 	if err != nil {

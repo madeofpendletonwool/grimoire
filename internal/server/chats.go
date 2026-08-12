@@ -191,7 +191,7 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 		history = append(history, llm.Turn{Role: m.Role, Content: m.Content})
 	}
 
-	if _, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleUser, req.Question, nil, nil); err != nil {
+	if _, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleUser, req.Question, nil, nil, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -221,6 +221,7 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 	sse.send("meta", map[string]any{
 		"sources":          g.sources,
 		"cards":            g.cards,
+		"rulings":          g.rulings,
 		"unresolved_cards": g.unresolved,
 		"title":            title,
 	})
@@ -241,8 +242,8 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sources, cardsJSON := marshalCitations(g)
-	saved, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleAssistant, answer, sources, cardsJSON)
+	sources, cardsJSON, rulingsJSON := marshalCitations(g)
+	saved, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleAssistant, answer, sources, cardsJSON, rulingsJSON)
 	if err != nil {
 		log.Printf("chat: save answer %s: %v", conv.ID, err)
 	}
@@ -260,7 +261,7 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 // marshalCitations encodes the citation payloads stored alongside an answer.
-func marshalCitations(g grounded) (sources, cardsJSON json.RawMessage) {
+func marshalCitations(g grounded) (sources, cardsJSON, rulingsJSON json.RawMessage) {
 	if len(g.sources) > 0 {
 		if b, err := json.Marshal(g.sources); err == nil {
 			sources = b
@@ -271,7 +272,12 @@ func marshalCitations(g grounded) (sources, cardsJSON json.RawMessage) {
 			cardsJSON = b
 		}
 	}
-	return sources, cardsJSON
+	if len(g.rulings) > 0 {
+		if b, err := json.Marshal(g.rulings); err == nil {
+			rulingsJSON = b
+		}
+	}
+	return sources, cardsJSON, rulingsJSON
 }
 
 func writeChatError(w http.ResponseWriter, err error) {

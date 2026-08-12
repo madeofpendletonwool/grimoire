@@ -51,15 +51,16 @@ type Conversation struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Message is one turn in a conversation. Sources and Cards hold the citation
-// payloads shown under an assistant answer, stored as raw JSON so the chat
-// store stays independent of the server's view types.
+// Message is one turn in a conversation. Sources, Cards, and Rulings hold the
+// citation payloads shown under an assistant answer, stored as raw JSON so the
+// chat store stays independent of the server's view types.
 type Message struct {
 	ID        int64           `json:"id"`
 	Role      string          `json:"role"`
 	Content   string          `json:"content"`
 	Sources   json.RawMessage `json:"sources,omitempty"`
 	Cards     json.RawMessage `json:"cards,omitempty"`
+	Rulings   json.RawMessage `json:"rulings,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
 }
 
@@ -73,6 +74,9 @@ type Store struct {
 func New(db *sql.DB) (*Store, error) {
 	s := &Store{db: db}
 	if _, err := db.Exec(schema); err != nil {
+		return nil, fmt.Errorf("chat migrate: %w", err)
+	}
+	if err := migrate(db); err != nil {
 		return nil, fmt.Errorf("chat migrate: %w", err)
 	}
 	return s, nil
@@ -95,10 +99,53 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 	content         TEXT NOT NULL,
 	sources         TEXT NOT NULL DEFAULT '',
 	cards           TEXT NOT NULL DEFAULT '',
+	rulings         TEXT NOT NULL DEFAULT '',
 	created_at      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(conversation_id, id);
 `
+
+// migrate applies additive column additions for installs whose chat_messages
+// table predates a later feature. Each step is idempotent: a fresh database
+// already has the column from schema, and an upgraded one gets it added
+// in-place without losing history.
+func migrate(db *sql.DB) error {
+	return ensureColumn(db, "chat_messages", "rulings")
+}
+
+// ensureColumn adds a TEXT NOT NULL DEFAULT '' column to a table when it is
+// not already present. SQLite cannot express "add column if not exists", so
+// the presence is checked against PRAGMA table_info first.
+func ensureColumn(db *sql.DB, table, column string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", table, err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == column {
+			return rows.Close()
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s TEXT NOT NULL DEFAULT ''", table, column))
+	if err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
 
 // Create opens a new conversation for a user against a fixed corpus.
 func (s *Store) Create(ctx context.Context, userID, corpus, title string) (*Conversation, error) {
@@ -190,13 +237,13 @@ func (s *Store) ReassignOwner(ctx context.Context, from, to string) (int64, erro
 }
 
 // AddMessage appends a turn and bumps the conversation's updated_at so the
-// sidebar orders by real activity. Sources and cards may be nil.
-func (s *Store) AddMessage(ctx context.Context, convID, role, content string, sources, cards json.RawMessage) (*Message, error) {
+// sidebar orders by real activity. Sources, cards, and rulings may be nil.
+func (s *Store) AddMessage(ctx context.Context, convID, role, content string, sources, cards, rulings json.RawMessage) (*Message, error) {
 	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO chat_messages (conversation_id, role, content, sources, cards, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		convID, role, content, string(sources), string(cards), now.UnixMilli())
+		`INSERT INTO chat_messages (conversation_id, role, content, sources, cards, rulings, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		convID, role, content, string(sources), string(cards), string(rulings), now.UnixMilli())
 	if err != nil {
 		return nil, fmt.Errorf("add message: %w", err)
 	}
@@ -208,13 +255,13 @@ func (s *Store) AddMessage(ctx context.Context, convID, role, content string, so
 		`UPDATE conversations SET updated_at = ? WHERE id = ?`, now.UnixMilli(), convID); err != nil {
 		return nil, fmt.Errorf("touch conversation: %w", err)
 	}
-	return &Message{ID: id, Role: role, Content: content, Sources: sources, Cards: cards, CreatedAt: now}, nil
+	return &Message{ID: id, Role: role, Content: content, Sources: sources, Cards: cards, Rulings: rulings, CreatedAt: now}, nil
 }
 
 // Messages returns a conversation's turns in order.
 func (s *Store) Messages(ctx context.Context, convID string) ([]Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, role, content, sources, cards, created_at
+		`SELECT id, role, content, sources, cards, rulings, created_at
 		   FROM chat_messages WHERE conversation_id = ? ORDER BY id ASC`, convID)
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
@@ -224,15 +271,16 @@ func (s *Store) Messages(ctx context.Context, convID string) ([]Message, error) 
 	out := []Message{}
 	for rows.Next() {
 		var (
-			m             Message
-			sources, card string
-			created       int64
+			m                 Message
+			sources, card, ru string
+			created           int64
 		)
-		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &sources, &card, &created); err != nil {
+		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &sources, &card, &ru, &created); err != nil {
 			return nil, err
 		}
 		m.Sources = rawOrNil(sources)
 		m.Cards = rawOrNil(card)
+		m.Rulings = rawOrNil(ru)
 		m.CreatedAt = time.UnixMilli(created).UTC()
 		out = append(out, m)
 	}
@@ -259,6 +307,7 @@ func (s *Store) History(ctx context.Context, convID string, maxTurns int) ([]Mes
 	for i := range all {
 		all[i].Sources = nil
 		all[i].Cards = nil
+		all[i].Rulings = nil
 	}
 	return all, nil
 }

@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -19,6 +20,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
+	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/web"
 )
 
@@ -37,6 +39,7 @@ type Server struct {
 	store            *index.Store
 	llm              *llm.Client
 	cards            *cards.Service
+	rulings          *rulings.Service
 	cardDict         *cards.Dictionary
 	chats            *chat.Store
 	users            *auth.Store
@@ -46,12 +49,13 @@ type Server struct {
 }
 
 // New builds a Server from an open index store, an LLM client, a card lookup
-// service, an optional card-name dictionary (powers lowercase/unquoted card
-// detection in the chat), a chat store, and the authentication wiring. A nil
-// card service disables card features gracefully; a nil dictionary leaves
-// detection on the text heuristics alone; a nil chat store disables saved
-// conversations; a zero Auth leaves the API unauthenticated.
-func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, cardDict *cards.Dictionary, chats *chat.Store, ac Auth) (*Server, error) {
+// service, a rulings lookup service, an optional card-name dictionary (powers
+// lowercase/unquoted card detection in the chat), a chat store, and the
+// authentication wiring. A nil card service disables card features gracefully;
+// a nil rulings service disables the rulings layer the same way; a nil
+// dictionary leaves detection on the text heuristics alone; a nil chat store
+// disables saved conversations; a zero Auth leaves the API unauthenticated.
+func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulingsSvc *rulings.Service, cardDict *cards.Dictionary, chats *chat.Store, ac Auth) (*Server, error) {
 	tmpl, err := template.New("").ParseFS(web.Templates, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -61,7 +65,7 @@ func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, cardDic
 		return nil, err
 	}
 	return &Server{
-		store: store, llm: client, cards: cardSvc, cardDict: cardDict, chats: chats,
+		store: store, llm: client, cards: cardSvc, rulings: rulingsSvc, cardDict: cardDict, chats: chats,
 		users: ac.Users, openRegistration: ac.OpenRegistration,
 		tmpl: tmpl, static: static,
 	}, nil
@@ -266,6 +270,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		"answer":           answer,
 		"sources":          g.sources,
 		"cards":            g.cards,
+		"rulings":          g.rulings,
 		"unresolved_cards": g.unresolved,
 	})
 }
@@ -275,8 +280,10 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 type grounded struct {
 	docs       []llm.ContextDoc
 	cardDocs   []llm.CardDoc
+	rulingDocs []llm.RulingDoc
 	sources    []searchHit
 	cards      []cardView
+	rulings    []rulingView
 	unresolved []string
 }
 
@@ -285,6 +292,7 @@ func (g grounded) request(corpus data.Corpus, question string, history []llm.Tur
 		CorpusName: corpusDisplayName(corpus),
 		Docs:       g.docs,
 		Cards:      g.cardDocs,
+		Rulings:    g.rulingDocs,
 		Unresolved: g.unresolved,
 		History:    history,
 		Question:   question,
@@ -311,6 +319,7 @@ func (s *Server) ground(ctx context.Context, corpus data.Corpus, question string
 	}
 	g.sources = toSources(results)
 	g.cardDocs, g.cards, g.unresolved = s.lookupQuestionCards(ctx, corpus, question)
+	g.rulingDocs, g.rulings = s.lookupCardRulings(ctx, corpus, g.cards)
 	return g, nil
 }
 
@@ -341,6 +350,42 @@ func (s *Server) lookupQuestionCards(ctx context.Context, corpus data.Corpus, qu
 		log.Printf("card lookup: no match for %q", strings.Join(res.Unresolved, ", "))
 	}
 	return cardDocs, hits, res.Unresolved
+}
+
+// lookupCardRulings fetches the official rulings for each resolved card. It
+// feeds the rulings to the model as precedent (so answers cite Gatherer/Oracle
+// rulings, not just rule text) and to the UI as citations. MTG-only, and a no-op
+// when no rulings service is wired or no cards resolved.
+func (s *Server) lookupCardRulings(ctx context.Context, corpus data.Corpus, hits []cardView) ([]llm.RulingDoc, []rulingView) {
+	if s.rulings == nil || corpus != data.CorpusMTG || len(hits) == 0 {
+		return nil, nil
+	}
+	var docs []llm.RulingDoc
+	var views []rulingView
+	for _, c := range hits {
+		if c.Name == "" {
+			continue
+		}
+		rs, err := s.rulings.Fetch(ctx, c.Name)
+		if err != nil {
+			// ErrNotFound covers both "no card" and "card with no rulings" —
+			// neither is a hard failure, so they are not logged. Other errors
+			// (timeout, upstream 5xx) are logged but never break the answer.
+			if !errors.Is(err, rulings.ErrNotFound) {
+				log.Printf("rulings lookup for %q: %v", c.Name, err)
+			}
+			continue
+		}
+		for _, r := range rs {
+			docs = append(docs, llm.RulingDoc{
+				CardName: c.Name, Source: r.Source, PublishedAt: r.PublishedAt, Comment: r.Comment,
+			})
+			views = append(views, rulingView{
+				CardName: c.Name, Source: r.Source, PublishedAt: r.PublishedAt, Comment: r.Comment,
+			})
+		}
+	}
+	return docs, views
 }
 
 func toSources(results []index.Result) []searchHit {
@@ -377,6 +422,16 @@ type cardFace struct {
 	Toughness  string `json:"toughness,omitempty"`
 	Loyalty    string `json:"loyalty,omitempty"`
 	ImageURL   string `json:"image_url,omitempty"`
+}
+
+// rulingView is the JSON shape for an official ruling returned to the UI. It is
+// attributed by the card it applies to, its source (wotc/scryfall), and its
+// publish date so the UI can render it as a citation.
+type rulingView struct {
+	CardName    string `json:"card_name"`
+	Source      string `json:"source"`
+	PublishedAt string `json:"published_at"`
+	Comment     string `json:"comment"`
 }
 
 func toCardView(c *cards.Card) cardView {
