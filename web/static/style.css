@@ -971,7 +971,18 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
-	.app, .app.drawer-open { grid-template-columns: minmax(0, 1fr); }
+	/* Rail and drawer are overlays on narrow screens, so the main column
+	   fills the viewport in every app state. Forcing a single grid track
+	   for all state combos prevents the drawer-open state (which on mobile
+	   is also rail-hidden) from squishing chat to a sliver on the left. */
+	html, body { height: 100dvh; }
+	body { overscroll-behavior: none; }
+	.app,
+	.app.rail-hidden,
+	.app.drawer-open,
+	.app.rail-hidden.drawer-open {
+		grid-template-columns: minmax(0, 1fr);
+	}
 
 	.rail {
 		position: fixed;
@@ -979,7 +990,7 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 		top: 0;
 		bottom: 0;
 		left: 0;
-		width: var(--rail-w);
+		width: min(var(--rail-w), 88vw);
 		transform: translateX(-100%);
 		transition: transform 0.22s ease;
 		box-shadow: var(--shadow-3);
@@ -1001,12 +1012,35 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 		top: 0;
 		right: 0;
 		bottom: 0;
-		width: min(var(--drawer-w), 92vw);
+		width: min(var(--drawer-w), 94vw);
 		box-shadow: var(--shadow-3);
 	}
+
 	.transcript { padding: var(--sp-4) var(--sp-3) var(--sp-3); }
-	.composer-dock { padding: 0 var(--sp-3) var(--sp-3); }
+	.composer-dock { padding: 0 var(--sp-3) calc(var(--sp-3) + env(safe-area-inset-bottom)); }
 	.msg-user .bubble { max-width: 92%; }
+
+	/* keep chrome off the notch and home indicator */
+	.topbar {
+		gap: var(--sp-2);
+		padding: var(--sp-2) var(--sp-3);
+		padding-top: calc(var(--sp-2) + env(safe-area-inset-top));
+	}
+	.rail-head { padding-top: calc(var(--sp-3) + env(safe-area-inset-top)); }
+	.rail-foot { padding-bottom: calc(var(--sp-3) + env(safe-area-inset-bottom)); }
+	.drawer-head { padding-top: calc(var(--sp-3) + env(safe-area-inset-top)); }
+	.drawer-body { padding-bottom: calc(var(--sp-3) + env(safe-area-inset-bottom)); }
+
+	/* thumb-friendly tap targets in the chrome */
+	.icon-btn { padding: 0.5rem 0.65rem; }
+	.conv-title { flex: 1 1 auto; min-width: 0; }
+	.welcome-title { font-size: clamp(1.5rem, 8vw, 2.2rem); }
+
+	.gate {
+		padding:
+			calc(var(--sp-5) + env(safe-area-inset-top)) var(--sp-4)
+			calc(var(--sp-5) + env(safe-area-inset-bottom));
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {
