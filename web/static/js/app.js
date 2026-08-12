@@ -29,6 +29,30 @@ function initRail() {
 	$("topbar-search").addEventListener("click", () => openPalette());
 }
 
+// initAccount reveals the sign-out control once we know who is signed in. It
+// stays hidden when the server runs without accounts, so there is nothing to
+// sign out of and nothing to show.
+async function initAccount() {
+	let state;
+	try {
+		state = await api.authState();
+	} catch (_) {
+		return; // non-fatal: the rest of the app is unaffected
+	}
+	if (!state.username) return;
+
+	$("rail-user").textContent = state.username;
+	const button = $("rail-signout");
+	button.hidden = false;
+	button.addEventListener("click", async () => {
+		button.disabled = true;
+		try {
+			await api.logout();
+		} catch (_) { /* the cookie is gone either way; land on the gate */ }
+		window.location.assign("/");
+	});
+}
+
 async function loadMeta() {
 	try {
 		state.meta = await api.meta();
@@ -55,6 +79,7 @@ function start() {
 	initPalette();
 	initChat();
 	syncChrome();
+	initAccount();
 	loadMeta();
 	refreshHistory();
 	if (!isNarrow()) $("composer-input").focus();

@@ -215,6 +215,68 @@ func TestRename(t *testing.T) {
 	}
 }
 
+func TestReassignOwner(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	// Two threads from the pre-authentication app, and one that already
+	// belongs to somebody — the migration must not touch the latter.
+	old1, _ := s.Create(ctx, AnonymousUser, "mtg", "before accounts")
+	old2, _ := s.Create(ctx, AnonymousUser, "dnd", "also before accounts")
+	theirs, _ := s.Create(ctx, "bob", "mtg", "bob's")
+
+	moved, err := s.ReassignOwner(ctx, AnonymousUser, "alice")
+	if err != nil {
+		t.Fatalf("reassign: %v", err)
+	}
+	if moved != 2 {
+		t.Errorf("moved %d conversations, want 2", moved)
+	}
+	for _, c := range []*Conversation{old1, old2} {
+		if _, err := s.Get(ctx, "alice", c.ID); err != nil {
+			t.Errorf("alice should own %q after the migration: %v", c.Title, err)
+		}
+	}
+	if _, err := s.Get(ctx, "bob", theirs.ID); err != nil {
+		t.Errorf("bob's conversation was swept up by the migration: %v", err)
+	}
+
+	// Idempotent: nothing is left under the anonymous owner to move.
+	again, err := s.ReassignOwner(ctx, AnonymousUser, "alice")
+	if err != nil {
+		t.Fatalf("second reassign: %v", err)
+	}
+	if again != 0 {
+		t.Errorf("second run moved %d conversations, want 0", again)
+	}
+}
+
+func TestReassignOwnerIgnoresNoOpArguments(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	s.Create(ctx, AnonymousUser, "mtg", "before accounts")
+
+	tests := []struct {
+		name     string
+		from, to string
+	}{
+		{"empty from", "", "alice"},
+		{"empty to", AnonymousUser, ""},
+		{"same owner", AnonymousUser, AnonymousUser},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := s.ReassignOwner(ctx, tt.from, tt.to)
+			if err != nil || n != 0 {
+				t.Errorf("ReassignOwner(%q, %q) = %d, %v; want 0, nil", tt.from, tt.to, n, err)
+			}
+		})
+	}
+	if list, _ := s.List(ctx, AnonymousUser, 10); len(list) != 1 {
+		t.Errorf("the anonymous conversation should be untouched, got %d", len(list))
+	}
+}
+
 func TestDeriveTitle(t *testing.T) {
 	tests := []struct {
 		name string

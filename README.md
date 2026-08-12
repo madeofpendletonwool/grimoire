@@ -12,6 +12,7 @@ A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** a
 - **📚 Conversations are saved** — threads persist in SQLite with auto-generated titles, and the sidebar groups them by date. Rename, delete, resume across reloads and devices. A conversation's rule set is locked when it is created, because the grounding differs per corpus.
 - **⌘K Command palette** — one search box over both rule sets and Scryfall. Results open in a reference drawer beside the conversation, so consulting a rule never takes you out of the chat. Slash commands work in the composer too: `/card Lightning Bolt`, `/rule 702.2`, `/search`.
 - **🔎 Full-text search** across both rule sets (SQLite + FTS5). Search by word, phrase, or a direct rule number like `205.1a`. Opening a numbered rule expands it to the full mechanic section — the parent plus every sub-rule — so you see how it actually works.
+- **🔐 Yours alone** — the whole app sits behind a login. The first visit to a fresh install creates the keeper account (no seeded password to forget to change), account creation closes behind it, and conversations are scoped per account. Passwords are argon2id; sessions are server-side and revocable.
 - **🃏 Card lookup** — pull the real oracle text of any Magic card by name via Scryfall (no API key required). The chat consults it automatically when a card is mentioned, so it never invents card effects; when it cannot resolve a name it says so instead of guessing. The palette autocompletes as you type, so you never have to spell out "Asmoranomardicadaistinaculdacar" in full.
 - **✦ / ⚔ Two corpora** — Magic and D&D, each with its own accent (mana-blue vs. dragon-red). Pick one per conversation.
 - **📜 Medieval, not mid-2000s** — parchment reserved for the content surfaces (answers, rules, cards) against candlelit-stone chrome. Serif for prose, sans for UI, gold for emphasis. No build step, no JS framework, no bundler — just ES modules.
@@ -25,7 +26,7 @@ cp .env.example .env          # fill in ANTHROPIC_API_KEY to enable the chat
 docker compose up --build
 ```
 
-Open <http://localhost:8080>. Search works immediately; the Q&A chat is enabled once `ANTHROPIC_API_KEY` is set.
+Open <http://localhost:8080>. The first visit asks you to create the keeper account — pick a name and passphrase and you are in. Search works immediately; the Q&A chat is enabled once `ANTHROPIC_API_KEY` is set.
 
 The search index is built on first run (it fetches the MTG Comprehensive Rules and the D&D 5e SRD) and cached in a volume, so subsequent starts are instant. To rebuild it:
 
@@ -44,6 +45,32 @@ The chat speaks the **Anthropic Messages API** and is fully configurable, so it 
 | `ANTHROPIC_MODEL`   | `glm-4.6`                        | Any model the endpoint serves (e.g. `claude-3-5-sonnet-20241022`). |
 
 The key is read from the environment only — it is never baked into the image, the compose file, source, or logs. Without a key, search works fully and the chat shows a "configure a key" notice.
+
+## Accounts
+
+Grimoire is single-household software, so it has a login but no user management
+screen. On a fresh install the app has no accounts and the login page offers to
+create the first one: whoever reaches the app claims it. Creation then closes,
+and later arrivals only see a login form.
+
+| Variable                     | Default | Notes                                                                     |
+| ---------------------------- | ------- | ------------------------------------------------------------------------- |
+| `GRIMOIRE_SESSION_TTL`       | `720h`  | How long a session lasts. Any Go duration (`24h`, `168h`, …).              |
+| `GRIMOIRE_OPEN_REGISTRATION` | `false` | Keep account creation open after the first keeper, for a household of more than one. |
+
+- Passwords are hashed with **argon2id** (64 MiB, 3 passes) using a per-password
+  random salt; the parameters travel inside every stored hash, so raising the
+  cost later leaves existing passwords verifiable.
+- Sessions are **server-side**: the cookie holds an opaque 256-bit token, the
+  database holds only its SHA-256 digest, and signing out deletes the row — so a
+  stolen cookie stops working the moment you log out. The cookie is `HttpOnly`
+  and `SameSite=Lax`, and is marked `Secure` automatically when the request
+  arrives over TLS or through a proxy that sets `X-Forwarded-Proto: https`.
+- Accounts live in the same SQLite file as everything else, so they survive
+  `grimoire index` and ride along with the `/data` volume.
+- **Upgrading from a version without accounts?** Conversations recorded under the
+  old anonymous owner are handed to the first account created, so no history is
+  lost behind the new login.
 
 ## Run locally (no Docker)
 
@@ -71,18 +98,30 @@ Environment variables are the same as above (`GRIMOIRE_ADDR`, `GRIMOIRE_DB`, `AN
 | `DELETE`| `/api/chats/{id}` | —                                           | `204`                                |
 | `POST` | `/api/chats/{id}/messages` | `{question}`                         | SSE: `meta`, `delta`, `done`, `error` |
 | `GET`  | `/api/meta`    | —                                               | `{corpora:[…], chat_configured, chat_model}` |
+| `GET`  | `/api/auth/state` | —                                            | `{authenticated, username, setup_required, registration_open}` |
+| `POST` | `/api/auth/setup` | `{username, password}`                       | `{user:{username}}` + session cookie; `403` once closed |
+| `POST` | `/api/auth/login` | `{username, password}`                       | `{user:{username}}` + session cookie; `401` on a bad pair |
+| `POST` | `/api/auth/logout` | —                                           | `204`, session revoked                |
 | `GET`  | `/healthz`     | —                                               | `{status, indexed}`                  |
+
+Every `/api/*` endpoint requires a session except the three auth handshake
+routes above. `/healthz` is deliberately open so the container healthcheck
+works. Unauthenticated API calls get `401` with a JSON body; an unauthenticated
+browser hitting `/` gets the login screen.
 
 `/api/ask` remains for scripted one-off questions. The UI uses the `/api/chats`
 endpoints, which save the thread and stream the answer.
 
-Example:
+Example — log in once, keep the cookie, then call the API:
 
 ```bash
-curl 'http://localhost:8080/api/search?corpus=mtg&q=ward'
-curl 'http://localhost:8080/api/card?q=Lightning%20Bolt'
-curl 'http://localhost:8080/api/card/search?q=bolt&limit=8'
-curl -X POST localhost:8080/api/ask -H 'content-type: application/json' \
+curl -c jar -X POST localhost:8080/api/auth/login -H 'content-type: application/json' \
+  -d '{"username":"keeper","password":"your-passphrase"}'
+
+curl -b jar 'http://localhost:8080/api/search?corpus=mtg&q=ward'
+curl -b jar 'http://localhost:8080/api/card?q=Lightning%20Bolt'
+curl -b jar 'http://localhost:8080/api/card/search?q=bolt&limit=8'
+curl -b jar -X POST localhost:8080/api/ask -H 'content-type: application/json' \
   -d '{"corpus":"mtg","question":"What does Lightning Bolt do?"}'
 ```
 
@@ -112,22 +151,24 @@ Both are fetched and indexed at first run. Overrides: `MTG_RULES_URL`, `DND_REPO
 ```
 cmd/grimoire      CLI entrypoint: `serve` (default) | `index`
 internal/
+  auth/           accounts + server-side sessions (argon2id, same SQLite file)
   cards/          Scryfall card lookup (named + search), cached + rate-limited
   chat/           saved conversations + messages (same SQLite file as the index)
   data/           fetch + parse MTG (.txt) and D&D (markdown) into records
   index/          SQLite + FTS5 store; full-text + rule-number search
   llm/            Anthropic Messages client (configurable base URL), RAG + streaming
-  server/         HTTP handlers, JSON API, SSE chat endpoint
+  server/         HTTP handlers, JSON API, SSE chat endpoint, session gate
 web/
-  templates/      the app shell
-  static/js/      ES modules: app, chat, palette, drawer, render, markdown, api
+  templates/      the app shell, plus the login / first-run gate
+  static/js/      ES modules: app, chat, palette, drawer, render, markdown, api, auth
 ```
 
 The binary embeds all front-end assets, so the runtime image is just the binary + CA certs.
 
-Chat history lives in the **same SQLite file** as the rules index. That is safe:
-`grimoire index` only clears the document tables, so rebuilding the index never
-drops a conversation. Keep the `/data` volume and your chats survive upgrades.
+Chat history and accounts live in the **same SQLite file** as the rules index.
+That is safe: `grimoire index` only clears the document tables, so rebuilding the
+index never drops a conversation or signs anyone out. Keep the `/data` volume and
+both survive upgrades.
 
 ## Development
 

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
@@ -21,21 +22,34 @@ import (
 	"github.com/madeofpendletonwool/grimoire/web"
 )
 
+// Auth wires the authentication layer. A zero Auth leaves the API open, which
+// is only appropriate for tests and for callers that gate the app themselves.
+type Auth struct {
+	Users *auth.Store
+	// OpenRegistration keeps the account-creation endpoint available after the
+	// first keeper exists. Off by default: a self-hosted install facing the
+	// internet should not hand out accounts.
+	OpenRegistration bool
+}
+
 // Server holds dependencies for serving the app.
 type Server struct {
-	store  *index.Store
-	llm    *llm.Client
-	cards  *cards.Service
-	chats  *chat.Store
-	tmpl   *template.Template
-	static fs.FS
+	store            *index.Store
+	llm              *llm.Client
+	cards            *cards.Service
+	chats            *chat.Store
+	users            *auth.Store
+	openRegistration bool
+	tmpl             *template.Template
+	static           fs.FS
 }
 
 // New builds a Server from an open index store, an LLM client, a card lookup
-// service, and a chat store. A nil card service disables card features
-// gracefully; a nil chat store disables saved conversations.
-func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, chats *chat.Store) (*Server, error) {
-	tmpl, err := template.New("").ParseFS(web.Templates, "templates/index.html")
+// service, a chat store, and the authentication wiring. A nil card service
+// disables card features gracefully; a nil chat store disables saved
+// conversations; a zero Auth leaves the API unauthenticated.
+func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, chats *chat.Store, ac Auth) (*Server, error) {
+	tmpl, err := template.New("").ParseFS(web.Templates, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
@@ -43,13 +57,21 @@ func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, chats *
 	if err != nil {
 		return nil, err
 	}
-	return &Server{store: store, llm: client, cards: cardSvc, chats: chats, tmpl: tmpl, static: static}, nil
+	return &Server{
+		store: store, llm: client, cards: cardSvc, chats: chats,
+		users: ac.Users, openRegistration: ac.OpenRegistration,
+		tmpl: tmpl, static: static,
+	}, nil
 }
 
 // Handler returns the HTTP handler tree.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("GET /api/auth/state", s.handleAuthState)
+	mux.HandleFunc("POST /api/auth/setup", s.handleSetup)
+	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("GET /api/section", s.handleSection)
@@ -64,13 +86,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/chats/{id}/messages", s.handleChatMessage)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
-	return s.recoverer(s.logger(mux))
+	return s.recoverer(s.logger(s.requireSession(mux)))
 }
 
-// userID identifies the caller who owns a conversation. Authentication is not
-// wired up yet, so every request resolves to the anonymous owner; this is the
-// single seam an auth layer replaces to make chat history per-user.
+// userID identifies the caller who owns a conversation. requireSession puts the
+// authenticated user on the request context; the anonymous fallback only
+// applies when no auth store is wired, where every caller is the same person.
 func userID(r *http.Request) string {
+	if u, ok := userFrom(r.Context()); ok {
+		return u.ID
+	}
 	return chat.AnonymousUser
 }
 
@@ -454,14 +479,21 @@ func (s *Server) handleCardSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"matches": views})
 }
 
+// handleIndex serves the app to a signed-in reader and the gate to everyone
+// else. Both are served at / rather than redirecting to a /login path, so a
+// bookmark of the app still lands somewhere useful when a session has lapsed.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
+	page := "index.html"
+	if s.users != nil && s.currentUser(r) == nil {
+		page = "auth.html"
+	}
 	w.Header().Set("content-type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "index.html", nil); err != nil {
-		log.Printf("render index: %v", err)
+	if err := s.tmpl.ExecuteTemplate(w, page, nil); err != nil {
+		log.Printf("render %s: %v", page, err)
 	}
 }
 

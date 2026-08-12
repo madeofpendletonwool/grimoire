@@ -5,9 +5,9 @@
 // index.Store.Reset only clears the docs tables, so rebuilding the rules index
 // never drops chat history.
 //
-// Every conversation carries a user_id. Until authentication is wired up all
-// rows share the AnonymousUser sentinel, which keeps the queries and the store
-// API identical once real user IDs start arriving.
+// Every conversation carries a user_id. Rows written before authentication
+// existed carry the AnonymousUser sentinel; ReassignOwner hands them to the
+// first real account so an upgrade does not strand anyone's history.
 package chat
 
 import (
@@ -24,7 +24,8 @@ import (
 
 // AnonymousUser is the owner recorded for conversations created before (or
 // without) authentication. It is a real value rather than an empty string so
-// "not logged in" is queryable rather than indistinguishable from unset.
+// "not logged in" is queryable — which is what makes the upgrade migration in
+// ReassignOwner possible at all.
 const AnonymousUser = "anonymous"
 
 // Roles for a stored message.
@@ -170,6 +171,22 @@ func (s *Store) Delete(ctx context.Context, userID, id string) error {
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM conversations WHERE id = ? AND user_id = ?`, id, defaultUser(userID))
 	return affected(res, err, "delete conversation")
+}
+
+// ReassignOwner moves every conversation owned by from over to to, and reports
+// how many moved. It exists for the upgrade from the pre-authentication app,
+// where all history belonged to AnonymousUser: the first account created adopts
+// it. Idempotent — a second run finds nothing left under from.
+func (s *Store) ReassignOwner(ctx context.Context, from, to string) (int64, error) {
+	if from == "" || to == "" || from == to {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE conversations SET user_id = ? WHERE user_id = ?`, to, from)
+	if err != nil {
+		return 0, fmt.Errorf("reassign conversations: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 // AddMessage appends a turn and bumps the conversation's updated_at so the

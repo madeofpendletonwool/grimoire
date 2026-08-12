@@ -271,6 +271,15 @@ kbd {
 }
 .rail-action:hover { background: rgba(255, 255, 255, 0.06); opacity: 1; }
 .rail-action kbd { margin-left: auto; }
+.rail-user {
+	margin-left: auto;
+	max-width: 9rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--fs-xs);
+	opacity: 0.55;
+}
 .model-badge {
 	margin: var(--sp-2) var(--sp-2) 0;
 	font-size: var(--fs-xs);
@@ -837,6 +846,126 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	opacity: 0.5;
 }
 .palette-foot span:last-child { margin-left: auto; }
+
+/* ---------- Gate (login / first-run setup) ---------- */
+/* The one screen a signed-out reader ever sees: a single parchment card on the
+   same candlelit stone as the app, so signing in already looks like Grimoire. */
+.gate-body { overflow: auto; }
+.gate {
+	min-height: 100%;
+	display: grid;
+	place-items: center;
+	padding: var(--sp-5) var(--sp-4);
+	background:
+		radial-gradient(ellipse 900px 520px at 50% -5%, rgba(201, 162, 39, 0.10), transparent 70%),
+		var(--stone-900);
+}
+.gate-card {
+	width: 100%;
+	max-width: 25rem;
+	padding: var(--sp-6) var(--sp-5) var(--sp-5);
+	border: 1px solid var(--parchment-line);
+	border-top: 3px solid var(--gold);
+	border-radius: var(--r-lg);
+	background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-2) 100%);
+	color: var(--ink);
+	box-shadow: var(--shadow-3);
+	text-align: center;
+	animation: rise 0.18s ease;
+}
+.gate-sigil {
+	font-size: 2.4rem;
+	line-height: 1;
+	filter: drop-shadow(0 3px 10px rgba(43, 29, 14, 0.3));
+}
+.gate-title {
+	margin: var(--sp-3) 0 var(--sp-1);
+	font-family: var(--font-prose);
+	font-variant: small-caps;
+	letter-spacing: 0.08em;
+	font-size: 2rem;
+	font-weight: 600;
+}
+.gate-sub {
+	margin: 0 0 var(--sp-5);
+	font-family: var(--font-prose);
+	font-style: italic;
+	color: var(--ink-soft);
+}
+
+.gate-form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-3);
+	text-align: left;
+}
+.gate-field { display: block; }
+.gate-label {
+	display: block;
+	margin-bottom: var(--sp-1);
+	font-size: var(--fs-xs);
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: var(--ink-soft);
+}
+.gate-field input {
+	width: 100%;
+	padding: 0.5rem 0.7rem;
+	border: 1px solid var(--parchment-line);
+	border-radius: var(--r-sm);
+	background: rgba(255, 255, 255, 0.42);
+	color: var(--ink);
+	font-family: var(--font-prose);
+	font-size: var(--fs-lg);
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.gate-field input:focus {
+	outline: none;
+	border-color: var(--gold-dim);
+	box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.22);
+}
+
+.gate-error {
+	margin: 0;
+	padding: var(--sp-2) var(--sp-3);
+	border-left: 3px solid var(--ember);
+	border-radius: var(--r-sm);
+	background: rgba(224, 135, 58, 0.14);
+	font-family: var(--font-prose);
+	font-style: italic;
+	font-size: var(--fs-sm);
+}
+
+.gate-submit {
+	margin-top: var(--sp-2);
+	padding: 0.6rem var(--sp-4);
+	border: 1px solid var(--gold-dim);
+	border-radius: var(--r-md);
+	background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+	color: #1a1208;
+	font-weight: 700;
+	font-variant: small-caps;
+	letter-spacing: 0.08em;
+	font-size: var(--fs-lg);
+	cursor: pointer;
+	transition: filter 0.15s ease, opacity 0.15s ease;
+}
+.gate-submit:hover:not(:disabled) { filter: brightness(1.08); }
+.gate-submit:disabled { opacity: 0.5; cursor: default; }
+
+.gate-foot { margin: var(--sp-4) 0 0; }
+.gate-link {
+	border: none;
+	background: none;
+	padding: 0;
+	color: var(--ink-soft);
+	font-size: var(--fs-sm);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+	cursor: pointer;
+}
+.gate-link:hover { color: var(--ink); }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {

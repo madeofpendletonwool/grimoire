@@ -9,13 +9,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 )
 
-// newChatServer builds a server with chat history enabled and, optionally, a
-// stub Anthropic endpoint standing in for the model.
+// sessions holds the cookie minted for each authenticated test server, so the
+// request helpers can speak to the gated API without every test threading one
+// through by hand.
+var sessions = map[*Server]*http.Cookie{}
+
+// newChatServer builds a server with chat history and accounts enabled, signs a
+// keeper in, and optionally points the model at a stub Anthropic endpoint.
 func newChatServer(t *testing.T, anthropic http.HandlerFunc) *Server {
 	t.Helper()
 	store, err := index.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -28,6 +34,10 @@ func newChatServer(t *testing.T, anthropic http.HandlerFunc) *Server {
 	if err != nil {
 		t.Fatalf("open chat store: %v", err)
 	}
+	users, err := auth.New(store.DB(), 0)
+	if err != nil {
+		t.Fatalf("open auth store: %v", err)
+	}
 
 	cfg := llm.Config{}
 	if anthropic != nil {
@@ -36,11 +46,42 @@ func newChatServer(t *testing.T, anthropic http.HandlerFunc) *Server {
 		cfg = llm.Config{BaseURL: up.URL, APIKey: "test-key", Model: "test-model"}
 	}
 
-	s, err := New(store, llm.New(cfg), nil, chats)
+	s, err := New(store, llm.New(cfg), nil, chats, Auth{Users: users})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
+	signIn(t, s, "keeper", "a-perfectly-fine-passphrase")
 	return s
+}
+
+// signIn claims a fresh install and remembers the session cookie it returns.
+func signIn(t *testing.T, s *Server, username, password string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/setup",
+		strings.NewReader(fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)))
+	req.Header.Set("content-type", "application/json")
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("setup: status %d, body %s", rec.Code, rec.Body)
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookie {
+			sessions[s] = c
+			t.Cleanup(func() { delete(sessions, s) })
+			return
+		}
+	}
+	t.Fatal("setup did not set a session cookie")
+}
+
+// authenticate attaches the server's session cookie, when it has one. Servers
+// built without accounts have none, and need none.
+func authenticate(s *Server, req *http.Request) *http.Request {
+	if c, ok := sessions[s]; ok {
+		req.AddCookie(c)
+	}
+	return req
 }
 
 func do(t *testing.T, s *Server, method, target, body string) (int, map[string]any) {
@@ -51,7 +92,7 @@ func do(t *testing.T, s *Server, method, target, body string) (int, map[string]a
 	} else {
 		rdr = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, target, rdr)
+	req := authenticate(s, httptest.NewRequest(method, target, rdr))
 	req.Header.Set("content-type", "application/json")
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -103,7 +144,7 @@ func TestChatCRUD(t *testing.T) {
 		t.Errorf("corpus = %v, want dnd — a conversation's corpus is locked at creation", got)
 	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/chats/"+id, nil)
+	req := authenticate(s, httptest.NewRequest(http.MethodDelete, "/api/chats/"+id, nil))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
@@ -149,7 +190,7 @@ func TestChatsDisabledWithoutStore(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s, err := New(store, llm.New(llm.Config{}), nil, nil)
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, Auth{})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -194,8 +235,8 @@ func TestChatMessageStreamsAnswer(t *testing.T) {
 	})
 
 	id := createChat(t, s, "mtg")
-	req := httptest.NewRequest(http.MethodPost, "/api/chats/"+id+"/messages",
-		strings.NewReader(`{"question":"How does deathtouch work?"}`))
+	req := authenticate(s, httptest.NewRequest(http.MethodPost, "/api/chats/"+id+"/messages",
+		strings.NewReader(`{"question":"How does deathtouch work?"}`)))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 
@@ -263,8 +304,8 @@ func TestChatMessageReportsUnconfiguredModel(t *testing.T) {
 	s := newChatServer(t, nil) // no API key
 	id := createChat(t, s, "mtg")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/chats/"+id+"/messages",
-		strings.NewReader(`{"question":"anything"}`))
+	req := authenticate(s, httptest.NewRequest(http.MethodPost, "/api/chats/"+id+"/messages",
+		strings.NewReader(`{"question":"anything"}`)))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 
@@ -298,8 +339,8 @@ func TestChatMessageSendsPriorTurnsAsHistory(t *testing.T) {
 
 	id := createChat(t, s, "mtg")
 	for _, q := range []string{"first question", "follow-up question"} {
-		req := httptest.NewRequest(http.MethodPost, "/api/chats/"+id+"/messages",
-			strings.NewReader(fmt.Sprintf(`{"question":%q}`, q)))
+		req := authenticate(s, httptest.NewRequest(http.MethodPost, "/api/chats/"+id+"/messages",
+			strings.NewReader(fmt.Sprintf(`{"question":%q}`, q))))
 		s.Handler().ServeHTTP(httptest.NewRecorder(), req)
 	}
 

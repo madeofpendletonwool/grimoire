@@ -10,6 +10,9 @@
 //
 //	GRIMOIRE_ADDR       listen address for serve (default :8080)
 //	GRIMOIRE_DB         SQLite index path (default data/grimoire.db)
+//	GRIMOIRE_SESSION_TTL       session lifetime, Go duration (default 720h)
+//	GRIMOIRE_OPEN_REGISTRATION keep account creation open after the first
+//	                           account exists (default false)
 //	ANTHROPIC_BASE_URL  LLM endpoint (default https://api.anthropic.com; z.ai: https://api.z.ai/api/anthropic)
 //	ANTHROPIC_API_KEY   LLM secret key (enables the Q&A chat)
 //	ANTHROPIC_MODEL     model name (e.g. glm-4.6, claude-3-5-sonnet-20241022)
@@ -27,9 +30,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
@@ -73,8 +78,9 @@ Usage:
   grimoire index     (re)build the search index and exit
 
 Env (see .env.example):
-  GRIMOIRE_ADDR, GRIMOIRE_DB, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY,
-  ANTHROPIC_MODEL, SCRYFALL_BASE_URL, MTG_RULES_URL, DND_REPO, DND_REF`)
+  GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
+  ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL, SCRYFALL_BASE_URL,
+  MTG_RULES_URL, DND_REPO, DND_REF`)
 }
 
 func env(key, def string) string {
@@ -86,6 +92,30 @@ func env(key, def string) string {
 
 func dbPath() string { return env("GRIMOIRE_DB", "data/grimoire.db") }
 func addr() string   { return env("GRIMOIRE_ADDR", ":8080") }
+
+// sessionTTL reads the session lifetime. An unparseable value falls back to the
+// default rather than failing the boot — being logged out is a nuisance, a
+// server that refuses to start over a typo is worse.
+func sessionTTL() time.Duration {
+	raw := os.Getenv("GRIMOIRE_SESSION_TTL")
+	if raw == "" {
+		return auth.DefaultSessionTTL
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("GRIMOIRE_SESSION_TTL=%q is not a valid duration — using %s", raw, auth.DefaultSessionTTL)
+		return auth.DefaultSessionTTL
+	}
+	return d
+}
+
+func openRegistration() bool {
+	switch strings.ToLower(os.Getenv("GRIMOIRE_OPEN_REGISTRATION")) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
 
 func llmConfig() llm.Config {
 	return llm.Config{
@@ -185,7 +215,22 @@ func runServe() error {
 		return err
 	}
 
-	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), chats)
+	// Accounts and sessions share that file too, for the same reason.
+	users, err := auth.New(store.DB(), sessionTTL())
+	if err != nil {
+		return err
+	}
+	// Upgrade path: an install that predates accounts has history filed under
+	// the anonymous owner. Hand it to the first keeper on the way up, so it is
+	// already theirs by the time they sign in.
+	if adopted, err := server.AdoptAnonymousChats(ctx, users, chats); err != nil {
+		return fmt.Errorf("adopt anonymous chats: %w", err)
+	} else if adopted > 0 {
+		log.Printf("adopted %d pre-authentication conversations", adopted)
+	}
+
+	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), chats,
+		server.Auth{Users: users, OpenRegistration: openRegistration()})
 	if err != nil {
 		return err
 	}

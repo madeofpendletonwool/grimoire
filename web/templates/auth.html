@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" data-corpus="mtg">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="color-scheme" content="dark">
+	<title>Grimoire — sign in</title>
+	<link rel="stylesheet" href="/static/style.css">
+	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%9C%3C/text%3E%3C/svg%3E">
+</head>
+<body class="gate-body">
+	<main class="gate">
+		<section class="gate-card">
+			<div class="gate-sigil" aria-hidden="true">📜</div>
+			<h1 class="gate-title">Grimoire</h1>
+			<p class="gate-sub" id="gate-sub">The tome is sealed.</p>
+
+			<form class="gate-form" id="gate-form" autocomplete="on">
+				<label class="gate-field">
+					<span class="gate-label">Name</span>
+					<input type="text" id="gate-username" name="username"
+						autocomplete="username" autocapitalize="none" spellcheck="false" required>
+				</label>
+
+				<label class="gate-field">
+					<span class="gate-label">Passphrase</span>
+					<input type="password" id="gate-password" name="password"
+						autocomplete="current-password" required>
+				</label>
+
+				<label class="gate-field" id="gate-confirm-field" hidden>
+					<span class="gate-label">Repeat the passphrase</span>
+					<input type="password" id="gate-confirm" name="confirm" autocomplete="new-password">
+				</label>
+
+				<p class="gate-error" id="gate-error" role="alert" hidden></p>
+
+				<button type="submit" class="gate-submit" id="gate-submit">Enter</button>
+			</form>
+
+			<p class="gate-foot" id="gate-foot" hidden>
+				<button type="button" class="gate-link" id="gate-toggle"></button>
+			</p>
+		</section>
+	</main>
+
+	<script type="module" src="/static/js/auth.js"></script>
+</body>
+</html>

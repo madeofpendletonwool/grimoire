@@ -1,7 +1,15 @@
 // HTTP surface for the Grimoire API.
 
+// A 401 means the session lapsed while the app was open. Reloading lands on
+// the gate, which is more useful than an error banner on a dead app.
+function gateOn401(res) {
+	if (res.status === 401) window.location.assign("/");
+	return res;
+}
+
 async function json(res) {
 	if (!res.ok) {
+		gateOn401(res);
 		let detail = res.statusText;
 		try {
 			const body = await res.json();
@@ -14,6 +22,10 @@ async function json(res) {
 
 export const api = {
 	meta: () => fetch("/api/meta").then(json),
+
+	authState: () => fetch("/api/auth/state").then(json),
+
+	logout: () => fetch("/api/auth/logout", { method: "POST" }).then(json),
 
 	search: (corpus, q, limit = 20, signal) =>
 		fetch(`/api/search?corpus=${encodeURIComponent(corpus)}&q=${encodeURIComponent(q)}&limit=${limit}`,
@@ -64,6 +76,7 @@ export async function streamAnswer(chatID, question, handlers, signal) {
 		signal,
 	});
 	if (!res.ok || !res.body) {
+		gateOn401(res);
 		let detail = res.statusText;
 		try {
 			const body = await res.json();
