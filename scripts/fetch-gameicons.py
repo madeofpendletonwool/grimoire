@@ -47,6 +47,7 @@ ICONS = {
     "swords":     "lorc/crossed-swords",
     "signout":    "lorc/candle-flame",
     # empty states and flourishes
+    "check":      "delapouite/check-mark",
     "no-history": "lorc/book-cover",
     "no-results": "lorc/scroll-unfurled",
     "thinking":   "lorc/circle-sparks",

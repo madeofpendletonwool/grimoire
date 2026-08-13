@@ -620,6 +620,9 @@ kbd {
 	text-decoration: line-through;
 	filter: saturate(0.6);
 }
+/* D&D's answer to chip-card: a resolved entity, not a Magic card. Same
+   treatment, because to the reader they are the same kind of citation. */
+.chip.chip-entity { color: var(--accent-deep); font-weight: 600; }
 
 /* rulings — official precedent citations under an answer */
 .rulings {
@@ -900,6 +903,147 @@ kbd {
 .slash-hints li.is-active, .slash-hints li:hover { background: rgba(255, 255, 255, 0.07); }
 .slash-hints .cmd { color: var(--gold-bright); font-weight: 600; }
 .slash-hints .cmd-desc { opacity: 0.55; }
+
+/* ---------- Study surface ----------
+   The flashcard deck. It takes over the main column rather than unmounting the
+   transcript, so leaving study restores the open conversation exactly.
+
+   Three framed surfaces, all wired up in pixel.css: the prompt is parchment,
+   because it is text the reader reads; the answer is stone, so it reads as the
+   sage answering rather than more of the same card; the grades are buttons.
+   Nothing below may set a background, a border or a radius — the sprites own
+   all three. */
+.study {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scroll-behavior: smooth;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+.main.is-studying > .transcript,
+.main.is-studying > .composer-dock { display: none; }
+
+.study-head {
+	max-width: var(--measure);
+	margin: 0 auto var(--sp-4);
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-3);
+	flex-wrap: wrap;
+}
+.study-title {
+	margin: 0;
+	font-family: var(--font-prose);
+	font-variant: small-caps;
+	letter-spacing: 0.04em;
+	font-size: var(--fs-lg);
+	font-weight: 600;
+	color: var(--gold);
+}
+.study-meta {
+	margin: 0;
+	margin-left: auto;
+	font-size: var(--fs-xs);
+	opacity: 0.55;
+	letter-spacing: 0.02em;
+}
+.study-head .icon-btn { flex: none; align-self: center; }
+.study-body {
+	max-width: var(--measure);
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-4);
+}
+.study-status { opacity: 0.55; font-size: var(--fs-sm); font-style: italic; }
+.study-status.warn { opacity: 0.9; color: var(--ember); font-style: normal; }
+.study-progress {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--gold-dim);
+}
+
+.study-card {
+	padding: var(--sp-4) var(--sp-5);
+	color: var(--ink);
+}
+.study-card-label {
+	margin: 0 0 var(--sp-2);
+	font-family: var(--font-prose);
+	font-variant: small-caps;
+	letter-spacing: 0.08em;
+	font-size: var(--fs-sm);
+	color: var(--ink-soft);
+}
+/* Larger than the reading measure's body text: this is the one line the reader
+   is being asked to answer, so it carries the surface. */
+.study-prompt {
+	font-family: var(--font-prose);
+	font-size: 1.25rem;
+	line-height: 1.45;
+}
+.study-reveal { margin-top: var(--sp-4); }
+
+.study-answer {
+	padding: var(--sp-3) var(--sp-4);
+	color: var(--parchment);
+}
+.study-back-text {
+	font-family: var(--font-prose);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	line-height: 1.6;
+}
+.study-source {
+	margin: var(--sp-2) 0 0;
+	font-size: var(--fs-xs);
+	opacity: 0.5;
+}
+.study-grades {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: var(--sp-2);
+	margin-top: var(--sp-4);
+}
+.study-grade {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.15rem;
+	padding: 0.4rem var(--sp-2);
+	color: #1a1208; /* ink on gold — the frame behind this is the gold */
+	cursor: pointer;
+	filter: brightness(0.94);
+	transition: filter 0.15s ease, opacity 0.15s ease;
+}
+.study-grade:hover:not(:disabled) { filter: brightness(1.06); }
+.study-grade:disabled { opacity: 0.35; cursor: default; }
+.study-grade-label { font-weight: 600; font-size: var(--fs-sm); }
+.study-grade-hint { font-size: var(--fs-xs); opacity: 0.6; }
+/* Only the failure grade is marked out, in the app's own warning colour. The
+   corpus accent would read as "this is Magic", not "this one is a miss". */
+.study-grade-again .study-grade-label { color: var(--ember-deep); }
+
+.study-empty {
+	max-width: 36rem;
+	margin: clamp(2rem, 12vh, 6rem) auto 0;
+	text-align: center;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--sp-2);
+	font-family: var(--font-prose);
+}
+.study-empty .gi { color: var(--gold); opacity: 0.7; }
+.study-empty-title {
+	margin: var(--sp-2) 0 0;
+	font-variant: small-caps;
+	letter-spacing: 0.04em;
+	font-size: var(--fs-lg);
+}
+.study-empty-sub { opacity: 0.6; font-size: var(--fs-sm); max-width: 30rem; }
 
 /* ---------- Reference drawer ---------- */
 /* The drawer is the right-hand page of the open book: spine down its inner
@@ -1435,6 +1579,10 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.conv-title { flex: 1 1 auto; min-width: 0; }
 	.welcome-title { font-size: clamp(1.5rem, 8vw, 2.2rem); }
 
+	.study { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
+	.study-grades { grid-template-columns: repeat(2, 1fr); }
+	.study-meta { margin-left: 0; flex-basis: 100%; }
+
 	.gate {
 		padding:
 			calc(var(--sp-5) + env(safe-area-inset-top)) var(--sp-4)
@@ -1456,6 +1604,10 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	   proportions instead of becoming all border. */
 	.gate-card { border-width: 20px; }
 	.msg-sage .bubble { border-width: 8px; padding: var(--sp-1) var(--sp-2); }
+	/* The frame stays at its clean 2x — only the type and the padding inside
+	   it give ground, so the parchment corners survive the narrow layout. */
+	.study-card { padding: var(--sp-3) var(--sp-4); }
+	.study-prompt { font-size: 1.1rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1464,5 +1616,6 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 		animation-iteration-count: 1 !important;
 		transition-duration: 0.01ms !important;
 	}
-	.transcript { scroll-behavior: auto; }
+	.transcript,
+	.study { scroll-behavior: auto; }
 }

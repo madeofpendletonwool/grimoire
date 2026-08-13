@@ -19,9 +19,11 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
+	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
+	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/web"
 )
 
@@ -44,6 +46,7 @@ type Server struct {
 	cardDict         *cards.Dictionary
 	chats            *chat.Store
 	answers          *cache.Store
+	study            *study.Store
 	users            *auth.Store
 	openRegistration bool
 	tmpl             *template.Template
@@ -53,12 +56,13 @@ type Server struct {
 // New builds a Server from an open index store, an LLM client, a card lookup
 // service, a rulings lookup service, an optional card-name dictionary (powers
 // lowercase/unquoted card detection in the chat), a chat store, an answer cache,
-// and the authentication wiring. A nil card service disables card features
-// gracefully; a nil rulings service disables the rulings layer the same way; a
-// nil dictionary leaves detection on the text heuristics alone; a nil chat store
-// disables saved conversations; a nil answer cache disables response caching; a
-// zero Auth leaves the API unauthenticated.
-func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulingsSvc *rulings.Service, cardDict *cards.Dictionary, chats *chat.Store, answers *cache.Store, ac Auth) (*Server, error) {
+// a study store, and the authentication wiring. A nil card service disables
+// card features gracefully; a nil rulings service disables the rulings layer the
+// same way; a nil dictionary leaves detection on the text heuristics alone; a
+// nil chat store disables saved conversations; a nil answer cache disables
+// response caching; a nil study store disables the study mode; a zero Auth
+// leaves the API unauthenticated.
+func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulingsSvc *rulings.Service, cardDict *cards.Dictionary, chats *chat.Store, answers *cache.Store, studyStore *study.Store, ac Auth) (*Server, error) {
 	tmpl, err := template.New("").ParseFS(web.Templates, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -70,6 +74,7 @@ func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulings
 	return &Server{
 		store: store, llm: client, cards: cardSvc, rulings: rulingsSvc, cardDict: cardDict, chats: chats,
 		answers: answers,
+		study:   studyStore,
 		users:   ac.Users, openRegistration: ac.OpenRegistration,
 		tmpl: tmpl, static: static,
 	}, nil
@@ -96,6 +101,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/chats/{id}", s.handleRenameChat)
 	mux.HandleFunc("DELETE /api/chats/{id}", s.handleDeleteChat)
 	mux.HandleFunc("POST /api/chats/{id}/messages", s.handleChatMessage)
+	mux.HandleFunc("GET /api/study/queue", s.handleStudyQueue)
+	mux.HandleFunc("POST /api/study/grade", s.handleStudyGrade)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))
@@ -278,6 +285,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 				"answer":           hit.Answer,
 				"sources":          decodeSources(hit.Sources),
 				"cards":            decodeCards(hit.Cards),
+				"entities":         decodeEntities(hit.Entities),
 				"rulings":          decodeRulings(hit.Rulings),
 				"unresolved_cards": g.unresolved,
 			})
@@ -293,9 +301,9 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only a real answer is cached — never the error placeholder.
 	if s.answers != nil && llmErr == nil {
-		sources, cardsJSON, rulingsJSON := marshalCitations(g)
+		sources, cardsJSON, entitiesJSON, rulingsJSON := marshalCitations(g)
 		key := cache.Key(string(corpus), req.Question, sourceIDs(g.sources))
-		if err := s.answers.Put(r.Context(), key, string(corpus), answer, sources, cardsJSON, rulingsJSON); err != nil {
+		if err := s.answers.Put(r.Context(), key, string(corpus), answer, sources, cardsJSON, entitiesJSON, rulingsJSON); err != nil {
 			log.Printf("answer cache put: %v", err)
 		}
 	}
@@ -305,6 +313,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		"answer":           answer,
 		"sources":          g.sources,
 		"cards":            g.cards,
+		"entities":         g.entities,
 		"rulings":          g.rulings,
 		"unresolved_cards": g.unresolved,
 	})
@@ -315,9 +324,11 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 type grounded struct {
 	docs       []llm.ContextDoc
 	cardDocs   []llm.CardDoc
+	entityDocs []llm.EntityDoc
 	rulingDocs []llm.RulingDoc
 	sources    []searchHit
 	cards      []cardView
+	entities   []entityView
 	rulings    []rulingView
 	unresolved []string
 }
@@ -327,6 +338,7 @@ func (g grounded) request(corpus data.Corpus, question string, history []llm.Tur
 		CorpusName: corpusDisplayName(corpus),
 		Docs:       g.docs,
 		Cards:      g.cardDocs,
+		Entities:   g.entityDocs,
 		Rulings:    g.rulingDocs,
 		Unresolved: g.unresolved,
 		History:    history,
@@ -355,6 +367,15 @@ func (s *Server) ground(ctx context.Context, corpus data.Corpus, question string
 	g.sources = toSources(results)
 	g.cardDocs, g.cards, g.unresolved = s.lookupQuestionCards(ctx, corpus, question)
 	g.rulingDocs, g.rulings = s.lookupCardRulings(ctx, corpus, g.cards)
+	// Neutral entity grounding (D&D/Open5e and future corpora). MTG's Scryfall
+	// resolver projects cards rather than neutral entities, so it is routed
+	// through lookupQuestionCards above and skipped here — the card path is the
+	// richer projection (images, faces, rulings) the MTG UI depends on.
+	if def, ok := data.Lookup(corpus); ok && def.EntityResolver != nil {
+		if _, isCards := def.EntityResolver.(entities.CardProjector); !isCards {
+			g.entityDocs, g.entities, g.unresolved = s.lookupQuestionEntities(ctx, def.EntityResolver, question)
+		}
+	}
 	return g, nil
 }
 
@@ -385,6 +406,36 @@ func (s *Server) lookupQuestionCards(ctx context.Context, corpus data.Corpus, qu
 		log.Printf("card lookup: no match for %q", strings.Join(res.Unresolved, ", "))
 	}
 	return cardDocs, hits, res.Unresolved
+}
+
+// lookupQuestionEntities resolves named entities for corpora without a
+// card-shaped resolver (D&D/Open5e). It feeds the resolved reference text to the
+// model as grounding and to the UI as citations, and surfaces unresolved names
+// the way the MTG card path does — a miss is reported, not dropped.
+func (s *Server) lookupQuestionEntities(ctx context.Context, resolver data.EntityResolver, question string) ([]llm.EntityDoc, []entityView, []string) {
+	if resolver == nil {
+		return nil, nil, nil
+	}
+	resolved, unresolved, err := resolver.Resolve(ctx, question)
+	if err != nil {
+		// A resolver error is best-effort: never break the answer over a lookup
+		// failure, just as the card path tolerates Scryfall outages.
+		log.Printf("entity lookup: %v", err)
+		return nil, nil, nil
+	}
+	if len(resolved) == 0 && len(unresolved) == 0 {
+		return nil, nil, nil
+	}
+	docs := make([]llm.EntityDoc, 0, len(resolved))
+	views := make([]entityView, 0, len(resolved))
+	for _, e := range resolved {
+		docs = append(docs, llm.EntityDoc{Name: e.Name, Kind: e.Kind, Body: e.Body})
+		views = append(views, entityView{Name: e.Name, Kind: e.Kind, Body: e.Body})
+	}
+	if len(unresolved) > 0 {
+		log.Printf("entity lookup: no match for %q", strings.Join(unresolved, ", "))
+	}
+	return docs, views, unresolved
 }
 
 // lookupCardRulings fetches the official rulings for each resolved card. It
@@ -468,6 +519,16 @@ func decodeCards(raw json.RawMessage) []cardView {
 	return cards
 }
 
+// decodeEntities is the entity-citation counterpart to decodeCards, used to
+// replay cached D&D entity citations.
+func decodeEntities(raw json.RawMessage) []entityView {
+	entities := []entityView{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &entities)
+	}
+	return entities
+}
+
 // decodeRulings is the rulings-citation counterpart to decodeSources.
 func decodeRulings(raw json.RawMessage) []rulingView {
 	rulings := []rulingView{}
@@ -513,6 +574,16 @@ type rulingView struct {
 	Source      string `json:"source"`
 	PublishedAt string `json:"published_at"`
 	Comment     string `json:"comment"`
+}
+
+// entityView is the JSON shape for a resolved reference entity returned to the
+// UI (a D&D spell, creature, item, or feat). It carries the kind and the
+// formatted reference body so the UI can render it as a citation, the way card
+// citations are rendered for MTG.
+type entityView struct {
+	Name string `json:"name"`
+	Kind string `json:"kind,omitempty"`
+	Body string `json:"body,omitempty"`
 }
 
 func toCardView(c *cards.Card) cardView {

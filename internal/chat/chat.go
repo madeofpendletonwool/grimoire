@@ -51,15 +51,16 @@ type Conversation struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Message is one turn in a conversation. Sources, Cards, and Rulings hold the
-// citation payloads shown under an assistant answer, stored as raw JSON so the
-// chat store stays independent of the server's view types.
+// Message is one turn in a conversation. Sources, Cards, Entities, and Rulings
+// hold the citation payloads shown under an assistant answer, stored as raw JSON
+// so the chat store stays independent of the server's view types.
 type Message struct {
 	ID        int64           `json:"id"`
 	Role      string          `json:"role"`
 	Content   string          `json:"content"`
 	Sources   json.RawMessage `json:"sources,omitempty"`
 	Cards     json.RawMessage `json:"cards,omitempty"`
+	Entities  json.RawMessage `json:"entities,omitempty"`
 	Rulings   json.RawMessage `json:"rulings,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
 }
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 	content         TEXT NOT NULL,
 	sources         TEXT NOT NULL DEFAULT '',
 	cards           TEXT NOT NULL DEFAULT '',
+	entities        TEXT NOT NULL DEFAULT '',
 	rulings         TEXT NOT NULL DEFAULT '',
 	created_at      INTEGER NOT NULL
 );
@@ -110,7 +112,12 @@ CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(conversation_id
 // already has the column from schema, and an upgraded one gets it added
 // in-place without losing history.
 func migrate(db *sql.DB) error {
-	return ensureColumn(db, "chat_messages", "rulings")
+	for _, col := range []string{"rulings", "entities"} {
+		if err := ensureColumn(db, "chat_messages", col); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureColumn adds a nullable TEXT column to a table when it is not already
@@ -237,8 +244,9 @@ func (s *Store) ReassignOwner(ctx context.Context, from, to string) (int64, erro
 }
 
 // AddMessage appends a turn and bumps the conversation's updated_at so the
-// sidebar orders by real activity. Sources, cards, and rulings may be nil.
-func (s *Store) AddMessage(ctx context.Context, convID, role, content string, sources, cards, rulings json.RawMessage) (*Message, error) {
+// sidebar orders by real activity. Sources, cards, entities, and rulings may be
+// nil.
+func (s *Store) AddMessage(ctx context.Context, convID, role, content string, sources, cards, entities, rulings json.RawMessage) (*Message, error) {
 	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO chat_messages (conversation_id, role, content, sources, cards, rulings, created_at)
@@ -255,13 +263,13 @@ func (s *Store) AddMessage(ctx context.Context, convID, role, content string, so
 		`UPDATE conversations SET updated_at = ? WHERE id = ?`, now.UnixMilli(), convID); err != nil {
 		return nil, fmt.Errorf("touch conversation: %w", err)
 	}
-	return &Message{ID: id, Role: role, Content: content, Sources: sources, Cards: cards, Rulings: rulings, CreatedAt: now}, nil
+	return &Message{ID: id, Role: role, Content: content, Sources: sources, Cards: cards, Entities: entities, Rulings: rulings, CreatedAt: now}, nil
 }
 
 // Messages returns a conversation's turns in order.
 func (s *Store) Messages(ctx context.Context, convID string) ([]Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, role, content, sources, cards, rulings, created_at
+		`SELECT id, role, content, sources, cards, entities, rulings, created_at
 		   FROM chat_messages WHERE conversation_id = ? ORDER BY id ASC`, convID)
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
@@ -271,15 +279,16 @@ func (s *Store) Messages(ctx context.Context, convID string) ([]Message, error) 
 	out := []Message{}
 	for rows.Next() {
 		var (
-			m                 Message
-			sources, card, ru string
-			created           int64
+			m                           Message
+			sources, card, entities, ru string
+			created                     int64
 		)
-		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &sources, &card, &ru, &created); err != nil {
+		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &sources, &card, &entities, &ru, &created); err != nil {
 			return nil, err
 		}
 		m.Sources = rawOrNil(sources)
 		m.Cards = rawOrNil(card)
+		m.Entities = rawOrNil(entities)
 		m.Rulings = rawOrNil(ru)
 		m.CreatedAt = time.UnixMilli(created).UTC()
 		out = append(out, m)

@@ -93,7 +93,10 @@
 .suggestion,
 .send-btn,
 .gate-submit,
-.new-chat {
+.new-chat,
+.study-card,
+.study-answer,
+.study-grade {
 	border-style: solid;
 	border-radius: 0;
 	background-color: transparent;
@@ -105,7 +108,8 @@
    corner at the bottom right, is deliberate and worth keeping. */
 .f-parchment,
 .msg-sage .bubble,
-.gate-page {
+.gate-page,
+.study-card {
 	border-width: 10px;
 	border-image-source: url("/static/assets/ui/panel-parchment.png");
 	border-image-slice: 5 fill;
@@ -114,7 +118,8 @@
 /* Stone panel — app chrome. Slot's leather, recoloured to Grimoire's stone. */
 .f-stone,
 .palette-box,
-.settings-popup {
+.settings-popup,
+.study-answer {
 	border-width: 6px;
 	border-image-source: var(--frame-stone);
 	border-image-slice: 3 fill;
@@ -155,7 +160,8 @@
 .f-button,
 .send-btn,
 .gate-submit,
-.new-chat {
+.new-chat,
+.study-grade {
 	border-width: 6px;
 	border-image-source: url("/static/assets/ui/button.png");
 	border-image-slice: 3 fill;
@@ -164,7 +170,8 @@
 .f-button.is-active,
 .send-btn:active:not(:disabled),
 .gate-submit:active:not(:disabled),
-.new-chat:active {
+.new-chat:active,
+.study-grade:active:not(:disabled) {
 	border-image-source: url("/static/assets/ui/button-active.png");
 }
 

@@ -5,6 +5,7 @@
 export const refs = {
 	openRule: () => {},
 	openCard: () => {},
+	openEntity: () => {},
 };
 
 export function registerRefHandlers(handlers) {

@@ -14,7 +14,7 @@ export function initDrawer() {
 	document.addEventListener("keydown", (e) => {
 		if (e.key === "Escape" && !$("drawer").hidden && !isPaletteOpen()) closeDrawer();
 	});
-	registerRefHandlers({ openRule, openCard });
+	registerRefHandlers({ openRule, openCard, openEntity });
 }
 
 const isPaletteOpen = () => !$("palette").hidden;
@@ -93,6 +93,18 @@ export async function openCard(card) {
 		return;
 	}
 	showDrawer(card.name || "Card").append(cardView(card));
+}
+
+/**
+ * Open a resolved entity — a D&D spell, monster or item the sage looked up.
+ * The answer already ships the entity's full text, so there is nothing to
+ * fetch. It renders through ruleCard because that is exactly the shape: a
+ * short marker, a name, and the body underneath.
+ */
+export function openEntity(entity, corpus) {
+	const c = corpus || activeCorpus();
+	showDrawer(entity.name || "Reference")
+		.append(ruleCard({ number: entity.kind, title: entity.name, body: entity.body }, "", false, c));
 }
 
 /** "702.2a" -> "702.2"; null for unnumbered entries, which have no section. */

@@ -32,6 +32,12 @@
 				<span data-ico="scroll"></span> New chat
 			</button>
 
+			<!-- A destination, not a foot utility — so it sits with New chat, between
+			     two other 32px sprites rather than among the vector-icon rows below. -->
+			<button type="button" class="rail-action rail-study" id="rail-study">
+				<span data-ico="card"></span> Study
+			</button>
+
 			<div class="corpus-picker" role="radiogroup" aria-label="Rules corpus">
 				<button type="button" class="corpus-opt is-active" data-corpus="mtg" role="radio" aria-checked="true">
 					<span data-ico="orbBlue"></span> Magic
@@ -62,7 +68,7 @@
 		<div class="rail-scrim" id="rail-scrim" hidden></div>
 
 		<!-- ---------- Conversation ---------- -->
-		<main class="main">
+		<main class="main" id="main">
 			<header class="topbar">
 				<button type="button" class="icon-btn rail-open" id="rail-open" aria-label="Show sidebar" title="Show sidebar" data-gi="menu"></button>
 				<h1 class="conv-title" id="conv-title">New chat</h1>
@@ -91,6 +97,16 @@
 				</section>
 				<div class="messages" id="messages"></div>
 			</div>
+
+			<!-- ---------- Study surface ---------- -->
+			<section class="study" id="study-view" hidden aria-label="Study">
+				<header class="study-head">
+					<h2 class="study-title" id="study-title">Study</h2>
+					<p class="study-meta" id="study-meta"></p>
+					<button type="button" class="icon-btn" id="study-close" aria-label="Leave study" title="Back to chat" data-gi="close"></button>
+				</header>
+				<div class="study-body" id="study-body"></div>
+			</section>
 
 			<div class="composer-dock">
 				<form class="composer" id="composer" autocomplete="off">

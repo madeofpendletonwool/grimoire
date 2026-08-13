@@ -25,9 +25,9 @@ export function bindRuleRefs(root, corpus) {
 	});
 }
 
-/** Citation strip under an answer: rules consulted, cards looked up, misses. */
-export function renderCitations(sources, cards, unresolved, corpus) {
-	const hasAny = (sources && sources.length) || (cards && cards.length) || (unresolved && unresolved.length);
+/** Citation strip under an answer: rules consulted, cards/entities looked up, misses. */
+export function renderCitations(sources, cards, entities, unresolved, corpus) {
+	const hasAny = (sources && sources.length) || (cards && cards.length) || (entities && entities.length) || (unresolved && unresolved.length);
 	if (!hasAny) return null;
 
 	const wrap = el("div", { class: "citations" });
@@ -56,13 +56,25 @@ export function renderCitations(sources, cards, unresolved, corpus) {
 		}
 	}
 
+	if (entities && entities.length) {
+		wrap.append(el("span", { class: "citations-label", text: "References:" }));
+		for (const e of entities.slice(0, 10)) {
+			wrap.append(el("button", {
+				class: "chip chip-entity",
+				text: e.name,
+				attrs: { type: "button", title: (e.kind ? e.kind + " — " : "") + truncate(e.body, 160) },
+				on: { click: () => refs.openEntity(e, corpus) },
+			}));
+		}
+	}
+
 	if (unresolved && unresolved.length) {
 		wrap.append(el("span", { class: "citations-label", text: "Not found:" }));
 		for (const name of unresolved.slice(0, 6)) {
 			wrap.append(el("span", {
 				class: "chip chip-miss",
 				text: name,
-				attrs: { title: "This card could not be looked up, so the sage was told not to describe it." },
+				attrs: { title: "This entity could not be looked up, so the sage was told not to describe it." },
 			}));
 		}
 	}

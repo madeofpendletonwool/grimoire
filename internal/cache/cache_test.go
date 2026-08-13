@@ -35,7 +35,7 @@ func TestPutAndGetRoundTrip(t *testing.T) {
 	sources := json.RawMessage(`[{"number":"702.2"}]`)
 	cards := json.RawMessage(`[{"name":"Lightning Bolt"}]`)
 	rulings := json.RawMessage(`[{"source":"WotC"}]`)
-	if err := s.Put(ctx, "k1", "mtg", "Deathtouch is lethal.", sources, cards, rulings); err != nil {
+	if err := s.Put(ctx, "k1", "mtg", "Deathtouch is lethal.", sources, cards, nil, rulings); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func TestGetMissReturnsNil(t *testing.T) {
 func TestGetTreatsExpiredAsMiss(t *testing.T) {
 	s := testStore(t, DefaultTTL)
 	ctx := context.Background()
-	if err := s.Put(ctx, "k", "mtg", "old answer", nil, nil, nil); err != nil {
+	if err := s.Put(ctx, "k", "mtg", "old answer", nil, nil, nil, nil); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	// Age the row past the TTL so the next read treats it as expired.
@@ -98,10 +98,10 @@ func TestPutRefreshesExistingEntry(t *testing.T) {
 	s := testStore(t, DefaultTTL)
 	ctx := context.Background()
 
-	if err := s.Put(ctx, "k", "mtg", "first", nil, nil, nil); err != nil {
+	if err := s.Put(ctx, "k", "mtg", "first", nil, nil, nil, nil); err != nil {
 		t.Fatalf("put first: %v", err)
 	}
-	if err := s.Put(ctx, "k", "mtg", "second", nil, nil, nil); err != nil {
+	if err := s.Put(ctx, "k", "mtg", "second", nil, nil, nil, nil); err != nil {
 		t.Fatalf("put second: %v", err)
 	}
 	got, _ := s.Get(ctx, "k")
@@ -113,7 +113,7 @@ func TestPutRefreshesExistingEntry(t *testing.T) {
 func TestPutAcceptsNilCitations(t *testing.T) {
 	s := testStore(t, DefaultTTL)
 	ctx := context.Background()
-	if err := s.Put(ctx, "k", "dnd", "no citations here", nil, nil, nil); err != nil {
+	if err := s.Put(ctx, "k", "dnd", "no citations here", nil, nil, nil, nil); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	got, _ := s.Get(ctx, "k")
