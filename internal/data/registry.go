@@ -86,6 +86,21 @@ func Register(d Definition) {
 	registry = append(registry, d)
 }
 
+// SetResolver attaches an EntityResolver to an already-registered corpus in
+// place. It lets the server wire runtime-constructed resolvers — which need an
+// HTTP client, a card service, or a name dictionary — after package init has
+// registered the definitions. A corpus with no resolver is left as-is.
+func SetResolver(c Corpus, r EntityResolver) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	for i, existing := range registry {
+		if existing.Corpus == c {
+			registry[i].EntityResolver = r
+			return
+		}
+	}
+}
+
 // deregister removes a corpus Definition from the registry. It is intended for
 // tests that register a hypothetical corpus and must not leak it to other
 // tests; production code never removes a built-in corpus.
