@@ -1,7 +1,13 @@
 // The gate: sign in, or claim an unsealed grimoire by making the first keeper.
 //
-// Standalone on purpose — it shares nothing with the chat modules, so a signed
-// out browser never downloads the app it cannot use.
+// Standalone on purpose — it shares none of the chat modules, so a signed-out
+// browser never downloads the app it cannot use. The two exceptions are the
+// icon and backdrop modules: the gate is the first thing anyone sees, and it
+// should already look like Grimoire rather than like a form that will later
+// become Grimoire.
+
+import { hydrate } from "./icons.js";
+import { initScene } from "./scene.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -85,6 +91,9 @@ async function submit(event) {
 }
 
 async function start() {
+	hydrate();
+	initScene();
+
 	let state = {};
 	try {
 		state = await (await fetch("/api/auth/state")).json();

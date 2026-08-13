@@ -8,7 +8,11 @@ import "embed"
 //go:embed templates/*.html
 var Templates embed.FS
 
-// Static holds the static front-end files (css, js).
+// Static holds the static front-end files: css, js, the pixel-art sprites and
+// scene layers under assets/, and the self-hosted webfonts under fonts/.
 //
-//go:embed static/*
+// `all:` rather than a bare glob so nothing is skipped for having a name Go's
+// embed would otherwise ignore.
+//
+//go:embed all:static
 var Static embed.FS

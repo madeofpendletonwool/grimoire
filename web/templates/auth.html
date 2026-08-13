@@ -5,13 +5,21 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 	<meta name="color-scheme" content="dark">
 	<title>Grimoire — sign in</title>
+	<link rel="stylesheet" href="/static/fonts.css">
 	<link rel="stylesheet" href="/static/style.css">
-	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%9C%3C/text%3E%3C/svg%3E">
+	<link rel="stylesheet" href="/static/pixel.css">
+	<link rel="icon" type="image/png" href="/static/assets/favicon-32.png">
+	<link rel="apple-touch-icon" href="/static/assets/icon-192.png">
+	<link rel="manifest" href="/static/site.webmanifest">
 </head>
 <body class="gate-body">
+	<div class="scene" id="scene" aria-hidden="true"></div>
+
 	<main class="gate">
+		<!-- The only place the book is shown shut: a cover, with a page inside. -->
 		<section class="gate-card">
-			<div class="gate-sigil" aria-hidden="true">📜</div>
+		<div class="gate-page">
+			<div class="gate-sigil" data-ico="spellbook" data-ico-scale="2"></div>
 			<h1 class="gate-title">Grimoire</h1>
 			<p class="gate-sub" id="gate-sub">The tome is sealed.</p>
 
@@ -41,6 +49,7 @@
 			<p class="gate-foot" id="gate-foot" hidden>
 				<button type="button" class="gate-link" id="gate-toggle"></button>
 			</p>
+		</div>
 		</section>
 	</main>
 

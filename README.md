@@ -16,7 +16,8 @@ A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** a
 - **🃏 Card lookup** — pull the real oracle text of any Magic card by name via Scryfall (no API key required). The chat consults it automatically when a card is mentioned, so it never invents card effects; when it cannot resolve a name it says so instead of guessing. The palette autocompletes as you type, so you never have to spell out "Asmoranomardicadaistinaculdacar" in full.
 - **🔮 Interaction resolver** — a separate Resolve mode (Magic only) for the questions that are hardest to google. State a board and a proposed spell/ability sequence, and the sage walks the resulting interactions step by step — the stack, APNAP trigger ordering, continuous-effect layers, and replacement effects — citing the rule at each step. Grounded in real card text and the full interaction chapters (117, 603, 613, 616). It is an assistant, not a Comprehensive-Rules oracle, so the UI says so plainly.
 - **✦ / ⚔ Two corpora** — Magic and D&D, each with its own accent (mana-blue vs. dragon-red). Pick one per conversation.
-- **📜 Medieval, not mid-2000s** — parchment reserved for the content surfaces (answers, rules, cards) against candlelit-stone chrome. Serif for prose, sans for UI, gold for emphasis. No build step, no JS framework, no bundler — just ES modules.
+- **📜 An actual tome, not a theme** — the interface is built from real pixel art rather than emoji and CSS gradients. Answers, rules and cards sit on a nine-sliced parchment page; the reference drawer is the book's right-hand page, spine and all; the sign-in screen is the book shut, and opens into it. Sprites carry the nouns the app is about — spellbook, scroll, mana orb, wizard's staff, candle — and a parallax cavern sits behind the whole thing, pickable from four scenes in Settings. Long rules text stays in real high-resolution serif, because a pixel font would tax the one thing this app exists to do. See [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+- **{T}: Add {G}** — Magic's mana, tap and set symbols render as symbols, in card text, rule text and the sage's prose, via the Mana and Keyrune fonts. No build step, no JS framework, no bundler — just ES modules, and every font self-hosted so it works offline.
 - **🐳 One command to run** — `docker compose up`. The index builds itself on first start.
 - **No hard dependencies** — pure-Go SQLite (FTS5), no CGO, single static binary.
 
@@ -230,6 +231,37 @@ go vet ./...
 go test ./...
 ```
 
+The front end is embedded in the binary, so a CSS or JS edit needs a rebuild to
+show up — there is no dev server watching files.
+
+### Regenerating the art
+
+The shipped assets in `web/static/assets/` and `web/static/fonts/` are checked
+in, so a normal build needs none of this. The scripts exist for when the art or
+the fonts change. They are pure-stdlib Python 3 — no pip install.
+
+```bash
+python3 scripts/build-assets.py     # sprites, nine-slice frames, scenes, favicons
+python3 scripts/fetch-gameicons.py  # web/static/js/gameicons.js
+python3 scripts/fetch-fonts.py      # web/static/fonts/ + fonts.css
+```
+
+`build-assets.py` reads the upstream art packs from `icon-packs/`, which is
+**gitignored on purpose** — one of the licences permits adapting the material
+but not republishing the pack, so the repository carries only the derived
+output. Get the packs from the links in [ATTRIBUTIONS.md](ATTRIBUTIONS.md)
+before running it. Recolours in that script are exhaustive: an unmapped colour
+fails the build rather than shipping half-recoloured, so an upstream change
+surfaces instead of going quiet.
+
+## Credits
+
+The interface is built from other people's art — pixel UI by Crusenho, icons by
+Shikashi, backdrops by Admurin, vectors from game-icons.net, and Andrew Gioia's
+Mana and Keyrune fonts. Full credits, licences and what was adapted are in
+[ATTRIBUTIONS.md](ATTRIBUTIONS.md). The app links the same list from its
+Settings popup.
+
 ## License
 
-Source under the MIT license. Rule text remains the property of Wizards of the Coast; this project indexes it for personal reference only.
+Source under the MIT license. Rule text remains the property of Wizards of the Coast; this project indexes it for personal reference only. The bundled art and fonts are under their own licences — see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).

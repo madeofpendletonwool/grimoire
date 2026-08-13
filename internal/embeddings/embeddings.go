@@ -60,12 +60,25 @@ func New(cfg Config) *Client {
 // Configured reports whether both an API key and a model are set. A model is
 // required (unlike the LLM client, which carries a default): embedding model
 // names are provider-specific and there is no safe cross-provider default.
+//
+// A nil *Client counts as unconfigured rather than panicking. Callers use a
+// nil client to mean "no embeddings", and that is the same state as a client
+// with no key — so every method here treats it that way. Without this, a nil
+// client that reaches a call site through an interface (where it stops
+// comparing equal to nil) crashes instead of degrading to FTS5-only.
 func (c *Client) Configured() bool {
-	return strings.TrimSpace(c.cfg.APIKey) != "" && strings.TrimSpace(c.cfg.Model) != ""
+	return c != nil &&
+		strings.TrimSpace(c.cfg.APIKey) != "" &&
+		strings.TrimSpace(c.cfg.Model) != ""
 }
 
-// Model returns the configured model name.
-func (c *Client) Model() string { return c.cfg.Model }
+// Model returns the configured model name, or "" when there is none.
+func (c *Client) Model() string {
+	if c == nil {
+		return ""
+	}
+	return c.cfg.Model
+}
 
 // ErrNotConfigured signals the client has no key or model.
 type errNotConfigured struct{}

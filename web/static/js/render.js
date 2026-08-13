@@ -3,13 +3,17 @@
 import { el, truncate } from "./dom.js";
 import { renderMarkdown, highlight } from "./markdown.js";
 import { refs } from "./refs.js";
+import { manaNodes, manaInEscaped, setSymbol } from "./mana.js";
 
 /**
- * Render an answer body. `corpus` decides whether rule numbers in the prose
- * become clickable references (MTG numbers them; the D&D SRD does not).
+ * Render an answer body. `corpus` decides two things: whether rule numbers in
+ * the prose become clickable references, and whether {U}-style notation
+ * becomes mana pips. Both are Magic's; the D&D SRD numbers nothing and casts
+ * nothing in curly braces.
  */
 export function renderAnswer(container, text, corpus) {
-	container.innerHTML = renderMarkdown(text, { rules: corpus === "mtg" });
+	const mtg = corpus === "mtg";
+	container.innerHTML = renderMarkdown(text, { rules: mtg, mana: mtg });
 }
 
 /** Wire rule-reference buttons produced by the markdown pass. */
@@ -104,14 +108,21 @@ function sourceLabel(source) {
 	}
 }
 
-/** One rule entry. `sub` styles it as a nested sub-rule within a section. */
-export function ruleCard(rule, query, sub) {
+/**
+ * One rule entry. `sub` styles it as a nested sub-rule within a section.
+ * Magic's rules quote mana in curly notation constantly ("{T}: Add {G}"), so
+ * on that corpus the symbols are drawn rather than spelled.
+ */
+export function ruleCard(rule, query, sub, corpus) {
 	const node = el("div", { class: "rule-card" + (sub ? " is-sub" : "") });
 	const head = el("div");
 	if (rule.number) head.append(el("span", { class: "rule-num", text: rule.number }));
 	if (rule.title) head.append(el("span", { class: "rule-name", text: rule.title }));
 	if (head.childNodes.length) node.append(head);
-	node.append(el("div", { class: "rule-text", html: highlight(rule.body || "", query) }));
+
+	let body = highlight(rule.body || "", query);
+	if (corpus === "mtg") body = manaInEscaped(body);
+	node.append(el("div", { class: "rule-text", html: body }));
 	return node;
 }
 
@@ -126,7 +137,9 @@ export function cardView(card) {
 	}
 
 	const head = el("div");
-	if (card.mana_cost) head.append(el("span", { class: "c-cost", text: card.mana_cost }));
+	if (card.mana_cost) {
+		head.append(el("span", { class: "c-cost" }, manaNodes(card.mana_cost)));
+	}
 	head.append(el("span", { class: "c-name", text: card.name }));
 	node.append(head);
 
@@ -141,17 +154,30 @@ export function cardView(card) {
 	if (card.faces && card.faces.length) {
 		for (const f of card.faces) {
 			const face = el("div", { class: "c-face" });
-			face.append(el("div", { class: "c-name", text: f.name }));
+			const faceHead = el("div", { class: "c-name", text: f.name });
+			if (f.mana_cost) {
+				faceHead.prepend(el("span", { class: "c-cost" }, manaNodes(f.mana_cost)));
+			}
+			face.append(faceHead);
 			if (f.type_line) face.append(el("div", { class: "c-type", text: f.type_line }));
-			face.append(el("div", { class: "c-oracle", text: f.oracle_text || "" }));
+			face.append(el("div", { class: "c-oracle" }, manaNodes(f.oracle_text || "")));
 			node.append(face);
 		}
 	} else {
-		node.append(el("div", { class: "c-oracle", text: card.oracle_text || "(no oracle text)" }));
+		node.append(el("div", { class: "c-oracle" },
+			manaNodes(card.oracle_text || "(no oracle text)")));
 	}
 
+	// The set's own expansion symbol, with its code as the fallback for the
+	// odd promo set Keyrune has no glyph for.
 	const foot = el("div", { class: "c-foot" });
-	foot.append(el("span", { text: card.set ? card.set.toUpperCase() : "" }));
+	const set = el("span");
+	if (card.set) {
+		const mark = setSymbol(card.set);
+		if (mark) set.append(mark);
+		set.append(el("span", { class: "c-set", text: card.set.toUpperCase() }));
+	}
+	foot.append(set);
 	if (card.scryfall_uri) {
 		foot.append(el("a", {
 			text: "Scryfall ↗",

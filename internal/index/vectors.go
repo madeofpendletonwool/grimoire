@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -38,7 +39,35 @@ type Embedder interface {
 // SetEmbedder installs (or clears, with nil) the embeddings client used at
 // index time and at query time. It must be set before indexing for vectors to
 // be populated, and before serving for Retrieve to use them.
-func (s *Store) SetEmbedder(e Embedder) { s.embedder = e }
+//
+// A nil *pointer* passed as an Embedder is stored as no embedder at all. Go
+// wraps a nil pointer in a non-nil interface, so `SetEmbedder(clientOrNil())`
+// — the natural way to write the caller — would otherwise leave `s.embedder`
+// non-nil while holding nothing, defeating every `s.embedder == nil` guard in
+// this package and panicking on the first call. Normalising here keeps that
+// guard meaning what it says, wherever the value came from.
+func (s *Store) SetEmbedder(e Embedder) {
+	if isNilValue(e) {
+		s.embedder = nil
+		return
+	}
+	s.embedder = e
+}
+
+// isNilValue reports whether an interface is nil or holds a nil pointer-like
+// value. Only reflection can see the second case.
+func isNilValue(e Embedder) bool {
+	if e == nil {
+		return true
+	}
+	v := reflect.ValueOf(e)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
 
 // IndexEmbeddings embeds every stored doc once and writes the vectors to
 // doc_vectors, replacing any prior vectors. It is a no-op when no embedder is

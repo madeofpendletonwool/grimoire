@@ -1,11 +1,16 @@
 /* Grimoire — a chat-first rules reference.
    Chrome is candlelit stone; parchment is reserved for content surfaces
    (answers, rules, cards) so it reads as the artifact rather than the
-   wallpaper. */
+   wallpaper.
+
+   The palette below is not chosen, it is measured: every parchment, leather
+   and gold value is a colour lifted straight out of the pixel-art frames in
+   pixel.css. A nine-sliced surface and a plain CSS one have to meet without a
+   seam, which they only do while these stay in step with the sprites. */
 
 /* ---------- Tokens ---------- */
 :root {
-	/* stone (app chrome) */
+	/* stone (app chrome) — the frames are recoloured to these, not vice versa */
 	--stone-900: #14100a;
 	--stone-800: #1b1610;
 	--stone-700: #241d15;
@@ -13,27 +18,35 @@
 	--stone-500: #3d3225;
 	--stone-line: #4a3c2b;
 
-	/* parchment (content) */
-	--parchment: #efe4ca;
-	--parchment-2: #e5d7b6;
-	--parchment-line: #cdb98c;
-	--ink: #2b1d0e;
-	--ink-soft: #6a5537;
+	/* parchment (content) — the page sprite's own pixels */
+	--parchment: #ffd7a8;
+	--parchment-2: #f0c48f;
+	--parchment-line: #e5b67f;
+	--outline: #493333;
+	--ink: #3a2a26;      /* 10:1 on parchment */
+	--ink-soft: #6b4f42; /* 5.5:1 on parchment */
+
+	/* the book's own leather */
+	--leather: #b75b5f;
+	--leather-deep: #9c4351;
 
 	/* metal + light */
 	--gold: #c9a227;
-	--gold-bright: #e8c65a;
+	--gold-bright: #ffd071;
 	--gold-dim: #8a7024;
-	--ember: #e0873a;
+	--ember: #ffa34d;
+	--ember-deep: #e5673c;
 
 	/* corpus accent — MTG mana blue */
 	--accent: #4d7fd6;
 	--accent-deep: #1d4699;
 	--accent-soft: rgba(77, 127, 214, 0.16);
 
-	/* type */
+	/* type — four voices: prose, chrome, carved headings, pixel labels */
 	--font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-	--font-prose: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+	--font-prose: "EB Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+	--font-display: "Cinzel", "Trajan Pro", var(--font-prose);
+	--font-pixel: "Departure Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 	--fs-xs: 0.75rem;
 	--fs-sm: 0.85rem;
 	--fs-md: 0.95rem;
@@ -93,12 +106,13 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 
 kbd {
-	font-family: var(--font-ui);
-	font-size: 0.7rem;
-	padding: 0.05rem 0.35rem;
+	font-family: var(--font-pixel);
+	font-size: 0.72rem;
+	letter-spacing: 0.02em;
+	padding: 0.1rem 0.35rem 0;
 	border: 1px solid var(--stone-line);
 	border-bottom-width: 2px;
-	border-radius: 4px;
+	border-radius: 3px;
 	background: var(--stone-700);
 	color: var(--parchment);
 	opacity: 0.8;
@@ -118,12 +132,15 @@ kbd {
 .app.rail-hidden.drawer-open { grid-template-columns: 0 minmax(0, 1fr) var(--drawer-w); }
 
 /* ---------- Sidebar ---------- */
+/* Chrome sits *on* the chamber, not over a hole cut in it: the panels are
+   stone at 90% so the scene's light reaches around their edges. */
 .rail {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
 	overflow: hidden;
-	background: var(--stone-800);
+	background: rgba(27, 22, 16, 0.9);
+	backdrop-filter: blur(6px);
 	border-right: 1px solid var(--stone-line);
 }
 .rail-head {
@@ -137,76 +154,90 @@ kbd {
 	display: flex;
 	align-items: center;
 	gap: var(--sp-2);
-	font-family: var(--font-prose);
-	font-variant: small-caps;
-	letter-spacing: 0.06em;
-	font-size: var(--fs-lg);
+	font-family: var(--font-display);
+	font-weight: 700;
+	letter-spacing: 0.1em;
+	font-size: var(--fs-md);
+	text-transform: uppercase;
 	color: var(--gold-bright);
 	white-space: nowrap;
+	text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
 }
-.sigil { font-size: 1.1rem; }
 
 .icon-btn {
+	display: grid;
+	place-items: center;
 	background: none;
 	border: 1px solid transparent;
 	border-radius: var(--r-sm);
 	color: var(--parchment);
 	opacity: 0.65;
 	cursor: pointer;
-	padding: 0.3rem 0.5rem;
+	padding: 0.35rem 0.5rem;
+	font-size: var(--fs-lg);
 	line-height: 1;
-	transition: opacity 0.15s ease, background 0.15s ease;
+	transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
-.icon-btn:hover { opacity: 1; background: rgba(255, 255, 255, 0.06); }
-.icon-btn.danger:hover { color: #ef8b7a; }
+.icon-btn:hover { opacity: 1; background: rgba(255, 255, 255, 0.06); color: var(--gold-bright); }
+.icon-btn.danger:hover { color: var(--ember); }
 
+/* The primary action gets a real sprite, so it gets real height. */
 .new-chat {
 	margin: 0 var(--sp-3) var(--sp-3);
-	padding: 0.6rem var(--sp-3);
+	padding: var(--sp-1) var(--sp-3);
 	display: flex;
 	align-items: center;
 	gap: var(--sp-2);
-	background: linear-gradient(180deg, rgba(232, 198, 90, 0.16), rgba(232, 198, 90, 0.06));
-	border: 1px solid var(--gold-dim);
-	border-radius: var(--r-md);
-	color: var(--gold-bright);
-	font-weight: 600;
+	color: #1a1208; /* ink on gold — the frame behind this is the gold */
+	font-family: var(--font-display);
+	font-weight: 700;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
 	font-size: var(--fs-sm);
 	cursor: pointer;
-	transition: background 0.15s ease, border-color 0.15s ease;
+	filter: brightness(0.94);
+	transition: filter 0.15s ease;
 }
-.new-chat:hover { background: rgba(232, 198, 90, 0.22); border-color: var(--gold); }
+.new-chat:hover { filter: brightness(1.06); }
+.new-chat .ico { margin: -2px 0; }
 
+/* Two cards rather than a pill: 32px pixel art does not survive being shrunk
+   to fit a segmented control, so the control grows to fit the art. */
 .corpus-picker {
-	display: flex;
-	gap: var(--sp-1);
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--sp-2);
 	margin: 0 var(--sp-3) var(--sp-3);
-	padding: 3px;
-	background: var(--stone-700);
-	border: 1px solid var(--stone-line);
-	border-radius: var(--r-pill);
 }
 .corpus-opt {
-	flex: 1;
-	padding: 0.35rem 0.4rem;
-	border: none;
-	border-radius: var(--r-pill);
-	background: none;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--sp-1);
+	padding: var(--sp-2) var(--sp-1) var(--sp-1);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-md);
+	background: var(--stone-700);
 	color: var(--parchment);
-	opacity: 0.6;
+	opacity: 0.55;
 	font-size: var(--fs-xs);
 	font-weight: 600;
+	letter-spacing: 0.04em;
 	cursor: pointer;
 	white-space: nowrap;
 	transition: all 0.15s ease;
 }
-.corpus-opt:hover { opacity: 0.9; }
+.corpus-opt .ico { filter: grayscale(0.7) brightness(0.8); transition: filter 0.15s ease; }
+.corpus-opt:hover { opacity: 0.85; }
+.corpus-opt:hover .ico { filter: none; }
 .corpus-opt.is-active {
 	opacity: 1;
-	background: var(--accent-deep);
-	color: #fff;
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	color: var(--gold-bright);
 	box-shadow: var(--shadow-1);
 }
+.corpus-opt.is-active .ico { filter: drop-shadow(0 0 6px var(--accent)); }
 
 .history {
 	flex: 1;
@@ -216,10 +247,12 @@ kbd {
 }
 .history-group {
 	padding: var(--sp-3) var(--sp-2) var(--sp-1);
-	font-size: var(--fs-xs);
+	font-family: var(--font-pixel);
+	font-size: 0.7rem;
 	text-transform: uppercase;
-	letter-spacing: 0.1em;
-	opacity: 0.42;
+	letter-spacing: 0.12em;
+	color: var(--gold-dim);
+	opacity: 0.9;
 }
 .history-item {
 	display: flex;
@@ -238,7 +271,8 @@ kbd {
 }
 .history-item:hover { background: rgba(255, 255, 255, 0.06); }
 .history-item.is-active { background: rgba(232, 198, 90, 0.14); color: var(--gold-bright); }
-.history-item .h-mark { flex: none; opacity: 0.6; font-size: 0.8rem; }
+.history-item .h-mark { flex: none; opacity: 0.5; color: var(--accent); }
+.history-item.is-active .h-mark { opacity: 1; color: var(--gold-bright); }
 .history-item .h-title {
 	flex: 1;
 	min-width: 0;
@@ -247,13 +281,21 @@ kbd {
 	white-space: nowrap;
 }
 .history-empty {
-	padding: var(--sp-4) var(--sp-2);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--sp-2);
+	padding: var(--sp-6) var(--sp-3);
+	text-align: center;
+	font-family: var(--font-prose);
 	font-size: var(--fs-sm);
-	opacity: 0.45;
+	opacity: 0.35;
 	font-style: italic;
 }
+.history-empty .gi { opacity: 0.7; }
 
 .rail-foot {
+	position: relative;
 	border-top: 1px solid var(--stone-line);
 	padding: var(--sp-2) var(--sp-3) var(--sp-3);
 }
@@ -271,8 +313,10 @@ kbd {
 	font-size: var(--fs-sm);
 	cursor: pointer;
 }
-.rail-action:hover { background: rgba(255, 255, 255, 0.06); opacity: 1; }
+.rail-action:hover { background: rgba(255, 255, 255, 0.06); opacity: 1; color: var(--gold-bright); }
 .rail-action kbd { margin-left: auto; }
+.rail-action .gi { color: var(--gold-dim); }
+.rail-action:hover .gi { color: var(--gold-bright); }
 .rail-user {
 	margin-left: auto;
 	max-width: 9rem;
@@ -284,22 +328,23 @@ kbd {
 }
 .model-badge {
 	margin: var(--sp-2) var(--sp-2) 0;
-	font-size: var(--fs-xs);
-	opacity: 0.4;
-	line-height: 1.4;
+	font-family: var(--font-pixel);
+	font-size: 0.68rem;
+	letter-spacing: 0.02em;
+	opacity: 0.35;
+	line-height: 1.5;
 }
 
 .rail-scrim { display: none; }
 
 /* ---------- Main column ---------- */
+/* Transparent on purpose — this column is where the chamber shows through. */
 .main {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
 	height: 100%;
-	background:
-		radial-gradient(ellipse 900px 520px at 50% -10%, rgba(201, 162, 39, 0.07), transparent 70%),
-		var(--stone-900);
+	background: none;
 }
 
 .topbar {
@@ -316,24 +361,30 @@ kbd {
 .app.rail-hidden .rail-open { display: block; }
 .conv-title {
 	margin: 0;
-	font-family: var(--font-prose);
-	font-size: var(--fs-lg);
+	font-family: var(--font-display);
+	font-size: var(--fs-md);
 	font-weight: 600;
-	letter-spacing: 0.01em;
+	letter-spacing: 0.04em;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
 .corpus-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
 	flex: none;
 	padding: 0.1rem 0.55rem;
 	border: 1px solid var(--accent);
 	border-radius: var(--r-pill);
 	background: var(--accent-soft);
 	color: var(--parchment);
-	font-size: var(--fs-xs);
+	font-family: var(--font-pixel);
+	font-size: 0.7rem;
+	letter-spacing: 0.03em;
 	white-space: nowrap;
 }
+.corpus-chip .gi { color: var(--accent); }
 .topbar-actions { margin-left: auto; display: flex; gap: var(--sp-1); flex: none; }
 
 /* ---------- Transcript ---------- */
@@ -359,24 +410,31 @@ kbd {
 	text-align: center;
 }
 .welcome-sigil {
-	font-size: 2.6rem;
-	line-height: 1;
-	filter: drop-shadow(0 3px 10px rgba(232, 198, 90, 0.35));
+	line-height: 0;
+	filter: drop-shadow(0 4px 14px rgba(255, 208, 113, 0.45));
+	animation: sigil-breathe 6s ease-in-out infinite;
+}
+@keyframes sigil-breathe {
+	0%, 100% { filter: drop-shadow(0 4px 14px rgba(255, 208, 113, 0.35)); }
+	50%      { filter: drop-shadow(0 4px 20px rgba(255, 208, 113, 0.6)); }
 }
 .welcome-title {
-	margin: var(--sp-3) 0 var(--sp-1);
-	font-family: var(--font-prose);
-	font-variant: small-caps;
-	letter-spacing: 0.07em;
-	font-size: clamp(1.8rem, 4vw, 2.5rem);
-	font-weight: 600;
+	margin: var(--sp-4) 0 var(--sp-2);
+	font-family: var(--font-display);
+	letter-spacing: 0.16em;
+	text-indent: 0.16em; /* balance the tracking on the last letter */
+	text-transform: uppercase;
+	font-size: clamp(1.5rem, 3.6vw, 2.1rem);
+	font-weight: 700;
 	color: var(--gold-bright);
+	text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
 }
 .welcome-sub {
 	margin: 0 0 var(--sp-5);
 	font-family: var(--font-prose);
 	font-style: italic;
-	opacity: 0.6;
+	font-size: var(--fs-lg);
+	opacity: 0.65;
 }
 .suggestions {
 	display: flex;
@@ -385,21 +443,16 @@ kbd {
 	justify-content: center;
 }
 .suggestion {
-	padding: 0.5rem 0.9rem;
-	border: 1px solid var(--stone-line);
-	border-radius: var(--r-pill);
-	background: var(--stone-800);
-	color: var(--parchment);
-	opacity: 0.8;
+	padding: 0.35rem 0.6rem;
+	color: var(--ink);
+	font-family: var(--font-prose);
 	font-size: var(--fs-sm);
+	line-height: 1.35;
 	cursor: pointer;
-	transition: all 0.15s ease;
+	filter: brightness(0.94);
+	transition: filter 0.15s ease;
 }
-.suggestion:hover {
-	opacity: 1;
-	border-color: var(--gold-dim);
-	background: var(--stone-700);
-}
+.suggestion:hover { filter: brightness(1.06); }
 
 /* ---------- Messages ---------- */
 .msg { display: flex; flex-direction: column; }
@@ -420,29 +473,31 @@ kbd {
 	display: flex;
 	align-items: center;
 	gap: var(--sp-2);
-	margin-bottom: var(--sp-2);
-	font-family: var(--font-prose);
-	font-variant: small-caps;
-	letter-spacing: 0.08em;
-	font-size: var(--fs-sm);
+	margin-bottom: var(--sp-1);
+	font-family: var(--font-display);
+	font-weight: 600;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	font-size: var(--fs-xs);
 	color: var(--gold);
 }
+.msg-sage .who .ico { margin: -4px 0; }
+
+/* Framed by .f-parchment in pixel.css — no border, background or radius here,
+   the sprite supplies all three. */
 .msg-sage .bubble {
 	position: relative;
-	padding: var(--sp-4) var(--sp-4) var(--sp-3);
-	border: 1px solid var(--parchment-line);
-	border-left: 3px solid var(--gold);
-	border-radius: var(--r-md);
-	background:
-		linear-gradient(180deg, var(--parchment) 0%, var(--parchment-2) 100%);
+	padding: var(--sp-2) var(--sp-3) var(--sp-2);
 	color: var(--ink);
 	font-family: var(--font-prose);
-	font-size: var(--fs-lg);
-	box-shadow: var(--shadow-2);
+	font-size: 1.12rem;
+	line-height: 1.6;
 	overflow-wrap: anywhere;
+	/* the corpus's own colour, as a rule down the inside of the page */
+	box-shadow: inset 3px 0 0 var(--accent), var(--shadow-2);
 }
 .msg-sage.is-error .bubble {
-	border-left-color: var(--ember);
+	box-shadow: inset 3px 0 0 var(--ember-deep), var(--shadow-2);
 	font-style: italic;
 }
 
@@ -488,39 +543,42 @@ kbd {
 .prose strong { font-weight: 700; }
 .prose a { color: var(--accent-deep); }
 
-/* inline rule reference produced by the markdown pass */
+/* Inline rule reference produced by the markdown pass. Framed by pixel.css. */
 .rule-ref {
-	font-family: var(--font-ui);
-	font-size: 0.82em;
-	font-weight: 600;
-	padding: 0.02em 0.35em;
-	border: 1px solid transparent;
-	border-radius: 4px;
-	background: var(--accent-soft);
+	font-family: var(--font-pixel);
+	font-size: 0.76em;
+	padding: 0 0.15em;
 	color: var(--accent-deep);
 	cursor: pointer;
+	filter: brightness(0.97);
+	transition: filter 0.12s ease;
 }
-.rule-ref:hover { border-color: var(--accent); }
+.rule-ref:hover { filter: brightness(1.08); }
 
-/* streaming caret */
+/* Streaming caret — a hard-edged block, not a glyph, so it reads as a quill
+   nib on the page rather than a text cursor from another century. */
 .bubble.is-streaming .prose > :last-child::after {
-	content: "▍";
-	margin-left: 1px;
-	color: var(--gold-dim);
+	content: "";
+	display: inline-block;
+	width: 3px;
+	height: 0.95em;
+	margin-left: 2px;
+	vertical-align: -0.12em;
+	background: var(--ember-deep);
 	animation: blink 1s steps(2, start) infinite;
 }
 @keyframes blink { to { visibility: hidden; } }
 
+/* The sage casting: a hand, then the six magic scrolls, on a loop. */
 .thinking {
 	display: inline-flex;
-	gap: 0.3em;
+	align-items: center;
+	gap: var(--sp-2);
+	font-family: var(--font-prose);
 	font-style: italic;
 	color: var(--ink-soft);
 }
-.thinking span { animation: pulse 1.2s ease-in-out infinite; }
-.thinking span:nth-child(2) { animation-delay: 0.15s; }
-.thinking span:nth-child(3) { animation-delay: 0.3s; }
-@keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+.thinking .ico { margin: -6px 0; }
 
 /* citations */
 .citations {
@@ -534,23 +592,33 @@ kbd {
 	font-family: var(--font-ui);
 	font-size: var(--fs-xs);
 }
-.citations-label { color: var(--ink-soft); margin-right: var(--sp-1); }
+.citations-label {
+	color: var(--ink-soft);
+	margin-right: var(--sp-1);
+	font-family: var(--font-pixel);
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+/* Framed by .f-chip in pixel.css. */
 .chip {
-	padding: 0.12rem 0.5rem;
-	border: 1px solid var(--parchment-line);
-	border-radius: var(--r-pill);
-	background: rgba(255, 255, 255, 0.4);
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.05rem 0.3rem;
 	color: var(--ink);
 	cursor: pointer;
-	transition: all 0.12s ease;
+	filter: brightness(0.96);
+	transition: filter 0.12s ease;
 }
-.chip:hover { border-color: var(--accent); background: var(--accent-soft); }
-.chip.chip-card { background: rgba(201, 162, 39, 0.22); border-color: var(--gold-dim); }
+.chip:hover { filter: brightness(1.08); }
+.chip .gi { color: var(--ink-soft); }
+.chip.chip-card { color: var(--accent-deep); font-weight: 600; }
 .chip.chip-miss {
-	background: rgba(224, 135, 58, 0.16);
-	border-color: var(--ember);
 	cursor: default;
+	color: var(--ember-deep);
 	text-decoration: line-through;
+	filter: saturate(0.6);
 }
 
 /* rulings — official precedent citations under an answer */
@@ -566,10 +634,10 @@ kbd {
 }
 .rulings-label {
 	color: var(--ink-soft);
-	font-weight: 600;
-	letter-spacing: 0.02em;
+	font-family: var(--font-pixel);
+	letter-spacing: 0.08em;
 	text-transform: uppercase;
-	font-size: var(--fs-xs);
+	font-size: 0.68rem;
 }
 .ruling {
 	display: flex;
@@ -602,6 +670,8 @@ kbd {
 	padding: 0 var(--sp-4) var(--sp-3);
 	background: linear-gradient(180deg, transparent, var(--stone-900) 35%);
 }
+/* Framed by .f-field in pixel.css, which also swaps to the gold-edged sprite
+   on focus — hence no border or background here. */
 .composer {
 	position: relative;
 	display: flex;
@@ -609,16 +679,8 @@ kbd {
 	gap: var(--sp-2);
 	max-width: var(--measure);
 	margin: 0 auto;
-	padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4);
-	border: 1px solid var(--stone-line);
-	border-radius: var(--r-lg);
-	background: var(--stone-800);
+	padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-3);
 	box-shadow: var(--shadow-2);
-	transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.composer:focus-within {
-	border-color: var(--gold-dim);
-	box-shadow: var(--shadow-2), 0 0 0 3px rgba(201, 162, 39, 0.12);
 }
 .composer-input {
 	flex: 1;
@@ -637,37 +699,37 @@ kbd {
 .composer-input:focus { outline: none; }
 .composer-input::placeholder { color: var(--parchment); opacity: 0.35; }
 .composer-side { flex: none; display: flex; align-items: center; }
+/* Framed by .f-button in pixel.css. */
 .send-btn {
-	width: 2.1rem;
-	height: 2.1rem;
+	width: 2.3rem;
+	height: 2.3rem;
 	display: grid;
 	place-items: center;
-	border: 1px solid var(--gold-dim);
-	border-radius: var(--r-sm);
-	background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+	padding: 0;
 	color: #1a1208;
+	font-size: var(--fs-md);
 	cursor: pointer;
 	transition: filter 0.15s ease, opacity 0.15s ease;
 }
 .send-btn:hover:not(:disabled) { filter: brightness(1.1); }
 .send-btn:disabled { opacity: 0.35; cursor: default; }
-.stop-btn {
-	background: linear-gradient(180deg, #d9694f, #b34b34);
-	border-color: #8f3a26;
-	color: #fff;
-}
+/* The quill-arrow is drawn flying down-left; send points right. */
+.send-btn .gi { transform: rotate(-45deg); }
+.stop-btn .gi { transform: none; }
+.stop-btn { color: #2a0f08; filter: hue-rotate(-28deg) saturate(1.4); }
 .voice-btn {
-	width: 2.1rem;
-	height: 2.1rem;
+	width: 2.3rem;
+	height: 2.3rem;
 	display: grid;
 	place-items: center;
+	padding: 0;
 	border: 1px solid var(--stone-line);
 	border-radius: var(--r-sm);
 	background: var(--stone-700);
 	color: var(--parchment);
 	cursor: pointer;
 	opacity: 0.7;
-	font-size: 1rem;
+	font-size: var(--fs-md);
 	transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
 .voice-btn:hover:not(:disabled) { opacity: 1; }
@@ -689,7 +751,9 @@ kbd {
 .composer-foot {
 	max-width: var(--measure);
 	margin: var(--sp-2) auto 0;
-	font-size: var(--fs-xs);
+	font-family: var(--font-pixel);
+	font-size: 0.68rem;
+	letter-spacing: 0.02em;
 	opacity: 0.4;
 	text-align: center;
 	min-height: 1.1em;
@@ -707,14 +771,18 @@ kbd {
 	border-radius: var(--r-pill);
 }
 .mode-opt {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.3rem;
 	padding: 0.2rem 0.55rem;
 	border: none;
 	border-radius: var(--r-pill);
 	background: none;
 	color: var(--parchment);
 	opacity: 0.6;
-	font-size: var(--fs-xs);
-	font-weight: 600;
+	font-family: var(--font-pixel);
+	font-size: 0.72rem;
+	letter-spacing: 0.03em;
 	white-space: nowrap;
 	cursor: pointer;
 	transition: all 0.15s ease;
@@ -746,11 +814,12 @@ kbd {
 	min-width: 0;
 }
 .resolver-label {
-	font-size: var(--fs-xs);
-	font-weight: 600;
-	letter-spacing: 0.04em;
+	font-family: var(--font-pixel);
+	font-size: 0.7rem;
+	letter-spacing: 0.08em;
 	text-transform: uppercase;
-	opacity: 0.5;
+	color: var(--gold-dim);
+	opacity: 0.9;
 }
 .resolver-field textarea,
 .resolver-note-row input {
@@ -833,34 +902,38 @@ kbd {
 .slash-hints .cmd-desc { opacity: 0.55; }
 
 /* ---------- Reference drawer ---------- */
+/* The drawer is the right-hand page of the open book: spine down its inner
+   edge, page-stack along the bottom. Framed by .f-page in pixel.css. */
 .drawer {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
 	overflow: hidden;
-	background: var(--stone-800);
-	border-left: 1px solid var(--stone-line);
+	color: var(--ink);
 }
 .drawer-head {
 	flex: none;
 	display: flex;
 	align-items: center;
 	gap: var(--sp-2);
-	padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-4);
-	border-bottom: 1px solid var(--stone-line);
+	padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
+	border-bottom: 1px solid var(--parchment-line);
 }
 .drawer-title {
 	flex: 1;
 	margin: 0;
-	font-family: var(--font-prose);
-	font-variant: small-caps;
-	letter-spacing: 0.03em;
-	font-size: var(--fs-md);
-	color: var(--gold-bright);
+	font-family: var(--font-display);
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	font-size: var(--fs-sm);
+	color: var(--ink);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+.drawer .icon-btn { color: var(--ink-soft); opacity: 0.8; }
+.drawer .icon-btn:hover { color: var(--ember-deep); background: rgba(73, 51, 51, 0.1); }
 .drawer-body {
 	flex: 1;
 	min-height: 0;
@@ -871,35 +944,45 @@ kbd {
 	gap: var(--sp-2);
 }
 
-/* rule + card surfaces (drawer and palette previews) */
+/* Rules and cards are entries on the page, not cards floating above it — the
+   drawer is already parchment, so a parchment panel inside it would be flat.
+   They separate with a rule and a hanging accent bar instead. */
 .rule-card {
-	padding: var(--sp-3);
-	border: 1px solid var(--parchment-line);
+	padding: var(--sp-2) 0 var(--sp-2) var(--sp-3);
 	border-left: 3px solid var(--accent);
-	border-radius: var(--r-sm);
-	background: var(--parchment);
 	color: var(--ink);
 	font-family: var(--font-prose);
+	font-size: var(--fs-lg);
+	line-height: 1.55;
 }
+.rule-card + .rule-card { border-top: 1px dashed var(--parchment-line); }
 .rule-card .rule-num {
-	font-weight: 700;
-	font-variant: small-caps;
-	letter-spacing: 0.03em;
+	font-family: var(--font-pixel);
+	font-size: 0.78rem;
+	letter-spacing: 0.04em;
 	color: var(--accent-deep);
 }
 .rule-card .rule-name { font-weight: 700; margin-left: var(--sp-2); }
 .rule-card .rule-text { margin-top: var(--sp-1); white-space: pre-wrap; }
-.rule-card.is-sub { border-left-color: var(--parchment-line); margin-left: var(--sp-3); }
-.drawer-note { font-size: var(--fs-sm); opacity: 0.5; font-style: italic; padding: var(--sp-2); }
+.rule-card.is-sub {
+	border-left-color: var(--parchment-line);
+	margin-left: var(--sp-3);
+	font-size: var(--fs-md);
+}
+.drawer-note {
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	color: var(--ink-soft);
+	font-style: italic;
+	padding: var(--sp-3);
+}
 mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; padding: 0 1px; }
 
 .card-view {
-	padding: var(--sp-3);
-	border: 1px solid var(--parchment-line);
-	border-radius: var(--r-sm);
-	background: var(--parchment);
+	padding: var(--sp-2) 0;
 	color: var(--ink);
 	font-family: var(--font-prose);
+	font-size: var(--fs-lg);
 }
 .card-view img {
 	display: block;
@@ -941,6 +1024,7 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	background: rgba(10, 7, 3, 0.72);
 	backdrop-filter: blur(3px);
 }
+/* Framed by .f-stone in pixel.css. */
 .palette-box {
 	position: relative;
 	width: 100%;
@@ -949,9 +1033,6 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
-	background: var(--stone-800);
-	border: 1px solid var(--gold-dim);
-	border-radius: var(--r-lg);
 	box-shadow: var(--shadow-3);
 	animation: rise 0.16s ease;
 }
@@ -982,10 +1063,11 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 }
 .palette-group {
 	padding: var(--sp-2) var(--sp-3) var(--sp-1);
-	font-size: var(--fs-xs);
+	font-family: var(--font-pixel);
+	font-size: 0.7rem;
 	text-transform: uppercase;
-	letter-spacing: 0.1em;
-	opacity: 0.4;
+	letter-spacing: 0.12em;
+	color: var(--gold-dim);
 }
 .palette-item {
 	display: flex;
@@ -1003,11 +1085,10 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .palette-item:hover, .palette-item.is-active { background: rgba(255, 255, 255, 0.08); }
 .palette-item .p-key {
 	flex: none;
-	font-size: var(--fs-xs);
-	font-weight: 700;
+	font-family: var(--font-pixel);
+	font-size: 0.76rem;
 	color: var(--gold);
-	font-variant: small-caps;
-	letter-spacing: 0.04em;
+	letter-spacing: 0.03em;
 	min-width: 3.6rem;
 }
 .palette-item .p-text {
@@ -1019,7 +1100,17 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	font-size: var(--fs-sm);
 	opacity: 0.85;
 }
-.palette-empty { padding: var(--sp-5); text-align: center; opacity: 0.45; font-style: italic; }
+.palette-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--sp-2);
+	padding: var(--sp-6) var(--sp-5);
+	text-align: center;
+	font-family: var(--font-prose);
+	opacity: 0.4;
+	font-style: italic;
+}
 .palette-foot {
 	flex: none;
 	display: flex;
@@ -1032,43 +1123,42 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .palette-foot span:last-child { margin-left: auto; }
 
 /* ---------- Gate (login / first-run setup) ---------- */
-/* The one screen a signed-out reader ever sees: a single parchment card on the
-   same candlelit stone as the app, so signing in already looks like Grimoire. */
+/* The one screen a signed-out reader ever sees, and the only place the book is
+   shown shut: the cover sprite frames the card, a parchment page sits inside
+   it, and the form is written on the page. Two nested nine-slices, so it
+   reads as an object rather than a login box with a texture on it. */
 .gate-body { overflow: auto; }
 .gate {
 	min-height: 100%;
 	display: grid;
 	place-items: center;
 	padding: var(--sp-5) var(--sp-4);
-	background:
-		radial-gradient(ellipse 900px 520px at 50% -5%, rgba(201, 162, 39, 0.10), transparent 70%),
-		var(--stone-900);
 }
+/* Framed by .f-cover in pixel.css. */
 .gate-card {
 	width: 100%;
 	max-width: 25rem;
-	padding: var(--sp-6) var(--sp-5) var(--sp-5);
-	border: 1px solid var(--parchment-line);
-	border-top: 3px solid var(--gold);
-	border-radius: var(--r-lg);
-	background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-2) 100%);
+	padding: var(--sp-2);
 	color: var(--ink);
 	box-shadow: var(--shadow-3);
 	text-align: center;
 	animation: rise 0.18s ease;
 }
+/* Framed by .f-parchment in pixel.css. */
+.gate-page { padding: var(--sp-5) var(--sp-4) var(--sp-4); }
 .gate-sigil {
-	font-size: 2.4rem;
-	line-height: 1;
-	filter: drop-shadow(0 3px 10px rgba(43, 29, 14, 0.3));
+	line-height: 0;
+	filter: drop-shadow(0 3px 8px rgba(73, 51, 51, 0.4));
 }
 .gate-title {
 	margin: var(--sp-3) 0 var(--sp-1);
-	font-family: var(--font-prose);
-	font-variant: small-caps;
-	letter-spacing: 0.08em;
-	font-size: 2rem;
-	font-weight: 600;
+	font-family: var(--font-display);
+	letter-spacing: 0.16em;
+	text-indent: 0.16em;
+	text-transform: uppercase;
+	font-size: 1.5rem;
+	font-weight: 700;
+	color: var(--outline);
 }
 .gate-sub {
 	margin: 0 0 var(--sp-5);
@@ -1087,18 +1177,18 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .gate-label {
 	display: block;
 	margin-bottom: var(--sp-1);
-	font-size: var(--fs-xs);
-	font-weight: 600;
+	font-family: var(--font-pixel);
+	font-size: 0.7rem;
 	text-transform: uppercase;
 	letter-spacing: 0.1em;
 	color: var(--ink-soft);
 }
 .gate-field input {
 	width: 100%;
-	padding: 0.5rem 0.7rem;
-	border: 1px solid var(--parchment-line);
-	border-radius: var(--r-sm);
-	background: rgba(255, 255, 255, 0.42);
+	padding: 0.4rem 0.6rem;
+	border: 2px solid var(--parchment-line);
+	border-radius: 0;
+	background: rgba(255, 255, 255, 0.32);
 	color: var(--ink);
 	font-family: var(--font-prose);
 	font-size: var(--fs-lg);
@@ -1106,32 +1196,31 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 }
 .gate-field input:focus {
 	outline: none;
-	border-color: var(--gold-dim);
-	box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.22);
+	border-color: var(--ember-deep);
+	box-shadow: 0 0 0 2px rgba(229, 103, 60, 0.25);
 }
 
 .gate-error {
 	margin: 0;
 	padding: var(--sp-2) var(--sp-3);
-	border-left: 3px solid var(--ember);
-	border-radius: var(--r-sm);
-	background: rgba(224, 135, 58, 0.14);
+	border-left: 3px solid var(--ember-deep);
+	background: rgba(229, 103, 60, 0.14);
 	font-family: var(--font-prose);
 	font-style: italic;
 	font-size: var(--fs-sm);
 }
 
+/* Framed by .f-button in pixel.css. */
 .gate-submit {
 	margin-top: var(--sp-2);
-	padding: 0.6rem var(--sp-4);
-	border: 1px solid var(--gold-dim);
-	border-radius: var(--r-md);
-	background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+	padding: 0.35rem var(--sp-4);
 	color: #1a1208;
+	font-family: var(--font-display);
 	font-weight: 700;
-	font-variant: small-caps;
-	letter-spacing: 0.08em;
-	font-size: var(--fs-lg);
+	letter-spacing: 0.14em;
+	text-indent: 0.14em;
+	text-transform: uppercase;
+	font-size: var(--fs-md);
 	cursor: pointer;
 	transition: filter 0.15s ease, opacity 0.15s ease;
 }
@@ -1150,6 +1239,127 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	cursor: pointer;
 }
 .gate-link:hover { color: var(--ink); }
+
+/* ---------- Settings popup ---------- */
+/* Framed by .f-stone in pixel.css. Anchored to the rail foot rather than
+   centred, because it belongs to the button that opened it. */
+.settings-popup {
+	position: absolute;
+	left: var(--sp-2);
+	right: var(--sp-2);
+	bottom: calc(100% - var(--sp-2));
+	z-index: 20;
+	max-height: 70vh;
+	overflow-y: auto;
+	padding: var(--sp-2);
+	box-shadow: var(--shadow-3);
+	animation: rise 0.14s ease;
+}
+.set-title {
+	margin: 0 0 var(--sp-2);
+	font-family: var(--font-display);
+	font-size: var(--fs-sm);
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--gold-bright);
+}
+.set-group + .set-group { margin-top: var(--sp-3); }
+.set-label {
+	margin: 0 0 var(--sp-1);
+	font-family: var(--font-pixel);
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: var(--gold-dim);
+}
+.set-opt,
+.set-toggle {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-2);
+	width: 100%;
+	padding: 0.3rem var(--sp-2);
+	border: 1px solid transparent;
+	border-radius: var(--r-sm);
+	background: none;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: background 0.12s ease, border-color 0.12s ease;
+}
+.set-opt:hover,
+.set-toggle:hover { background: rgba(255, 255, 255, 0.06); }
+.set-opt.is-active {
+	border-color: var(--gold-dim);
+	background: rgba(255, 208, 113, 0.12);
+}
+.set-opt-name { font-size: var(--fs-sm); }
+.set-opt.is-active .set-opt-name { color: var(--gold-bright); }
+.set-opt-note {
+	margin-left: auto;
+	font-size: var(--fs-xs);
+	opacity: 0.4;
+	white-space: nowrap;
+}
+.set-toggle .set-switch {
+	margin-left: auto;
+	width: 26px;
+	height: 12px;
+	flex: none;
+	align-self: center;
+	border: 1px solid var(--stone-line);
+	background: var(--stone-900);
+	position: relative;
+}
+.set-toggle .set-switch::after {
+	content: "";
+	position: absolute;
+	inset: 2px auto 2px 2px;
+	width: 8px;
+	background: var(--stone-500);
+	transition: transform 0.12s steps(2), background 0.12s ease;
+}
+.set-toggle.is-on .set-switch { border-color: var(--gold-dim); }
+.set-toggle.is-on .set-switch::after {
+	transform: translateX(12px);
+	background: var(--gold-bright);
+}
+.set-credits { border-top: 1px solid var(--stone-line); padding-top: var(--sp-2); }
+.set-credit {
+	display: flex;
+	gap: var(--sp-2);
+	margin: 0 0 0.15rem;
+	padding: 0 var(--sp-2);
+	font-size: var(--fs-xs);
+	opacity: 0.55;
+}
+.set-credit-what { flex: none; min-width: 5.5rem; color: var(--gold-dim); }
+.set-credit a { color: inherit; text-decoration: none; }
+.set-credit a:hover { color: var(--gold-bright); text-decoration: underline; }
+
+/* ---------- Magic symbols ---------- */
+/* Mana ships its own sizing; these only settle it into our type. Pips inside
+   prose ride a touch high so they sit on the baseline of a serif face. */
+.ms { vertical-align: -0.08em; }
+.prose .ms,
+.rule-card .ms,
+.c-oracle .ms { font-size: 0.85em; }
+.c-cost .ms { font-size: 1.05em; margin-left: 0.1em; }
+.ss { font-size: 1.15em; vertical-align: -0.12em; }
+
+/* ---------- Opt-in pixel pointer ---------- */
+.pixel-cursor,
+.pixel-cursor * { cursor: url("/static/assets/ui/cursor.png") 2 2, auto !important; }
+.pixel-cursor a,
+.pixel-cursor button,
+.pixel-cursor [role="button"],
+.pixel-cursor .palette-item,
+.pixel-cursor .chip,
+.pixel-cursor .suggestion,
+.pixel-cursor .rule-ref {
+	cursor: url("/static/assets/ui/cursor-press.png") 2 2, pointer !important;
+}
 
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
@@ -1204,6 +1414,11 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.resolver-grid { grid-template-columns: 1fr; }
 	.mode-toggle .mode-opt { padding: 0.2rem 0.4rem; }
 
+	/* The chip and the mode toggle neither wrap nor shrink, so a long title
+	   next to them can push the row past the viewport. The title already
+	   ellipsises; this stops anything that cannot from spilling out. */
+	.topbar { overflow: hidden; }
+
 	/* keep chrome off the notch and home indicator */
 	.topbar {
 		gap: var(--sp-2);
@@ -1225,6 +1440,22 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 			calc(var(--sp-5) + env(safe-area-inset-top)) var(--sp-4)
 			calc(var(--sp-5) + env(safe-area-inset-bottom));
 	}
+}
+
+/* On a phone the topbar cannot hold labels as well as the title. Drop the
+   labels, not the controls: the corpus is already named in the rail and in the
+   welcome line, and the two mode icons are distinct enough on their own.
+   (font-size: 0 hides the label text; the icons carry their own sizing.) */
+@media (max-width: 560px) {
+	.corpus-chip { padding: 0.15rem 0.4rem; font-size: 0; gap: 0; }
+	.corpus-chip .gi { width: 1rem; height: 1rem; }
+	.mode-opt { font-size: 0; padding: 0.25rem 0.45rem; gap: 0; }
+	.mode-opt .gi { width: 1rem; height: 1rem; }
+
+	/* The frames scale down with everything else, so the page keeps its
+	   proportions instead of becoming all border. */
+	.gate-card { border-width: 20px; }
+	.msg-sage .bubble { border-width: 8px; padding: var(--sp-1) var(--sp-2); }
 }
 
 @media (prefers-reduced-motion: reduce) {

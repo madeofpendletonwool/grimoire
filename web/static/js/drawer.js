@@ -47,7 +47,7 @@ export async function openRule(rule, corpus) {
 	const title = number ? `${number}${rule.title ? " · " + rule.title : ""}` : (rule.title || "Rule");
 	const body = showDrawer(title);
 
-	if (rule.body) body.append(ruleCard(rule, ""));
+	if (rule.body) body.append(ruleCard(rule, "", false, c));
 
 	const root = sectionKeyOf(number);
 	if (!root) return;
@@ -67,7 +67,7 @@ export async function openRule(rule, corpus) {
 		if (data.parent && data.parent.body && data.parent.body.length <= 60) {
 			$("drawer-title").textContent = `${data.parent.number} · ${data.parent.body}`;
 		}
-		entries.forEach((e, i) => body.append(ruleCard(e, "", i > 0)));
+		entries.forEach((e, i) => body.append(ruleCard(e, "", i > 0, c)));
 	} catch (_) {
 		note.textContent = "The full section could not be loaded.";
 	}

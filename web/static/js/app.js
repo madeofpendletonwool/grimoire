@@ -8,6 +8,8 @@ import { initPalette, openPalette } from "./palette.js";
 import { initChat, refreshHistory, syncChrome, setCorpus, setFoot } from "./chat.js";
 import { initResolve } from "./resolve.js";
 import { initVoice } from "./voice.js";
+import { hydrate } from "./icons.js";
+import { initScene, initSettings } from "./scene.js";
 
 function initRail() {
 	const app = $("app");
@@ -75,6 +77,11 @@ async function loadMeta() {
 }
 
 function start() {
+	// Icons first: the template marks its slots with data-ico / data-gi, and
+	// everything below assumes those slots already hold real art.
+	hydrate();
+	initScene();
+	initSettings();
 	loadCorpusPreference();
 	initRail();
 	initDrawer();

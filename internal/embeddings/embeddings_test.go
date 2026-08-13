@@ -3,6 +3,7 @@ package embeddings
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -203,5 +204,28 @@ func TestEmbed_ModelEchoedInRequest(t *testing.T) {
 	}
 	if gotModel != "test-embed" {
 		t.Errorf("model = %q, want %q", gotModel, "test-embed")
+	}
+}
+
+// A nil *Client is how callers spell "embeddings are not configured". Once it
+// crosses an interface boundary it stops comparing equal to nil, so every
+// method has to survive being called on it — otherwise an unconfigured install
+// crashes instead of falling back to keyword-only retrieval.
+func TestNilClientIsUnconfiguredRatherThanFatal(t *testing.T) {
+	var c *Client
+
+	if c.Configured() {
+		t.Error("nil client reported itself configured")
+	}
+	if got := c.Model(); got != "" {
+		t.Errorf("nil client model = %q, want empty", got)
+	}
+
+	vecs, err := c.Embed(context.Background(), []string{"anything"})
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("nil client Embed error = %v, want ErrNotConfigured", err)
+	}
+	if vecs != nil {
+		t.Errorf("nil client Embed vectors = %v, want nil", vecs)
 	}
 }
