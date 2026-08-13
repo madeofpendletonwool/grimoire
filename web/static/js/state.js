@@ -11,6 +11,7 @@ export const state = {
 	chats: [],         // sidebar list
 	meta: null,        // /api/meta payload
 	streaming: false,
+	studyOpen: false,  // whether the study surface is showing over the transcript
 };
 
 const KEY = "grimoire.corpus";

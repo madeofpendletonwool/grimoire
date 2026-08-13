@@ -34,6 +34,9 @@
 					<span aria-hidden="true">🔎</span> Search rules
 					<kbd id="palette-kbd">Ctrl K</kbd>
 				</button>
+				<button type="button" class="rail-action" id="rail-study">
+					<span aria-hidden="true">📇</span> Study
+				</button>
 				<button type="button" class="rail-action" id="rail-signout" hidden>
 					<span aria-hidden="true">🕯</span> Sign out
 					<span class="rail-user" id="rail-user"></span>
@@ -70,6 +73,16 @@
 				</section>
 				<div class="messages" id="messages"></div>
 			</div>
+
+			<!-- ---------- Study surface ---------- -->
+			<section class="study" id="study-view" hidden aria-label="Study">
+				<header class="study-head">
+					<h2 class="study-title" id="study-title">Study</h2>
+					<p class="study-meta" id="study-meta"></p>
+					<button type="button" class="icon-btn" id="study-close" aria-label="Leave study" title="Back to chat">✕</button>
+				</header>
+				<div class="study-body" id="study-body"></div>
+			</section>
 
 			<div class="composer-dock">
 				<form class="composer" id="composer" autocomplete="off">

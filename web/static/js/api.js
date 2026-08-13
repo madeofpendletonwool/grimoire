@@ -59,6 +59,16 @@ export const api = {
 
 	deleteChat: (id) =>
 		fetch(`/api/chats/${encodeURIComponent(id)}`, { method: "DELETE" }).then(json),
+
+	studyQueue: (corpus, limit = 20, signal) =>
+		fetch(`/api/study/queue?corpus=${encodeURIComponent(corpus)}&limit=${limit}`, { signal }).then(json),
+
+	studyGrade: (key, corpus, topic, grade) =>
+		fetch("/api/study/grade", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ key, corpus, topic, grade }),
+		}).then(json),
 };
 
 /**

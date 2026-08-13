@@ -8,6 +8,7 @@ import { initPalette, openPalette } from "./palette.js";
 import { initChat, refreshHistory, syncChrome, setCorpus, setFoot } from "./chat.js";
 import { initResolve } from "./resolve.js";
 import { initVoice } from "./voice.js";
+import { initStudy } from "./study.js";
 
 function initRail() {
 	const app = $("app");
@@ -82,6 +83,7 @@ function start() {
 	initChat();
 	initResolve();
 	initVoice();
+	initStudy();
 	syncChrome();
 	initAccount();
 	loadMeta();
