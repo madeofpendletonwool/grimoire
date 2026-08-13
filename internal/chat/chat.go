@@ -113,9 +113,9 @@ func migrate(db *sql.DB) error {
 	return ensureColumn(db, "chat_messages", "rulings")
 }
 
-// ensureColumn adds a TEXT NOT NULL DEFAULT '' column to a table when it is
-// not already present. SQLite cannot express "add column if not exists", so
-// the presence is checked against PRAGMA table_info first.
+// ensureColumn adds a nullable TEXT column to a table when it is not already
+// present. SQLite cannot express add-column-if-not-exists, so the presence is
+// checked against PRAGMA table_info first.
 func ensureColumn(db *sql.DB, table, column string) error {
 	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {

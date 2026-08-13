@@ -37,7 +37,7 @@ func newTestServer(t *testing.T, scryfallHandler http.HandlerFunc) (*Server, *ht
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	s, err := New(store, llm.New(llm.Config{}), cards.NewWithBase(srv.URL), rulings.NewWithBase(srv.URL), nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), cards.NewWithBase(srv.URL), rulings.NewWithBase(srv.URL), nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestHandleCardSearch_NilService(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestLookupQuestionCards_NilService(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestLookupCardRulings_NilService(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	srv, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, Auth{})
+	srv, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatal(err)
 	}

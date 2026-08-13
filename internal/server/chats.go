@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/madeofpendletonwool/grimoire/internal/cache"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 )
@@ -218,12 +219,46 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 		sse.send("error", map[string]any{"error": fmt.Sprintf("retrieval failed: %v", err), "title": title})
 		return
 	}
+
+	// A cache hit skips the LLM call but still streams through the same meta →
+	// delta → done frames the UI expects, so a cached answer feels identical to
+	// a freshly generated one (only faster). The user's question was already
+	// appended above; the cached answer is appended here so the saved thread
+	// matches what the reader saw. ?nocache forces a fresh generation.
+	if s.answers != nil && !r.URL.Query().Has("nocache") {
+		key := cache.Key(string(corpus), req.Question, sourceIDs(g.sources))
+		if hit, err := s.answers.Get(r.Context(), key); err != nil {
+			log.Printf("answer cache get: %v", err)
+		} else if hit != nil {
+			sse.send("meta", map[string]any{
+				"sources":          decodeSources(hit.Sources),
+				"cards":            decodeCards(hit.Cards),
+				"rulings":          decodeRulings(hit.Rulings),
+				"unresolved_cards": g.unresolved,
+				"title":            title,
+				"cached":           true,
+			})
+			sse.send("delta", map[string]any{"text": hit.Answer})
+			saved, saveErr := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleAssistant, hit.Answer, hit.Sources, hit.Cards, hit.Rulings)
+			if saveErr != nil {
+				log.Printf("chat: save cached answer %s: %v", conv.ID, saveErr)
+			}
+			var id int64
+			if saved != nil {
+				id = saved.ID
+			}
+			sse.send("done", map[string]any{"message_id": id, "title": title, "cached": true})
+			return
+		}
+	}
+
 	sse.send("meta", map[string]any{
 		"sources":          g.sources,
 		"cards":            g.cards,
 		"rulings":          g.rulings,
 		"unresolved_cards": g.unresolved,
 		"title":            title,
+		"cached":           false,
 	})
 
 	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
@@ -243,6 +278,15 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sources, cardsJSON, rulingsJSON := marshalCitations(g)
+	// A complete answer is cached for grounding-equivalent repeats; a partial /
+	// errored one is not, so a truncated response never comes back "instant"
+	// for the next person — they can regenerate it with ?nocache instead.
+	if s.answers != nil && streamErr == nil && answer != "" {
+		key := cache.Key(string(corpus), req.Question, sourceIDs(g.sources))
+		if err := s.answers.Put(saveCtx, key, string(corpus), answer, sources, cardsJSON, rulingsJSON); err != nil {
+			log.Printf("answer cache put: %v", err)
+		}
+	}
 	saved, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleAssistant, answer, sources, cardsJSON, rulingsJSON)
 	if err != nil {
 		log.Printf("chat: save answer %s: %v", conv.ID, err)
@@ -257,7 +301,7 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 	if saved != nil {
 		id = saved.ID
 	}
-	sse.send("done", map[string]any{"message_id": id, "title": title})
+	sse.send("done", map[string]any{"message_id": id, "title": title, "cached": false})
 }
 
 // marshalCitations encodes the citation payloads stored alongside an answer.

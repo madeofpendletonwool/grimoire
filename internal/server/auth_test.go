@@ -34,7 +34,7 @@ func newGatedServer(t *testing.T) (*Server, *chat.Store, *auth.Store) {
 	if err != nil {
 		t.Fatalf("open auth store: %v", err)
 	}
-	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, chats, Auth{Users: users})
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, chats, nil, Auth{Users: users})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
