@@ -175,8 +175,8 @@ func (r *Open5e) search(ctx context.Context, name string, budget *int) (searchHi
 		return searchHit{}, err
 	}
 	params := url.Values{
-		"query": {name},
-		"limit": {fmt.Sprint(searchLimit)},
+		"query":  {name},
+		"limit":  {fmt.Sprint(searchLimit)},
 		"fields": {"document,object_pk,object_name,object_model,route,text,match_type,match_score"},
 	}
 	var page searchResponse
