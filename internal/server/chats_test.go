@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
+	"github.com/madeofpendletonwool/grimoire/internal/cache"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -34,6 +36,10 @@ func newChatServer(t *testing.T, anthropic http.HandlerFunc) *Server {
 	if err != nil {
 		t.Fatalf("open chat store: %v", err)
 	}
+	answers, err := cache.New(store.DB(), cache.DefaultTTL)
+	if err != nil {
+		t.Fatalf("open answer cache: %v", err)
+	}
 	users, err := auth.New(store.DB(), 0)
 	if err != nil {
 		t.Fatalf("open auth store: %v", err)
@@ -46,7 +52,7 @@ func newChatServer(t *testing.T, anthropic http.HandlerFunc) *Server {
 		cfg = llm.Config{BaseURL: up.URL, APIKey: "test-key", Model: "test-model"}
 	}
 
-	s, err := New(store, llm.New(cfg), nil, nil, chats, Auth{Users: users})
+	s, err := New(store, llm.New(cfg), nil, nil, chats, answers, Auth{Users: users})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -190,7 +196,7 @@ func TestChatsDisabledWithoutStore(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -359,5 +365,143 @@ func TestChatMessageSendsPriorTurnsAsHistory(t *testing.T) {
 	last := captured[len(captured)-1]
 	if last["role"] != "user" || !strings.Contains(last["content"].(string), "follow-up question") {
 		t.Errorf("final message should carry the new question: %v", last)
+	}
+}
+
+// postMessage sends a question to a conversation and returns the raw recorder,
+// so the caller can read the SSE event stream. An empty query sends a normal
+// (cache-eligible) request.
+func postMessage(t *testing.T, s *Server, id, question, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	target := "/api/chats/" + id + "/messages"
+	if query != "" {
+		target += "?" + query
+	}
+	req := authenticate(s, httptest.NewRequest(http.MethodPost, target,
+		strings.NewReader(fmt.Sprintf(`{"question":%q}`, question))))
+	req.Header.Set("content-type", "application/json")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// streamingStub writes the given text deltas as an Anthropic SSE stream and
+// counts how many times the model was actually called.
+func streamingStub(t *testing.T, text string, calls *int32) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(calls, 1)
+		w.Header().Set("content-type", "text/event-stream")
+		// Split the answer so a real stream and a one-shot cached replay are
+		// distinguishable by call count, not by event framing.
+		half := len(text) / 2
+		if half == 0 {
+			half = len(text)
+		}
+		fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":")
+		fmt.Fprintf(w, "%q", text[:half])
+		fmt.Fprint(w, "}}\n\n")
+		if half < len(text) {
+			fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":")
+			fmt.Fprintf(w, "%q", text[half:])
+			fmt.Fprint(w, "}}\n\n")
+		}
+		fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}
+}
+
+func TestChatMessageCachesAnswer(t *testing.T) {
+	var calls int32
+	answer := "Deathtouch is lethal."
+	s := newChatServer(t, streamingStub(t, answer, &calls))
+
+	// First conversation generates and streams the answer, caching it.
+	first := createChat(t, s, "mtg")
+	rec := postMessage(t, s, first, "How does deathtouch work?", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first message: status %d, body %s", rec.Code, rec.Body)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("expected 1 model call after the first message, got %d", got)
+	}
+
+	// A second conversation asking the same question hits the cache: no model
+	// call, the cached answer streams back, and the exchange is still saved.
+	second := createChat(t, s, "mtg")
+	rec = postMessage(t, s, second, "How does deathtouch work?", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second message: status %d, body %s", rec.Code, rec.Body)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("cached answer should skip the model, got %d total calls", got)
+	}
+
+	var sawCachedMeta, sawCachedDone bool
+	var text strings.Builder
+	for _, e := range sseEvents(t, rec.Body.String()) {
+		switch e.Event {
+		case "meta":
+			var d struct {
+				Cached bool `json:"cached"`
+			}
+			_ = json.Unmarshal([]byte(e.Data), &d)
+			sawCachedMeta = d.Cached
+		case "delta":
+			var d struct {
+				Text string `json:"text"`
+			}
+			_ = json.Unmarshal([]byte(e.Data), &d)
+			text.WriteString(d.Text)
+		case "done":
+			sawCachedDone = strings.Contains(e.Data, `"cached":true`)
+		}
+	}
+	if !sawCachedMeta {
+		t.Error("meta event on a hit should flag cached:true")
+	}
+	if !sawCachedDone {
+		t.Error("done event on a hit should flag cached:true")
+	}
+	if got := text.String(); got != answer {
+		t.Errorf("cached stream = %q, want %q", got, answer)
+	}
+
+	// Both turns are persisted so the saved thread matches what was shown.
+	_, body := do(t, s, http.MethodGet, "/api/chats/"+second, "")
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("expected the cached exchange saved as 2 messages, got %d", len(msgs))
+	}
+	assistant := msgs[1].(map[string]any)
+	if assistant["content"] != answer {
+		t.Errorf("saved cached answer = %v, want %q", assistant["content"], answer)
+	}
+}
+
+func TestChatMessageNoCacheBypass(t *testing.T) {
+	var calls int32
+	answer := "Fresh from the model."
+	s := newChatServer(t, streamingStub(t, answer, &calls))
+
+	warm := createChat(t, s, "mtg")
+	postMessage(t, s, warm, "How does deathtouch work?", "") // populate
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("populate: expected 1 model call, got %d", got)
+	}
+
+	// ?nocache forces a fresh stream even though the entry is warm.
+	fresh := createChat(t, s, "mtg")
+	rec := postMessage(t, s, fresh, "How does deathtouch work?", "nocache")
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("nocache should call the model again, got %d total calls", got)
+	}
+	var sawFresh bool
+	for _, e := range sseEvents(t, rec.Body.String()) {
+		if e.Event == "meta" && strings.Contains(e.Data, `"cached":false`) {
+			sawFresh = true
+		}
+	}
+	if !sawFresh {
+		t.Error("nocache meta event should flag cached:false")
 	}
 }

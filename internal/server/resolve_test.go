@@ -67,7 +67,7 @@ func newResolveServer(t *testing.T, oracle map[string]string, trace string, capt
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	s, err := New(store, llm.New(llm.Config{BaseURL: llmSrv.URL, APIKey: "k", Model: "test"}),
-		cards.NewWithBase(scryfall.URL), nil, nil, Auth{})
+		cards.NewWithBase(scryfall.URL), nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestHandleResolve_NotConfigured(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	// No API key → not configured.
-	s, err := New(store, llm.New(llm.Config{}), cards.New(), nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), cards.New(), nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatal(err)
 	}

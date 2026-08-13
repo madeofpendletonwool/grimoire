@@ -13,6 +13,8 @@
 //	GRIMOIRE_SESSION_TTL       session lifetime, Go duration (default 720h)
 //	GRIMOIRE_OPEN_REGISTRATION keep account creation open after the first
 //	                           account exists (default false)
+//	GRIMOIRE_ANSWER_CACHE_TTL  how long cached Q&A answers stay fresh, Go
+//	                           duration (default 168h / 7d)
 //	ANTHROPIC_BASE_URL  LLM endpoint (default https://api.anthropic.com; z.ai: https://api.z.ai/api/anthropic)
 //	ANTHROPIC_API_KEY   LLM secret key (enables the Q&A chat)
 //	ANTHROPIC_MODEL     model name (e.g. glm-4.6, claude-3-5-sonnet-20241022)
@@ -36,6 +38,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
+	"github.com/madeofpendletonwool/grimoire/internal/cache"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
@@ -80,8 +83,8 @@ Usage:
 
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
-  ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL, SCRYFALL_BASE_URL,
-  MTG_RULES_URL, MTGJSON_URL, DND_REPO, DND_REF`)
+  GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY,
+  ANTHROPIC_MODEL, SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, DND_REPO, DND_REF`)
 }
 
 func env(key, def string) string {
@@ -118,6 +121,22 @@ func openRegistration() bool {
 	return false
 }
 
+// answerCacheTTL reads how long a cached Q&A answer stays fresh. An unparseable
+// or non-positive value falls back to the default — a stale cache that misses
+// is a nuisance, a server that refuses to start over a typo is worse.
+func answerCacheTTL() time.Duration {
+	raw := os.Getenv("GRIMOIRE_ANSWER_CACHE_TTL")
+	if raw == "" {
+		return cache.DefaultTTL
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("GRIMOIRE_ANSWER_CACHE_TTL=%q is not a valid duration — using %s", raw, cache.DefaultTTL)
+		return cache.DefaultTTL
+	}
+	return d
+}
+
 func llmConfig() llm.Config {
 	return llm.Config{
 		BaseURL: env("ANTHROPIC_BASE_URL", llm.DefaultBaseURL),
@@ -139,7 +158,6 @@ func fetchOpts() data.FetchOptions {
 		MTGURL:  os.Getenv("MTG_RULES_URL"),
 		DNDRepo: os.Getenv("DND_REPO"),
 		DNDRef:  os.Getenv("DND_REF"),
-		Include: map[data.Corpus]bool{data.CorpusMTG: true, data.CorpusDND: true},
 	}
 }
 
@@ -272,6 +290,14 @@ func runServe() error {
 		return err
 	}
 
+	// Cached Q&A answers share that file too, for the same reason: a rules
+	// reindex only clears the docs tables, so cached entries survive the
+	// rebuild (they stop hitting on their own once the grounding shifts).
+	answers, err := cache.New(store.DB(), answerCacheTTL())
+	if err != nil {
+		return err
+	}
+
 	// Accounts and sessions share that file too, for the same reason.
 	users, err := auth.New(store.DB(), sessionTTL())
 	if err != nil {
@@ -286,7 +312,7 @@ func runServe() error {
 		log.Printf("adopted %d pre-authentication conversations", adopted)
 	}
 
-	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), cardDict, chats,
+	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), cardDict, chats, answers,
 		server.Auth{Users: users, OpenRegistration: openRegistration()})
 	if err != nil {
 		return err

@@ -47,6 +47,12 @@ The chat speaks the **Anthropic Messages API** and is fully configurable, so it 
 
 The key is read from the environment only — it is never baked into the image, the compose file, source, or logs. Without a key, search works fully and the chat shows a "configure a key" notice.
 
+Answers are cached: a repeat (or grounding-equivalent) question returns instantly without a second model call. The key folds in the retrieved source set, so a rules **reindex** invalidates affected entries on its own — a stale answer can't survive a grounding change. Send `?nocache` on `/api/ask` or `/api/chats/{id}/messages` to force a fresh answer.
+
+| Variable                   | Default | Notes                                                                  |
+| -------------------------- | ------- | ---------------------------------------------------------------------- |
+| `GRIMOIRE_ANSWER_CACHE_TTL`| `168h`  | How long a cached answer stays fresh. Any Go duration (`24h`, `168h`…). |
+
 ## Accounts
 
 Grimoire is single-household software, so it has a login but no user management

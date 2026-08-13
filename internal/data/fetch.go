@@ -7,43 +7,62 @@ import (
 	"net/http"
 )
 
-// FetchOptions controls which corpora are fetched and from where.
+// FetchOptions controls which corpora are fetched and from where. The
+// corpus-specific override fields are read by the matching corpus Fetcher.
 type FetchOptions struct {
 	MTGURL  string // override MTG comp rules URL
 	DNDRepo string // override D&D SRD repo "owner/name"
 	DNDRef  string // override D&D SRD git ref
+	// Include restricts the build to a subset of registered corpora. A nil/empty
+	// map means "all registered corpora", so adding a corpus by registering it
+	// is enough for it to be indexed — no literal to update.
 	Include map[Corpus]bool
 }
 
-// DefaultFetchOptions enables both corpora with canonical sources.
+// DefaultFetchOptions enables the registered corpora with canonical sources.
 func DefaultFetchOptions() FetchOptions {
 	return FetchOptions{
 		MTGURL:  mtgDefaultURL,
 		DNDRepo: dndDefaultRepo,
 		DNDRef:  dndDefaultRef,
-		Include: map[Corpus]bool{CorpusMTG: true, CorpusDND: true},
 	}
 }
 
-// BuildDataset fetches and parses the requested corpora and merges them.
+// include reports whether a corpus should be built. An empty Include set means
+// "all registered corpora"; otherwise only the listed corpora are included.
+func (o FetchOptions) include(c Corpus) bool {
+	if len(o.Include) == 0 {
+		return true
+	}
+	return o.Include[c]
+}
+
+// BuildDataset fetches and parses the registered corpora and merges them. It is
+// driven entirely by the registry: each Definition's Fetcher builds its own
+// Dataset, so adding a corpus is a Register call, not an edit here.
 func BuildDataset(ctx context.Context, opts FetchOptions) (*Dataset, error) {
 	merged := &Dataset{Meta: map[Corpus]CorpusMeta{}}
-
-	if opts.Include[CorpusMTG] {
-		ds, err := fetchMTG(ctx, opts.MTGURL)
-		if err != nil {
-			return nil, fmt.Errorf("mtg: %w", err)
+	for _, d := range Registered() {
+		if d.Fetcher == nil || !opts.include(d.Corpus) {
+			continue
 		}
-		merge(merged, ds)
-	}
-	if opts.Include[CorpusDND] {
-		ds, err := fetchDND(ctx, opts.DNDRepo, opts.DNDRef)
+		ds, err := d.Fetcher(ctx, opts)
 		if err != nil {
-			return nil, fmt.Errorf("dnd: %w", err)
+			return nil, fmt.Errorf("%s: %w", d.Corpus, err)
 		}
 		merge(merged, ds)
 	}
 	return merged, nil
+}
+
+// fetchMTGDataset adapts the MTG parser to the registry Fetcher signature.
+func fetchMTGDataset(ctx context.Context, opts FetchOptions) (*Dataset, error) {
+	return fetchMTG(ctx, opts.MTGURL)
+}
+
+// fetchDNDDataset adapts the D&D parser to the registry Fetcher signature.
+func fetchDNDDataset(ctx context.Context, opts FetchOptions) (*Dataset, error) {
+	return fetchDND(ctx, opts.DNDRepo, opts.DNDRef)
 }
 
 func fetchMTG(ctx context.Context, url string) (*Dataset, error) {

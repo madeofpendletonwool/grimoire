@@ -613,6 +613,36 @@ kbd {
 	border-color: #8f3a26;
 	color: #fff;
 }
+.voice-btn {
+	width: 2.1rem;
+	height: 2.1rem;
+	display: grid;
+	place-items: center;
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	background: var(--stone-700);
+	color: var(--parchment);
+	cursor: pointer;
+	opacity: 0.7;
+	font-size: 1rem;
+	transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.voice-btn:hover:not(:disabled) { opacity: 1; }
+.voice-btn:disabled { opacity: 0.35; cursor: default; }
+.voice-btn.is-active {
+	background: var(--accent);
+	border-color: var(--accent-deep);
+	color: #fff;
+	opacity: 1;
+	animation: voice-pulse 1.6s ease-in-out infinite;
+}
+@keyframes voice-pulse {
+	0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); transform: scale(1); }
+	50% { box-shadow: 0 0 0 6px transparent; transform: scale(1.06); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.voice-btn.is-active { animation: none; }
+}
 .composer-foot {
 	max-width: var(--measure);
 	margin: var(--sp-2) auto 0;
