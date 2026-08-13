@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
+	"github.com/madeofpendletonwool/grimoire/internal/cache"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
@@ -39,6 +40,7 @@ type Server struct {
 	cards            *cards.Service
 	cardDict         *cards.Dictionary
 	chats            *chat.Store
+	answers          *cache.Store
 	users            *auth.Store
 	openRegistration bool
 	tmpl             *template.Template
@@ -47,11 +49,12 @@ type Server struct {
 
 // New builds a Server from an open index store, an LLM client, a card lookup
 // service, an optional card-name dictionary (powers lowercase/unquoted card
-// detection in the chat), a chat store, and the authentication wiring. A nil
-// card service disables card features gracefully; a nil dictionary leaves
-// detection on the text heuristics alone; a nil chat store disables saved
-// conversations; a zero Auth leaves the API unauthenticated.
-func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, cardDict *cards.Dictionary, chats *chat.Store, ac Auth) (*Server, error) {
+// detection in the chat), a chat store, an answer cache, and the authentication
+// wiring. A nil card service disables card features gracefully; a nil
+// dictionary leaves detection on the text heuristics alone; a nil chat store
+// disables saved conversations; a nil answer cache disables response caching;
+// a zero Auth leaves the API unauthenticated.
+func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, cardDict *cards.Dictionary, chats *chat.Store, answers *cache.Store, ac Auth) (*Server, error) {
 	tmpl, err := template.New("").ParseFS(web.Templates, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -62,7 +65,8 @@ func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, cardDic
 	}
 	return &Server{
 		store: store, llm: client, cards: cardSvc, cardDict: cardDict, chats: chats,
-		users: ac.Users, openRegistration: ac.OpenRegistration,
+		answers: answers,
+		users:   ac.Users, openRegistration: ac.OpenRegistration,
 		tmpl: tmpl, static: static,
 	}, nil
 }
@@ -255,14 +259,43 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The grounding is part of the cache key, so retrieval always runs (it is
+	// local and fast); a hit skips only the expensive LLM call. ?nocache forces
+	// a fresh answer and refreshes the entry.
+	if s.answers != nil && !r.URL.Query().Has("nocache") {
+		key := cache.Key(string(corpus), req.Question, sourceIDs(g.sources))
+		if hit, err := s.answers.Get(r.Context(), key); err != nil {
+			log.Printf("answer cache get: %v", err)
+		} else if hit != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"configured":       true,
+				"cached":           true,
+				"answer":           hit.Answer,
+				"sources":          decodeSources(hit.Sources),
+				"cards":            decodeCards(hit.Cards),
+				"unresolved_cards": g.unresolved,
+			})
+			return
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	answer, err := s.llm.Answer(ctx, g.request(corpus, req.Question, nil))
-	if err != nil {
-		answer = fmt.Sprintf("I couldn't reach the model: %v", err)
+	answer, llmErr := s.llm.Answer(ctx, g.request(corpus, req.Question, nil))
+	if llmErr != nil {
+		answer = fmt.Sprintf("I couldn't reach the model: %v", llmErr)
+	}
+	// Only a real answer is cached — never the error placeholder.
+	if s.answers != nil && llmErr == nil {
+		sources, cardsJSON := marshalCitations(g)
+		key := cache.Key(string(corpus), req.Question, sourceIDs(g.sources))
+		if err := s.answers.Put(r.Context(), key, string(corpus), answer, sources, cardsJSON); err != nil {
+			log.Printf("answer cache put: %v", err)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"configured":       true,
+		"cached":           false,
 		"answer":           answer,
 		"sources":          g.sources,
 		"cards":            g.cards,
@@ -349,6 +382,43 @@ func toSources(results []index.Result) []searchHit {
 		out = append(out, searchHit{Number: r.Number, Title: r.Title, Body: r.Body, Source: r.Source})
 	}
 	return out
+}
+
+// sourceIDs extracts the stable identifier of each grounding source — a rule
+// number when present, otherwise the title (D&D and other unnumbered corpora).
+// It mirrors the dedup key index.Store.Expand uses, so the cache key tracks the
+// same notion of "same grounding" the retrieval pipeline does.
+func sourceIDs(hits []searchHit) []string {
+	ids := make([]string, 0, len(hits))
+	for _, h := range hits {
+		switch {
+		case h.Number != "":
+			ids = append(ids, h.Number)
+		case h.Title != "":
+			ids = append(ids, h.Title)
+		}
+	}
+	return ids
+}
+
+// decodeSources unpacks a cached citation payload back into the JSON shape the
+// API returns, falling back to an empty slice so an absent payload renders as
+// [] rather than null — matching a freshly grounded response.
+func decodeSources(raw json.RawMessage) []searchHit {
+	hits := []searchHit{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &hits)
+	}
+	return hits
+}
+
+// decodeCards is the card-citation counterpart to decodeSources.
+func decodeCards(raw json.RawMessage) []cardView {
+	cards := []cardView{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &cards)
+	}
+	return cards
 }
 
 // cardView is the JSON shape for a card returned to the UI. It carries the
