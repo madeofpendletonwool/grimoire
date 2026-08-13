@@ -57,7 +57,7 @@ var Puzzles = []Puzzle{
 		Board: "You: Rest in Peace\n" +
 			"Opp: Blood Artist\n",
 		Sequence: "1. Opp casts Wrath of God\n",
-		Note: "Rest in Peace reads: if a card or token would be put into a graveyard from anywhere, exile it instead.",
+		Note:     "Rest in Peace reads: if a card or token would be put into a graveyard from anywhere, exile it instead.",
 		Expected: []string{
 			"616.1", // replacement effects apply as the event would happen, before it
 			"dies means moving from the battlefield to the graveyard",

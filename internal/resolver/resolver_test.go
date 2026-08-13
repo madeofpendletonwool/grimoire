@@ -120,8 +120,8 @@ func TestParseInput_NotePreserved(t *testing.T) {
 
 func TestGround_ResolvesBoardAndSequenceCards(t *testing.T) {
 	looker := fakeLooker{
-		"blood artist":      {Name: "Blood Artist", TypeLine: "Creature", OracleText: "Whenever Blood Artist or another creature dies, you may have target player lose 1 life."},
-		"wrath of god":      {Name: "Wrath of God", TypeLine: "Sorcery", OracleText: "Destroy all creatures. They can't be regenerated."},
+		"blood artist": {Name: "Blood Artist", TypeLine: "Creature", OracleText: "Whenever Blood Artist or another creature dies, you may have target player lose 1 life."},
+		"wrath of god": {Name: "Wrath of God", TypeLine: "Sorcery", OracleText: "Destroy all creatures. They can't be regenerated."},
 	}
 	in := ParseInput("You: Blood Artist", "1. Opp casts Wrath of God", "")
 	g := Ground(context.Background(), Deps{Cards: looker}, in)
@@ -176,11 +176,11 @@ func TestGround_NilDadsAreGraceful(t *testing.T) {
 func TestSystemPrompt_CoversResolutionOrder(t *testing.T) {
 	got := SystemPrompt()
 	for _, want := range []string{
-		"603.3b",  // APNAP
-		"616.1",  // replacement dependency/timestamp
-		"613.1",  // layers
-		"117.4",  // stack resolves top-down
-		"201.4",  // self-reference
+		"603.3b",         // APNAP
+		"616.1",          // replacement dependency/timestamp
+		"613.1",          // layers
+		"117.4",          // stack resolves top-down
+		"201.4",          // self-reference
 		"assistant, not", // honesty caveat
 	} {
 		if !strings.Contains(got, want) {
@@ -201,12 +201,12 @@ func TestUserMessage_BoardSequenceOracleAndRules(t *testing.T) {
 	msg := UserMessage(in, g)
 
 	checks := map[string]bool{
-		"board lists Blood Artist":         strings.Contains(msg, "[You] Blood Artist") || strings.Contains(msg, "Blood Artist"),
-		"sequence lists the cast":          strings.Contains(msg, "casts Wrath of God"),
-		"clarification passed through":     strings.Contains(msg, "It is the opponent's turn."),
-		"oracle text present":              strings.Contains(msg, "Whenever Blood Artist or another creature dies"),
-		"rule text present":                strings.Contains(msg, "active player puts their abilities on the stack first"),
-		"unresolved card reported":         strings.Contains(msg, "could not be looked up"),
+		"board lists Blood Artist":     strings.Contains(msg, "[You] Blood Artist") || strings.Contains(msg, "Blood Artist"),
+		"sequence lists the cast":      strings.Contains(msg, "casts Wrath of God"),
+		"clarification passed through": strings.Contains(msg, "It is the opponent's turn."),
+		"oracle text present":          strings.Contains(msg, "Whenever Blood Artist or another creature dies"),
+		"rule text present":            strings.Contains(msg, "active player puts their abilities on the stack first"),
+		"unresolved card reported":     strings.Contains(msg, "could not be looked up"),
 	}
 	for label, ok := range checks {
 		if !ok {
