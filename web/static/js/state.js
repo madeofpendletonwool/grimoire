@@ -34,8 +34,9 @@ export function activeCorpus() {
 	return state.chat ? state.chat.corpus : state.corpus;
 }
 
+/** The corpus's name in prose. Its mark is drawn separately — see icons.js. */
 export function corpusLabel(corpus) {
-	return corpus === "dnd" ? "⚔ D&D 5e SRD" : "✦ Magic: The Gathering";
+	return corpus === "dnd" ? "D&D 5e SRD" : "Magic: The Gathering";
 }
 
 /** Card lookup is MTG-only — Scryfall is the Magic card authority. */

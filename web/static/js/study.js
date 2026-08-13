@@ -5,8 +5,10 @@
 // surface layered over the transcript, opened from the rail, so it does not
 // entangle the Ask/Resolve chat mode machinery.
 
-import { $, el, clear } from "./dom.js";
+import { $, el, esc, clear, isNarrow } from "./dom.js";
 import { api } from "./api.js";
+import { gi } from "./icons.js";
+import { manaInEscaped } from "./mana.js";
 import { state, activeCorpus, corpusLabel } from "./state.js";
 
 // The four SM-2 grade buttons. Each carries the slug the server expects and the
@@ -22,10 +24,6 @@ const GRADES = [
 let queue = [];
 let cursor = 0;
 let abortLoad = null;
-
-export function isStudyOpen() {
-	return state.studyOpen;
-}
 
 export function initStudy() {
 	$("rail-study").addEventListener("click", () => openStudy());
@@ -46,6 +44,9 @@ export function initStudy() {
 export async function openStudy(corpus) {
 	state.studyOpen = true;
 	const c = corpus || activeCorpus();
+	// On a narrow screen the rail is an overlay, so the button that opened study
+	// would otherwise sit on top of it. Same move as opening a chat from history.
+	if (isNarrow()) $("app").classList.add("rail-hidden");
 	setChrome(c);
 	await loadSession(c);
 }
@@ -58,8 +59,10 @@ export function closeStudy() {
 	queue = [];
 	cursor = 0;
 	$("study-view").hidden = true;
-	$("transcript").style.display = "";
-	$("composer-dock").style.display = "";
+	$("main").classList.remove("is-studying");
+	// The rail button is what opened this, so it is where focus belongs — the
+	// close button it was on is now hidden.
+	$("rail-study").focus();
 }
 
 async function loadSession(corpus) {
@@ -74,7 +77,7 @@ async function loadSession(corpus) {
 		cursor = 0;
 		renderMeta(corpus, data.stats);
 		if (queue.length === 0) {
-			renderEmpty(body);
+			renderEmpty();
 			return;
 		}
 		renderCard();
@@ -114,11 +117,12 @@ function renderMeta(corpus, stats) {
 	$("study-meta").textContent = parts.join("   ");
 }
 
-function renderEmpty(body) {
-	const node = body || clear($("study-body"));
-	node.append(
+function renderEmpty() {
+	// Always clear: this replaces the "Dealing cards…" status, which would
+	// otherwise sit above the empty state as though a deck were still loading.
+	clear($("study-body")).append(
 		el("div", { class: "study-empty" },
-			el("div", { class: "study-empty-sigil", text: "📇", attrs: { "aria-hidden": "true" } }),
+			gi("no-results", { cls: "gi-xl" }),
 			el("p", { class: "study-empty-title", text: "Nothing due right now" }),
 			el("p", { class: "study-empty-sub",
 				text: "You're caught up on this deck — come back when the schedule brings cards back into rotation." }),
@@ -145,9 +149,9 @@ function renderCard() {
 
 	const progress = el("p", { class: "study-progress", text: `Card ${cursor + 1} of ${queue.length}` });
 
-	const front = el("div", { class: "study-card is-prompt" },
+	const front = el("div", { class: "study-card" },
 		el("p", { class: "study-card-label", text: card.title || "Recall" }),
-		el("div", { class: "prose study-prompt", html: escapeHtml(card.front) }),
+		el("div", { class: "prose study-prompt", html: renderFace(card, card.front) }),
 		el("button", {
 			class: "suggestion study-reveal",
 			text: "Reveal answer",
@@ -160,7 +164,7 @@ function renderCard() {
 	// The answer + grade buttons are hidden until reveal so the reader commits
 	// to a recall attempt before seeing the rule text.
 	const back = el("div", { class: "study-answer", attrs: { hidden: "" } });
-	back.append(el("div", { class: "prose study-back", html: renderBack(card) }));
+	back.append(el("div", { class: "prose", html: renderBack(card) }));
 	if (card.source) {
 		back.append(el("p", { class: "study-source", text: card.source }));
 	}
@@ -183,7 +187,7 @@ function renderCard() {
 function renderSessionComplete(body) {
 	body.append(
 		el("div", { class: "study-empty" },
-			el("div", { class: "study-empty-sigil", text: "✓", attrs: { "aria-hidden": "true" } }),
+			gi("check", { cls: "gi-xl" }),
 			el("p", { class: "study-empty-title", text: "Session complete" }),
 			el("p", { class: "study-empty-sub", text: "That's the end of this queue. Cards you marked Again are already back in rotation." }),
 			el("button", {
@@ -227,10 +231,10 @@ async function gradeCard(slug) {
 
 function setChrome(corpus) {
 	$("study-view").hidden = false;
-	// Layer the study surface over the transcript rather than unmounting it,
-	// so returning to chat restores the open conversation exactly.
-	$("transcript").style.display = "none";
-	$("composer-dock").style.display = "none";
+	// Layer the study surface over the transcript rather than unmounting it, so
+	// returning to chat restores the open conversation exactly. A state class on
+	// the column, not inline display, so style.css keeps deciding what shows.
+	$("main").classList.add("is-studying");
 	renderMeta(corpus, null);
 }
 
@@ -278,16 +282,16 @@ function nextInterval(card, ease) {
 function renderBack(card) {
 	// The back is plain rule text (one rule per line); render it as pre-wrapped
 	// prose so the rule numbers line up.
-	return `<div class="study-back-text">${escapeHtml(card.back || "")}</div>`;
+	return `<div class="study-back-text">${renderFace(card, card.back)}</div>`;
 }
 
-function escapeHtml(s) {
-	return String(s == null ? "" : s)
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
-}
-
-function isNarrow() {
-	return window.matchMedia("(max-width: 900px)").matches;
+/**
+ * A card face as HTML. Escape first, then insert markup — never the other way
+ * round, or the deck's own text could close a tag. The mana pass is gated on
+ * Magic: the D&D deck has no {…} notation and a stray brace there should stay
+ * a stray brace.
+ */
+function renderFace(card, text) {
+	const html = esc(text || "");
+	return card.corpus === "mtg" ? manaInEscaped(html) : html;
 }

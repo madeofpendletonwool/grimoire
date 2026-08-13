@@ -5,68 +5,92 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 	<meta name="color-scheme" content="dark">
 	<title>Grimoire</title>
+	<link rel="stylesheet" href="/static/fonts.css">
+	<link rel="stylesheet" href="/static/mana.css">
+	<link rel="stylesheet" href="/static/keyrune.css">
 	<link rel="stylesheet" href="/static/style.css">
-	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%9C%3C/text%3E%3C/svg%3E">
+	<link rel="stylesheet" href="/static/pixel.css">
+	<link rel="stylesheet" href="/static/themes.css">
+	<link rel="icon" type="image/png" href="/static/assets/favicon-32.png">
+	<link rel="apple-touch-icon" href="/static/assets/icon-192.png">
+	<link rel="manifest" href="/static/site.webmanifest">
 </head>
 <body>
+	<!-- The chamber. Layers are built by js/scene.js from the chosen scene. -->
+	<div class="scene" id="scene" aria-hidden="true"></div>
+
 	<div class="app" id="app">
 
 		<!-- ---------- Sidebar ---------- -->
 		<aside class="rail" id="rail" aria-label="Conversations">
 			<div class="rail-head">
-				<span class="wordmark"><span class="sigil">📜</span> Grimoire</span>
-				<button type="button" class="icon-btn rail-collapse" id="rail-collapse" aria-label="Hide sidebar" title="Hide sidebar">‹</button>
+				<span class="wordmark"><span data-ico="spellbook"></span> Grimoire</span>
+				<button type="button" class="icon-btn rail-collapse" id="rail-collapse" aria-label="Hide sidebar" title="Hide sidebar" data-gi="collapse"></button>
 			</div>
 
 			<button type="button" class="new-chat" id="new-chat">
-				<span class="plus" aria-hidden="true">✧</span> New chat
+				<span data-ico="scroll"></span> New chat
+			</button>
+
+			<!-- A destination, not a foot utility — so it sits with New chat, between
+			     two other 32px sprites rather than among the vector-icon rows below. -->
+			<button type="button" class="rail-action rail-study" id="rail-study">
+				<span data-ico="card"></span> Study
 			</button>
 
 			<div class="corpus-picker" role="radiogroup" aria-label="Rules corpus">
-				<button type="button" class="corpus-opt is-active" data-corpus="mtg" role="radio" aria-checked="true">✦ Magic</button>
-				<button type="button" class="corpus-opt" data-corpus="dnd" role="radio" aria-checked="false">⚔ D&amp;D</button>
+				<button type="button" class="corpus-opt is-active" data-corpus="mtg" role="radio" aria-checked="true">
+					<span data-ico="orbBlue"></span> Magic
+				</button>
+				<button type="button" class="corpus-opt" data-corpus="dnd" role="radio" aria-checked="false">
+					<span data-ico="swords"></span> D&amp;D
+				</button>
 			</div>
 
 			<nav class="history" id="history" aria-label="Chat history"></nav>
 
 			<div class="rail-foot">
 				<button type="button" class="rail-action" id="rail-search">
-					<span aria-hidden="true">🔎</span> Search rules
+					<span data-gi="search"></span> Search rules
 					<kbd id="palette-kbd">Ctrl K</kbd>
 				</button>
-				<button type="button" class="rail-action" id="rail-study">
-					<span aria-hidden="true">📇</span> Study
-				</button>
+				<button type="button" class="rail-action" id="rail-settings"
+					aria-expanded="false" aria-controls="settings-popup">Settings</button>
 				<button type="button" class="rail-action" id="rail-signout" hidden>
-					<span aria-hidden="true">🕯</span> Sign out
+					<span data-gi="signout"></span> Sign out
 					<span class="rail-user" id="rail-user"></span>
 				</button>
 				<p class="model-badge" id="model-badge"></p>
+				<div class="settings-popup" id="settings-popup" role="dialog" aria-label="Settings" hidden></div>
 			</div>
 		</aside>
 
 		<div class="rail-scrim" id="rail-scrim" hidden></div>
 
 		<!-- ---------- Conversation ---------- -->
-		<main class="main">
+		<main class="main" id="main">
 			<header class="topbar">
-				<button type="button" class="icon-btn rail-open" id="rail-open" aria-label="Show sidebar" title="Show sidebar">☰</button>
+				<button type="button" class="icon-btn rail-open" id="rail-open" aria-label="Show sidebar" title="Show sidebar" data-gi="menu"></button>
 				<h1 class="conv-title" id="conv-title">New chat</h1>
 				<span class="corpus-chip" id="corpus-chip" title="This conversation's rule set"></span>
 				<div class="mode-toggle" id="mode-toggle" hidden role="radiogroup" aria-label="Mode">
-					<button type="button" class="mode-opt is-active" data-mode="ask" role="radio" aria-checked="true" title="Free Q&amp;A with the sage">💬 Ask</button>
-					<button type="button" class="mode-opt" data-mode="resolve" role="radio" aria-checked="false" title="Walk a board + spell sequence step by step">🔮 Resolve</button>
+					<button type="button" class="mode-opt is-active" data-mode="ask" role="radio" aria-checked="true" title="Free Q&amp;A with the sage">
+						<span data-gi="ask"></span> Ask
+					</button>
+					<button type="button" class="mode-opt" data-mode="resolve" role="radio" aria-checked="false" title="Walk a board + spell sequence step by step">
+						<span data-gi="resolve"></span> Resolve
+					</button>
 				</div>
 				<div class="topbar-actions">
-					<button type="button" class="icon-btn" id="topbar-search" aria-label="Search rules and cards" title="Search rules and cards">🔎</button>
-					<button type="button" class="icon-btn" id="topbar-rename" aria-label="Rename conversation" title="Rename conversation" hidden>✎</button>
-					<button type="button" class="icon-btn danger" id="topbar-delete" aria-label="Delete conversation" title="Delete conversation" hidden>🗑</button>
+					<button type="button" class="icon-btn" id="topbar-search" aria-label="Search rules and cards" title="Search rules and cards" data-gi="search"></button>
+					<button type="button" class="icon-btn" id="topbar-rename" aria-label="Rename conversation" title="Rename conversation" data-gi="rename" hidden></button>
+					<button type="button" class="icon-btn danger" id="topbar-delete" aria-label="Delete conversation" title="Delete conversation" data-gi="delete" hidden></button>
 				</div>
 			</header>
 
 			<div class="transcript" id="transcript" tabindex="-1">
 				<section class="welcome" id="welcome">
-					<div class="welcome-sigil" aria-hidden="true">📜</div>
+					<div class="welcome-sigil" data-ico="spellbook" data-ico-scale="3"></div>
 					<h2 class="welcome-title">Grimoire</h2>
 					<p class="welcome-sub" id="welcome-sub">Ask, and the tome shall answer.</p>
 					<div class="suggestions" id="suggestions"></div>
@@ -79,7 +103,7 @@
 				<header class="study-head">
 					<h2 class="study-title" id="study-title">Study</h2>
 					<p class="study-meta" id="study-meta"></p>
-					<button type="button" class="icon-btn" id="study-close" aria-label="Leave study" title="Back to chat">✕</button>
+					<button type="button" class="icon-btn" id="study-close" aria-label="Leave study" title="Back to chat" data-gi="close"></button>
 				</header>
 				<div class="study-body" id="study-body"></div>
 			</section>
@@ -90,9 +114,9 @@
 						placeholder="Ask the sage…  (/card, /rule, Ctrl+K to search)"
 						aria-label="Ask a question"></textarea>
 					<div class="composer-side">
-						<button type="button" class="voice-btn" id="voice-btn" aria-label="Dictate" aria-pressed="false" title="Dictate" disabled>🎤</button>
-						<button type="submit" class="send-btn" id="send-btn" aria-label="Send" title="Send">➤</button>
-						<button type="button" class="send-btn stop-btn" id="stop-btn" aria-label="Stop generating" title="Stop generating" hidden>■</button>
+						<button type="button" class="voice-btn" id="voice-btn" aria-label="Dictate" aria-pressed="false" title="Dictate" data-gi="mic" disabled></button>
+						<button type="submit" class="send-btn" id="send-btn" aria-label="Send" title="Send" data-gi="send"></button>
+						<button type="button" class="send-btn stop-btn" id="stop-btn" aria-label="Stop generating" title="Stop generating" data-gi="stop" hidden></button>
 					</div>
 					<ul class="slash-hints" id="slash-hints" role="listbox" aria-label="Commands" hidden></ul>
 				</form>
@@ -118,8 +142,8 @@
 							aria-label="Clarifying note">
 					</label>
 					<div class="composer-side">
-						<button type="submit" class="send-btn" id="resolve-btn" aria-label="Resolve" title="Resolve the sequence">➤</button>
-						<button type="button" class="send-btn stop-btn" id="resolve-stop" aria-label="Stop generating" title="Stop generating" hidden>■</button>
+						<button type="submit" class="send-btn" id="resolve-btn" aria-label="Resolve" title="Resolve the sequence" data-gi="send"></button>
+						<button type="button" class="send-btn stop-btn" id="resolve-stop" aria-label="Stop generating" title="Stop generating" data-gi="stop" hidden></button>
 					</div>
 				</form>
 				<p class="composer-foot" id="composer-foot"></p>
@@ -131,7 +155,7 @@
 		<aside class="drawer" id="drawer" aria-label="Reference" hidden>
 			<div class="drawer-head">
 				<h2 class="drawer-title" id="drawer-title"></h2>
-				<button type="button" class="icon-btn" id="drawer-close" aria-label="Close reference">✕</button>
+				<button type="button" class="icon-btn" id="drawer-close" aria-label="Close reference" data-gi="close"></button>
 			</div>
 			<div class="drawer-body" id="drawer-body"></div>
 		</aside>
@@ -142,7 +166,7 @@
 		<div class="palette-scrim" data-palette-close></div>
 		<div class="palette-box" role="dialog" aria-modal="true" aria-label="Search rules and cards">
 			<div class="palette-inputwrap">
-				<span class="palette-icon" aria-hidden="true">🔎</span>
+				<span class="palette-icon" data-gi="search"></span>
 				<input type="text" id="palette-input" class="palette-input"
 					placeholder="Search rules, or a card name…"
 					aria-label="Search rules and cards" aria-controls="palette-results" autocomplete="off">

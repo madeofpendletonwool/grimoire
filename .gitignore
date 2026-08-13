@@ -20,3 +20,7 @@
 *.swp
 .idea/
 .vscode/
+
+# upstream art packs — see scripts/build-assets.py. What ships is the derived
+# output in web/static/assets, not the packs themselves.
+/icon-packs/

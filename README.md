@@ -17,7 +17,9 @@ A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** a
 - **🔮 Interaction resolver** — a separate Resolve mode (Magic only) for the questions that are hardest to google. State a board and a proposed spell/ability sequence, and the sage walks the resulting interactions step by step — the stack, APNAP trigger ordering, continuous-effect layers, and replacement effects — citing the rule at each step. Grounded in real card text and the full interaction chapters (117, 603, 613, 616). It is an assistant, not a Comprehensive-Rules oracle, so the UI says so plainly.
 - **📇 Study mode** — a spaced-repetition deck over the corpus, for new players and judges-in-training. MTG keyword abilities (chapter 702) and D&D conditions turn into flashcards; grade each card Again / Hard / Good / Easy and an SM-2 scheduler brings it back on the right day. Progress persists per account across reloads.
 - **✦ / ⚔ Two corpora** — Magic and D&D, each with its own accent (mana-blue vs. dragon-red). Pick one per conversation.
-- **📜 Medieval, not mid-2000s** — parchment reserved for the content surfaces (answers, rules, cards) against candlelit-stone chrome. Serif for prose, sans for UI, gold for emphasis. No build step, no JS framework, no bundler — just ES modules.
+- **📜 An actual tome, not a theme** — the interface is built from real pixel art rather than emoji and CSS gradients. Answers, rules and cards sit on a nine-sliced parchment page; the reference drawer is the book's right-hand page, spine and all; the sign-in screen is the book shut, and opens into it. Sprites carry the nouns the app is about — spellbook, scroll, mana orb, wizard's staff, candle. Long rules text stays in real high-resolution serif, because a pixel font would tax the one thing this app exists to do. See [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+- **🏔 Four themes, taken from the art** — pick a chamber in Settings and the whole interface follows it: a violet cavern, a brown dead forest, blue-grey peaks, or open plains. Each theme's colour is *measured* from that scene's own pixels at build time and applied to the chrome's existing lightness ladder, so a retinted interface is exactly as legible as the default. The backdrop is a real parallax stack that drifts with the pointer — the sky holds still, the foreground travels. The parchment never changes: the room changes, the book does not.
+- **{T}: Add {G}** — Magic's mana, tap and set symbols render as symbols, in card text, rule text and the sage's prose, via the Mana and Keyrune fonts. No build step, no JS framework, no bundler — just ES modules, and every font self-hosted so it works offline.
 - **🐳 One command to run** — `docker compose up`. The index builds itself on first start.
 - **No hard dependencies** — pure-Go SQLite (FTS5), no CGO, single static binary.
 
@@ -251,6 +253,43 @@ go vet ./...
 go test ./...
 ```
 
+The front end is embedded in the binary, so a CSS or JS edit needs a rebuild to
+show up — there is no dev server watching files.
+
+Working on the interface? Read **[docs/DESIGN.md](docs/DESIGN.md)** first. It
+covers the token system, the two icon systems and when to use each, the
+nine-slice contract, how the four themes are derived from the backdrop art, and
+the invariants that keep the pixel art crisp and the text readable.
+[CLAUDE.md](CLAUDE.md) is the short orientation for the repo as a whole.
+
+### Regenerating the art
+
+The shipped assets in `web/static/assets/` and `web/static/fonts/` are checked
+in, so a normal build needs none of this. The scripts exist for when the art or
+the fonts change. They are pure-stdlib Python 3 — no pip install.
+
+```bash
+python3 scripts/build-assets.py     # sprites, nine-slice frames, scenes, favicons
+python3 scripts/fetch-gameicons.py  # web/static/js/gameicons.js
+python3 scripts/fetch-fonts.py      # web/static/fonts/ + fonts.css
+```
+
+`build-assets.py` reads the upstream art packs from `icon-packs/`, which is
+**gitignored on purpose** — one of the licences permits adapting the material
+but not republishing the pack, so the repository carries only the derived
+output. Get the packs from the links in [ATTRIBUTIONS.md](ATTRIBUTIONS.md)
+before running it. Recolours in that script are exhaustive: an unmapped colour
+fails the build rather than shipping half-recoloured, so an upstream change
+surfaces instead of going quiet.
+
+## Credits
+
+The interface is built from other people's art — pixel UI by Crusenho, icons by
+Shikashi, backdrops by Admurin, vectors from game-icons.net, and Andrew Gioia's
+Mana and Keyrune fonts. Full credits, licences and what was adapted are in
+[ATTRIBUTIONS.md](ATTRIBUTIONS.md). The app links the same list from its
+Settings popup.
+
 ## License
 
-Source under the MIT license. Rule text remains the property of Wizards of the Coast; this project indexes it for personal reference only.
+Source under the MIT license. Rule text remains the property of Wizards of the Coast; this project indexes it for personal reference only. The bundled art and fonts are under their own licences — see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).

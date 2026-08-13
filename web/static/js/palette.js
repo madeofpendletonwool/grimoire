@@ -8,6 +8,7 @@ import { $, clear, el, debounce, truncate } from "./dom.js";
 import { api } from "./api.js";
 import { activeCorpus, corpusLabel, supportsCards } from "./state.js";
 import { openRule, openCard } from "./drawer.js";
+import { gi } from "./icons.js";
 
 let items = [];        // flat list of {kind, label, text, payload}
 let activeIndex = -1;
@@ -126,7 +127,10 @@ function itemNode(item, index) {
 function showMessage(text) {
 	items = [];
 	activeIndex = -1;
-	clear($("palette-results")).append(el("div", { class: "palette-empty", text }));
+	clear($("palette-results")).append(el("div", { class: "palette-empty" },
+		gi("no-results", { cls: "gi-xl" }),
+		el("span", { text }),
+	));
 }
 
 function onKeydown(e) {

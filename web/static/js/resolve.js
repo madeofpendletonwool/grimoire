@@ -9,6 +9,7 @@ import { streamResolve } from "./api.js";
 import { state, activeCorpus, supportsResolve } from "./state.js";
 import { renderAnswer, bindRuleRefs, renderCitations } from "./render.js";
 import { closeDrawer } from "./drawer.js";
+import { sprite } from "./icons.js";
 
 // The canned puzzles mirror internal/resolver/puzzles.go so the UI can offer
 // them as one-click examples. Each carries the line-oriented board/sequence the
@@ -246,11 +247,11 @@ function recapSection(label, text) {
 function pendingSage() {
 	const prose = el("div", { class: "prose" },
 		el("span", { class: "thinking" },
-			el("span", { text: "The sage reads the stack" }),
-			el("span", { text: "." }), el("span", { text: "." }), el("span", { text: "." })));
+			sprite("casting", { cls: "ico-casting" }),
+			el("span", { text: "The sage reads the stack…" })));
 	const bubble = el("div", { class: "bubble is-streaming" }, prose);
 	const row = el("div", { class: "msg msg-sage" },
-		el("div", { class: "who" }, el("span", { text: "🔮 The Resolver" })),
+		el("div", { class: "who" }, sprite("mirror"), el("span", { text: "The Resolver" })),
 		bubble);
 	return { row, bubble, prose };
 }

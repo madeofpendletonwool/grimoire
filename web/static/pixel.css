@@ -1,0 +1,311 @@
+/* Grimoire's pixel layer: sprites, the tome's nine-slice frames, and the
+   chamber behind it all.
+
+   Two rules run through the whole file.
+
+   1. Pixel art is never resampled. Every sprite and every frame is scaled by
+      a whole number, and `image-rendering: pixelated` keeps the edges square.
+      Where you see `border-image-slice: 3` against `border-width: 6px`, that
+      is a deliberate 2x — not a coincidence.
+
+   2. The frames come from the same pixels as the fills. `--parchment` is the
+      exact colour inside the parchment panel sprite, so a nine-sliced surface
+      and a plain CSS one sit side by side without a seam. Changing one means
+      changing the other. */
+
+/* Default chrome frames. themes.css overrides these per backdrop; everything
+   below refers to the variable, never the file, so a theme swap is one
+   declaration rather than a parallel set of selectors. */
+:root {
+	--frame-stone: url("/static/assets/ui/panel-stone.png");
+	--frame-stone-active: url("/static/assets/ui/panel-stone-active.png");
+	--frame-field: url("/static/assets/ui/field.png");
+	--frame-field-focus: url("/static/assets/ui/field-focus.png");
+	--frame-bar: url("/static/assets/ui/bar.png");
+
+	/* One transform, applied to both the scene layers and the sky behind them
+	   so the two cannot drift apart. Light on the sepia — each scene keeps its
+	   own colour now that the chrome is retinted to match it — and darkened
+	   rather than desaturated, so the art stays a place you can read instead
+	   of a texture. */
+	--scene-filter: sepia(0.16) saturate(0.92) brightness(0.62) contrast(1.02);
+}
+
+/* ---------- Sprites (Shikashi, 16 columns of 32px) ---------- */
+
+.ico {
+	display: inline-block;
+	flex: none;
+	width: calc(32px * var(--s, 1));
+	height: calc(32px * var(--s, 1));
+	background-image: url("/static/assets/sprites/icons32.png");
+	background-repeat: no-repeat;
+	background-size: calc(512px * var(--s, 1)) auto;
+	/* longhands, not the shorthand: the casting animation drives x on its own */
+	background-position-x: calc(var(--ix) * -32px * var(--s, 1));
+	background-position-y: calc(var(--iy) * -32px * var(--s, 1));
+	image-rendering: pixelated;
+	vertical-align: middle;
+}
+
+/* Cells 336-342 — a hand casting, then the six magic scrolls — sit side by
+   side on one row, so the whole cycle is a single background-position sweep. */
+.ico-casting {
+	--ix: 0;
+	--iy: 21;
+	animation: casting-cycle 0.9s steps(7) infinite;
+}
+@keyframes casting-cycle {
+	to { background-position-x: calc(-7 * 32px * var(--s, 1)); }
+}
+
+/* ---------- Vector icons (game-icons.net) ---------- */
+
+.gi {
+	display: inline-block;
+	flex: none;
+	width: 1.15em;
+	height: 1.15em;
+	fill: currentColor;
+	vertical-align: -0.22em;
+}
+.gi-lg { width: 1.5em; height: 1.5em; }
+.gi-xl { width: 3.2em; height: 3.2em; }
+
+/* ---------- Nine-slice frames ----------
+   This file decides *what is framed in what*; style.css handles the layout
+   and type inside the frame. Keeping the two apart matters because a framed
+   surface must not also carry a background-color or a border-radius — the
+   sprite supplies both, and a stray radius clips its corners off. Each rule
+   below therefore lists the utility class and every component that adopts it,
+   so the pairing is visible in one place. */
+
+.nine,
+.msg-sage .bubble,
+.gate-page,
+.rule-ref,
+.composer,
+.palette-box,
+.settings-popup,
+.drawer,
+.gate-card,
+.chip,
+.suggestion,
+.send-btn,
+.gate-submit,
+.new-chat,
+.study-card,
+.study-answer,
+.study-grade {
+	border-style: solid;
+	border-radius: 0;
+	background-color: transparent;
+	border-image-repeat: stretch;
+	image-rendering: pixelated;
+}
+
+/* Parchment page — the content surfaces. The sprite's one asymmetry, a turned
+   corner at the bottom right, is deliberate and worth keeping. */
+.f-parchment,
+.msg-sage .bubble,
+.gate-page,
+.study-card {
+	border-width: 10px;
+	border-image-source: url("/static/assets/ui/panel-parchment.png");
+	border-image-slice: 5 fill;
+}
+
+/* Stone panel — app chrome. Slot's leather, recoloured to Grimoire's stone. */
+.f-stone,
+.palette-box,
+.settings-popup,
+.study-answer {
+	border-width: 6px;
+	border-image-source: var(--frame-stone);
+	border-image-slice: 3 fill;
+}
+.f-stone-active {
+	border-image-source: var(--frame-stone-active);
+}
+
+/* Inset field — text sunk into the stone. */
+.f-field,
+.composer {
+	border-width: 6px;
+	border-image-source: var(--frame-field);
+	border-image-slice: 3 fill;
+}
+.f-field:focus-within,
+.f-field.is-focus,
+.composer:focus-within {
+	border-image-source: var(--frame-field-focus);
+}
+
+/* Chips and suggestions. 1x — they are small, and doubling the frame would
+   leave no room for the label. */
+.f-chip,
+.chip,
+.suggestion {
+	border-width: 3px;
+	border-image-source: url("/static/assets/ui/chip.png");
+	border-image-slice: 3 fill;
+}
+.f-chip:hover,
+.f-chip.is-active,
+.chip:not(.chip-miss):hover,
+.suggestion:hover {
+	border-image-source: url("/static/assets/ui/chip-active.png");
+}
+
+.f-button,
+.send-btn,
+.gate-submit,
+.new-chat,
+.study-grade {
+	border-width: 6px;
+	border-image-source: url("/static/assets/ui/button.png");
+	border-image-slice: 3 fill;
+}
+.f-button:active:not(:disabled),
+.f-button.is-active,
+.send-btn:active:not(:disabled),
+.gate-submit:active:not(:disabled),
+.new-chat:active,
+.study-grade:active:not(:disabled) {
+	border-image-source: url("/static/assets/ui/button-active.png");
+}
+
+/* Corner brackets. No `fill` — the middle stays transparent, so this overlays
+   whatever it marks. */
+.f-select {
+	border-width: 12px;
+	border-image-source: url("/static/assets/ui/select.png");
+	border-image-slice: 6;
+}
+
+/* The open page — the reference drawer. Spine down the left, page-stack along
+   the bottom, so the slices are asymmetric. */
+.f-page,
+.drawer {
+	border-width: 12px 4px 16px 4px;
+	border-image-source: url("/static/assets/ui/page.png");
+	border-image-slice: 6 2 8 2 fill;
+}
+
+/* The cover — the sign-in gate, the one place the book is shown shut. The
+   sprite ships pre-doubled so its corner filigree survives, so this is a 1x
+   slice of an already-2x image. */
+.f-cover,
+.gate-card {
+	border-width: 28px;
+	border-image-source: url("/static/assets/ui/book-cover.png");
+	border-image-slice: 28 fill;
+}
+
+.f-bar {
+	border-width: 2px 6px;
+	border-image-source: var(--frame-bar);
+	border-image-slice: 1 3 1 3 fill;
+}
+
+/* Rule references in the prose: a bracketed number, not a button-shaped
+   button, so a paragraph full of them still reads as a paragraph. */
+.rule-ref {
+	border-width: 3px;
+	border-image-source: url("/static/assets/ui/chip.png");
+	border-image-slice: 3 fill;
+}
+.rule-ref:hover {
+	border-image-source: url("/static/assets/ui/chip-active.png");
+}
+
+/* ---------- The chamber ----------
+   A room the app sits in, not a texture on the wall. Three things make it
+   read as depth rather than wallpaper:
+
+   1. Scale is chosen from the viewport's *width*, not its height. Filling a
+      tall window vertically from 216px of source means 5x or more, at which
+      point a cave pillar is a featureless slab. Scaling to width lands around
+      3x, and the band left above the art is filled with the scene's own sky
+      colour — sampled from the top edge of its backmost layer, so the join is
+      invisible. Nearly every layer tiles horizontally, so repeat-x covers the
+      rest for free.
+
+   2. The layers are tinted, not blended. Sepia pulls each scene toward
+      Grimoire's warmth while leaving its form and its own hue legible.
+
+   3. Travel is generous and non-linear — see DRIFT in scene.js. */
+
+.scene {
+	position: fixed;
+	inset: 0;
+	z-index: 0;
+	overflow: hidden;
+	pointer-events: none;
+	background: var(--stone-900);
+}
+
+/* The sky above the art. Same filter as the layers, so the two cannot drift
+   apart no matter how the tint is tuned. */
+.scene-sky {
+	position: absolute;
+	inset: 0;
+	background: var(--scene-sky, var(--stone-900));
+	filter: var(--scene-filter);
+}
+
+.scene-layer {
+	position: absolute;
+	/* overscan, so parallax drift never exposes an edge */
+	left: -8%;
+	right: -8%;
+	top: 0;
+	bottom: -3%;
+	background-repeat: repeat-x;
+	background-position: 50% 100%;
+	background-size: auto calc(216px * var(--scene-scale, 3));
+	image-rendering: pixelated;
+	filter: var(--scene-filter);
+	will-change: transform;
+	transition: opacity 0.4s ease;
+}
+
+/* The floor under text contrast. Whatever scene is chosen — including the
+   bright Plains — this is what everything above is guaranteed to sit on. It
+   is deliberately light in the middle, where the answers are, and heavier at
+   the edges, where the chrome needs to separate from the room. */
+.scene-veil {
+	position: absolute;
+	inset: 0;
+	background:
+		radial-gradient(ellipse 100% 78% at 50% 46%,
+			rgba(10, 7, 3, 0.1) 0%, rgba(6, 4, 2, 0.72) 100%),
+		linear-gradient(180deg, rgba(20, 16, 10, 0.1), rgba(20, 16, 10, 0.42));
+}
+
+/* A candle somewhere off-screen, guttering. */
+.scene-glow {
+	position: absolute;
+	inset: 0;
+	background: radial-gradient(ellipse 900px 560px at 50% -8%,
+		rgba(201, 162, 39, 0.14), transparent 70%);
+	animation: gutter 7s ease-in-out infinite;
+}
+@keyframes gutter {
+	0%, 100% { opacity: 0.85; }
+	38%      { opacity: 1; }
+	52%      { opacity: 0.72; }
+	61%      { opacity: 0.95; }
+}
+
+/* The whole app rides above the scene. */
+.app,
+.gate { position: relative; z-index: 1; }
+
+/* ---------- Motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+	.ico-casting { animation: none; }
+	.scene-glow { animation: none; }
+	.scene-layer { transition: none; }
+}

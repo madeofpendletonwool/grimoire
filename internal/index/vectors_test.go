@@ -303,3 +303,40 @@ func TestMergeResults_UnnumberedByKey(t *testing.T) {
 		t.Errorf("expected 2 after dedup, got %d: %+v", len(got), got)
 	}
 }
+
+// nilEmbedder exists only to be passed as a typed nil pointer.
+type nilEmbedder struct{}
+
+func (*nilEmbedder) Embed(context.Context, []string) ([][]float32, error) {
+	panic("a nil embedder must never be called")
+}
+
+// The store's guards all read `s.embedder == nil`, so a nil pointer handed in
+// as an Embedder — which Go wraps in a *non-nil* interface — has to be stored
+// as no embedder at all. Otherwise retrieval and indexing both dereference it.
+func TestSetEmbedderTreatsNilPointerAsNoEmbedder(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Index(context.Background(), semanticDataset()); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	var typedNil *nilEmbedder
+	store.SetEmbedder(typedNil)
+
+	// Indexing vectors is a no-op rather than a panic...
+	if err := store.IndexEmbeddings(context.Background()); err != nil {
+		t.Fatalf("IndexEmbeddings with a nil embedder: %v", err)
+	}
+	if embedded, err := store.Embedded(context.Background()); err != nil || embedded {
+		t.Errorf("Embedded = %v, %v; want false, nil", embedded, err)
+	}
+
+	// ...and retrieval quietly stays on the FTS5 path.
+	got, err := store.Retrieve(context.Background(), data.CorpusMTG, "hexproof", 3)
+	if err != nil {
+		t.Fatalf("Retrieve with a nil embedder: %v", err)
+	}
+	if len(got) == 0 {
+		t.Error("Retrieve returned nothing; FTS5 should still work")
+	}
+}

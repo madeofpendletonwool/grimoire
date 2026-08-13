@@ -7,6 +7,7 @@ import { renderAnswer, bindRuleRefs, renderCitations, renderRulings } from "./re
 import { openRule, openCard, closeDrawer } from "./drawer.js";
 import { openPalette } from "./palette.js";
 import { syncModeChrome, renderWelcome, isResolveMode } from "./resolve.js";
+import { sprite, gi } from "./icons.js";
 
 let abortStream = null;
 
@@ -104,7 +105,9 @@ export async function refreshHistory() {
 function renderHistory() {
 	const nav = clear($("history"));
 	if (state.chats.length === 0) {
-		nav.append(el("p", { class: "history-empty", text: "No saved chats yet." }));
+		nav.append(el("p", { class: "history-empty" },
+			gi("no-history", { cls: "gi-xl" }),
+			el("span", { text: "No saved chats yet." })));
 		return;
 	}
 	let lastGroup = null;
@@ -119,7 +122,7 @@ function renderHistory() {
 			attrs: { type: "button", "data-chat": c.id, title: c.title || "New chat" },
 			on: { click: () => openChat(c.id) },
 		},
-			el("span", { class: "h-mark", text: c.corpus === "dnd" ? "⚔" : "✦" }),
+			el("span", { class: "h-mark" }, gi(c.corpus === "dnd" ? "dnd" : "mtg")),
 			el("span", { class: "h-title", text: c.title || "New chat" }),
 		));
 	}
@@ -312,13 +315,16 @@ function userMessage(text) {
 function pendingSage() {
 	const prose = el("div", { class: "prose" },
 		el("span", { class: "thinking" },
-			el("span", { text: "The sage consults the entries" }),
-			el("span", { text: "." }), el("span", { text: "." }), el("span", { text: "." })));
+			sprite("casting", { cls: "ico-casting" }),
+			el("span", { text: "The sage consults the entries…" })));
 	const bubble = el("div", { class: "bubble is-streaming" }, prose);
-	const row = el("div", { class: "msg msg-sage" },
-		el("div", { class: "who" }, el("span", { text: "✦ The Sage" })),
-		bubble);
+	const row = el("div", { class: "msg msg-sage" }, sageWho(), bubble);
 	return { row, bubble, prose };
+}
+
+/** The byline over an answer: the sage's staff, then the name. */
+function sageWho() {
+	return el("div", { class: "who" }, sprite("staff"), el("span", { text: "The Sage" }));
 }
 
 function sageMessage(m) {
@@ -326,9 +332,7 @@ function sageMessage(m) {
 	const prose = el("div", { class: "prose" });
 	renderAnswer(prose, m.content, corpus);
 	const bubble = el("div", { class: "bubble" }, prose);
-	const row = el("div", { class: "msg msg-sage" },
-		el("div", { class: "who" }, el("span", { text: "✦ The Sage" })),
-		bubble);
+	const row = el("div", { class: "msg msg-sage" }, sageWho(), bubble);
 	bindRuleRefs(prose, corpus);
 	const cites = renderCitations(m.sources, m.cards, m.entities, null, corpus);
 	if (cites) bubble.append(cites);
@@ -431,7 +435,10 @@ function hideSlashHints() {
 export function syncChrome() {
 	const corpus = activeCorpus();
 	document.documentElement.setAttribute("data-corpus", corpus);
-	$("corpus-chip").textContent = corpusLabel(corpus);
+	clear($("corpus-chip")).append(
+		gi(corpus === "dnd" ? "dnd" : "mtg"),
+		el("span", { text: corpusLabel(corpus) }),
+	);
 	$("conv-title").textContent = state.chat ? (state.chat.title || "New chat") : "New chat";
 	$("topbar-rename").hidden = !state.chat;
 	$("topbar-delete").hidden = !state.chat;
