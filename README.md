@@ -58,6 +58,12 @@ Anthropic has no embeddings API, so this targets the OpenAI `/embeddings` contra
 | `EMBEDDINGS_API_KEY`  | _(empty)_                        | Secret. Enables semantic retrieval when set with `EMBEDDINGS_MODEL`. |
 | `EMBEDDINGS_MODEL`    | _(empty)_                        | Provider-specific (e.g. `text-embedding-3-small`, `embedding-3`). Required. |
 
+Answers are cached: a repeat (or grounding-equivalent) question returns instantly without a second model call. The key folds in the retrieved source set, so a rules **reindex** invalidates affected entries on its own — a stale answer can't survive a grounding change. Send `?nocache` on `/api/ask` or `/api/chats/{id}/messages` to force a fresh answer.
+
+| Variable                   | Default | Notes                                                                  |
+| -------------------------- | ------- | ---------------------------------------------------------------------- |
+| `GRIMOIRE_ANSWER_CACHE_TTL`| `168h`  | How long a cached answer stays fresh. Any Go duration (`24h`, `168h`…). |
+
 ## Accounts
 
 Grimoire is single-household software, so it has a login but no user management
