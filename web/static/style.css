@@ -553,6 +553,49 @@ kbd {
 	text-decoration: line-through;
 }
 
+/* rulings — official precedent citations under an answer */
+.rulings {
+	margin-top: var(--sp-3);
+	padding-top: var(--sp-2);
+	border-top: 1px dashed var(--parchment-line);
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	font-family: var(--font-ui);
+	font-size: var(--fs-xs);
+}
+.rulings-label {
+	color: var(--ink-soft);
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+	font-size: var(--fs-xs);
+}
+.ruling {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	padding-left: var(--sp-3);
+	border-left: 2px solid var(--gold-dim, rgba(201, 162, 39, 0.4));
+}
+.ruling-comment {
+	margin: 0;
+	color: var(--ink);
+	line-height: 1.4;
+}
+.ruling-attr {
+	color: var(--ink-soft);
+	font-size: var(--fs-xs);
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: 0.3rem;
+	align-items: baseline;
+}
+.ruling-card { font-weight: 600; color: var(--ink); }
+.ruling-source {}
+.ruling-date {}
+.ruling-sep { opacity: 0.5; }
+
 /* ---------- Composer ---------- */
 .composer-dock {
 	flex: none;

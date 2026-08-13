@@ -3,7 +3,7 @@
 import { $, el, clear, isNarrow } from "./dom.js";
 import { api, streamAnswer } from "./api.js";
 import { state, activeCorpus, corpusLabel, supportsCards, saveCorpusPreference } from "./state.js";
-import { renderAnswer, bindRuleRefs, renderCitations } from "./render.js";
+import { renderAnswer, bindRuleRefs, renderCitations, renderRulings } from "./render.js";
 import { openRule, openCard, closeDrawer } from "./drawer.js";
 import { openPalette } from "./palette.js";
 
@@ -233,7 +233,7 @@ async function ask(question) {
 
 	setStreaming(true);
 	let text = "";
-	let meta = { sources: [], cards: [], unresolved_cards: [] };
+	let meta = { sources: [], cards: [], rulings: [], unresolved_cards: [] };
 	const corpus = state.chat.corpus;
 	const controller = new AbortController();
 	abortStream = controller;
@@ -330,6 +330,8 @@ function sageMessage(m) {
 	bindRuleRefs(prose, corpus);
 	const cites = renderCitations(m.sources, m.cards, null, corpus);
 	if (cites) bubble.append(cites);
+	const rules = renderRulings(m.rulings);
+	if (rules) bubble.append(rules);
 	return row;
 }
 
@@ -339,6 +341,8 @@ function finishSage(row, bubble, prose, text, meta, corpus) {
 	bubble.classList.remove("is-streaming");
 	const cites = renderCitations(meta.sources, meta.cards, meta.unresolved_cards, corpus);
 	if (cites) bubble.append(cites);
+	const rules = renderRulings(meta.rulings);
+	if (rules) bubble.append(rules);
 }
 
 /* ---------- Composer behaviour ---------- */

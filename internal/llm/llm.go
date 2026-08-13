@@ -80,6 +80,16 @@ type CardDoc struct {
 	OracleText string
 }
 
+// RulingDoc is one official ruling on a card, fed to the model as precedent so
+// it can cite Gatherer/Oracle rulings alongside the rule text — turning a
+// rules lookup into a rulings oracle. Source is "wotc" or "scryfall".
+type RulingDoc struct {
+	CardName    string
+	Source      string
+	PublishedAt string
+	Comment     string
+}
+
 // Turn is one prior exchange in a saved conversation, replayed so follow-up
 // questions ("what if it were tapped instead?") resolve against what was
 // already said.
@@ -94,6 +104,7 @@ type Request struct {
 	CorpusName string
 	Docs       []ContextDoc
 	Cards      []CardDoc
+	Rulings    []RulingDoc
 	Unresolved []string
 	History    []Turn
 	Question   string
@@ -125,7 +136,7 @@ func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error)
 	reqBody := messagesRequest{
 		Model:     c.cfg.Model,
 		MaxTokens: maxAnswerTokens,
-		System:    systemPrompt(r.CorpusName, len(r.Cards) > 0),
+		System:    systemPrompt(r.CorpusName, len(r.Cards) > 0, len(r.Rulings) > 0),
 		Messages:  buildMessages(r),
 		Stream:    streaming,
 	}
@@ -212,7 +223,7 @@ func buildMessages(r Request) []message {
 	}
 	msgs = merged
 
-	user := buildUserMessage(r.CorpusName, r.Docs, r.Cards, r.Unresolved, r.Question)
+	user := buildUserMessage(r.CorpusName, r.Docs, r.Cards, r.Rulings, r.Unresolved, r.Question)
 	if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
 		msgs[n-1].Content += "\n\n" + user
 		return msgs
@@ -273,7 +284,7 @@ func readStream(body io.Reader, onDelta func(string) error) (string, error) {
 	return out, nil
 }
 
-func systemPrompt(corpusName string, hasCards bool) string {
+func systemPrompt(corpusName string, hasCards bool, hasRulings bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		`You are the Grimoire, a knowledgeable keeper of %s rules. Answer like a careful judge: precise, grounded, and unmoved by pressure.
@@ -288,6 +299,10 @@ GROUNDING RULES — follow these strictly:
 	} else {
 		b.WriteString("\n3. If a card is named in the question but no card oracle text was provided, say plainly that you could not look the card up — do NOT guess what the card does.")
 		b.WriteString("\n4. If the provided excerpts do not contain the answer, say so plainly rather than inventing rules or card text.")
+	}
+	if hasRulings {
+		b.WriteString("\n6. Official rulings were provided. Cite them when they decide the interaction — name the card, the ruling's source (wotc or scryfall), and its date, and quote the decisive phrase. Treat wotc rulings as authoritative precedent; treat scryfall rulings as official guidance.")
+		b.WriteString("\n7. If a ruling is relevant to a named card but no ruling for that card was provided, say plainly that no official ruling was available — do NOT invent one from memory.")
 	}
 	b.WriteString("\n\nREASONING DISCIPLINE — apply to every answer:")
 	b.WriteString(`
@@ -307,7 +322,7 @@ GROUNDING RULES — follow these strictly:
 	return strings.TrimSpace(b.String())
 }
 
-func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, unresolved []string, question string) string {
+func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, rulings []RulingDoc, unresolved []string, question string) string {
 	var b strings.Builder
 	b.WriteString("Relevant " + corpusName + " rules:\n\n")
 	if len(docs) == 0 {
@@ -343,6 +358,22 @@ func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, unr
 		}
 	}
 
+	if len(rulings) > 0 {
+		b.WriteString("Official rulings (authoritative precedent — from Scryfall/Gatherer):\n\n")
+		byCard := groupRulingsByCard(rulings)
+		for _, g := range byCard {
+			fmt.Fprintf(&b, "### %s\n", g.card)
+			for _, r := range g.rulings {
+				src := r.Source
+				if src == "" {
+					src = "official"
+				}
+				fmt.Fprintf(&b, "- [%s, %s] %s\n", src, r.PublishedAt, truncate(strings.TrimSpace(r.Comment), 600))
+			}
+			b.WriteString("\n")
+		}
+	}
+
 	if len(unresolved) > 0 {
 		fmt.Fprintf(&b, "Names in the question that could not be looked up: %s\n"+
 			"Do not describe these from memory — say the lookup failed.\n\n",
@@ -351,6 +382,30 @@ func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, unr
 
 	b.WriteString("Question: " + question)
 	return b.String()
+}
+
+// rulingGroup is the set of rulings for one card, in the order they arrived.
+type rulingGroup struct {
+	card    string
+	rulings []RulingDoc
+}
+
+// groupRulingsByCard preserves first-seen card order while keeping each card's
+// rulings contiguous, so the model sees "card -> its rulings" rather than a
+// flat interleaved list.
+func groupRulingsByCard(rulings []RulingDoc) []rulingGroup {
+	var groups []rulingGroup
+	index := map[string]int{}
+	for _, r := range rulings {
+		name := r.CardName
+		if i, ok := index[name]; ok {
+			groups[i].rulings = append(groups[i].rulings, r)
+			continue
+		}
+		index[name] = len(groups)
+		groups = append(groups, rulingGroup{card: name, rulings: []RulingDoc{r}})
+	}
+	return groups
 }
 
 type messagesRequest struct {

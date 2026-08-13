@@ -65,6 +65,45 @@ export function renderCitations(sources, cards, unresolved, corpus) {
 	return wrap;
 }
 
+/**
+ * Official rulings under an answer: each ruling's comment text attributed by
+ * the card it applies to, its source (wotc/scryfall), and its publish date.
+ * Returns null when there are no rulings so callers can skip appending.
+ */
+export function renderRulings(rulings) {
+	if (!rulings || !rulings.length) return null;
+
+	const wrap = el("div", { class: "rulings" });
+	wrap.append(el("div", { class: "rulings-label", text: "Official rulings" }));
+	for (const r of rulings.slice(0, 20)) {
+		const source = sourceLabel(r.source);
+		const entry = el("div", { class: "ruling" });
+		entry.append(el("p", { class: "ruling-comment", text: r.comment || "" }));
+		const attr = el("span", { class: "ruling-attr" });
+		if (r.card_name) attr.append(el("span", { class: "ruling-card", text: r.card_name }));
+		if (source) {
+			if (attr.childNodes.length) attr.append(el("span", { class: "ruling-sep", text: "·" }));
+			attr.append(el("span", { class: "ruling-source", text: source }));
+		}
+		if (r.published_at) {
+			if (attr.childNodes.length) attr.append(el("span", { class: "ruling-sep", text: "·" }));
+			attr.append(el("span", { class: "ruling-date", text: r.published_at }));
+		}
+		entry.append(attr);
+		wrap.append(entry);
+	}
+	return wrap;
+}
+
+/** Map Scryfall ruling sources to a readable label. */
+function sourceLabel(source) {
+	switch ((source || "").toLowerCase()) {
+		case "wotc": return "WotC";
+		case "scryfall": return "Scryfall";
+		default: return source || "";
+	}
+}
+
 /** One rule entry. `sub` styles it as a nested sub-rule within a section. */
 export function ruleCard(rule, query, sub) {
 	const node = el("div", { class: "rule-card" + (sub ? " is-sub" : "") });
