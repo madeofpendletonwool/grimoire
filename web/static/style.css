@@ -552,6 +552,11 @@ kbd {
 	cursor: default;
 	text-decoration: line-through;
 }
+.chip.chip-entity {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+	cursor: default;
+}
 
 /* rulings — official precedent citations under an answer */
 .rulings {

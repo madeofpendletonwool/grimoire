@@ -34,6 +34,7 @@ type Entry struct {
 	Answer    string
 	Sources   json.RawMessage
 	Cards     json.RawMessage
+	Entities  json.RawMessage
 	Rulings   json.RawMessage
 	CreatedAt time.Time
 }
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS answer_cache (
 	answer     TEXT NOT NULL,
 	sources    TEXT NOT NULL DEFAULT '',
 	cards      TEXT NOT NULL DEFAULT '',
+	entities   TEXT NOT NULL DEFAULT '',
 	rulings    TEXT NOT NULL DEFAULT '',
 	created_at INTEGER NOT NULL
 );
@@ -83,7 +85,12 @@ CREATE INDEX IF NOT EXISTS answer_cache_corpus ON answer_cache(corpus, created_a
 // already has the column from schema, and an upgraded one gets it added
 // in-place without losing cached answers.
 func migrate(db *sql.DB) error {
-	return ensureColumn(db, "answer_cache", "rulings")
+	for _, col := range []string{"rulings", "entities"} {
+		if err := ensureColumn(db, "answer_cache", col); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureColumn adds a nullable TEXT column to a table when it is not already
@@ -122,14 +129,14 @@ func ensureColumn(db *sql.DB, table, column string) error {
 
 // Put stores an answer under key, refreshing any existing entry. corpus is
 // recorded for observability and per-corpus sweeps; it is already part of the
-// key, so it carries no correctness load here. sources, cards, and rulings may
-// be nil.
-func (s *Store) Put(ctx context.Context, key, corpus, answer string, sources, cards, rulings json.RawMessage) error {
+// key, so it carries no correctness load here. sources, cards, entities, and
+// rulings may be nil.
+func (s *Store) Put(ctx context.Context, key, corpus, answer string, sources, cards, entities, rulings json.RawMessage) error {
 	now := time.Now().UTC().UnixMilli()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT OR REPLACE INTO answer_cache (key, corpus, answer, sources, cards, rulings, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		key, corpus, answer, string(sources), string(cards), string(rulings), now)
+		`INSERT OR REPLACE INTO answer_cache (key, corpus, answer, sources, cards, entities, rulings, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		key, corpus, answer, string(sources), string(cards), string(entities), string(rulings), now)
 	if err != nil {
 		return fmt.Errorf("cache put: %w", err)
 	}
@@ -142,15 +149,16 @@ func (s *Store) Put(ctx context.Context, key, corpus, answer string, sources, ca
 // corpus can produce, and a lazy sweep adds write load for no real gain.
 func (s *Store) Get(ctx context.Context, key string) (*Entry, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT answer, sources, cards, rulings, created_at FROM answer_cache WHERE key = ?`, key)
+		`SELECT answer, sources, cards, entities, rulings, created_at FROM answer_cache WHERE key = ?`, key)
 	var (
-		e       Entry
-		sources string
-		cards   string
-		rulings string
-		created int64
+		e        Entry
+		sources  string
+		cards    string
+		entities string
+		rulings  string
+		created  int64
 	)
-	if err := row.Scan(&e.Answer, &sources, &cards, &rulings, &created); err != nil {
+	if err := row.Scan(&e.Answer, &sources, &cards, &entities, &rulings, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -158,6 +166,7 @@ func (s *Store) Get(ctx context.Context, key string) (*Entry, error) {
 	}
 	e.Sources = rawOrNil(sources)
 	e.Cards = rawOrNil(cards)
+	e.Entities = rawOrNil(entities)
 	e.Rulings = rawOrNil(rulings)
 	e.CreatedAt = time.UnixMilli(created).UTC()
 	if time.Since(e.CreatedAt) > s.ttl {

@@ -24,6 +24,7 @@
 //	SCRYFALL_BASE_URL   MTG card lookup endpoint (default https://api.scryfall.com; no key needed)
 //	MTG_RULES_URL       override MTG comp rules source
 //	MTGJSON_URL         override MTGJSON AtomicCards source (card-name dictionary)
+//	OPEN5E_BASE_URL     D&D entity lookup endpoint (default https://api.open5e.com; no key needed)
 //	DND_REPO            override D&D SRD repo "owner/name"
 //	DND_REF             override D&D SRD git ref
 package main
@@ -46,6 +47,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
+	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
@@ -90,7 +92,7 @@ Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
   GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
   EMBEDDINGS_BASE_URL, EMBEDDINGS_API_KEY, EMBEDDINGS_MODEL,
-  SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, DND_REPO, DND_REF`)
+  SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, OPEN5E_BASE_URL, DND_REPO, DND_REF`)
 }
 
 func env(key, def string) string {
@@ -174,6 +176,13 @@ func embeddingsClient() *embeddings.Client {
 
 func cardsService() *cards.Service {
 	return cards.NewWithBase(env("SCRYFALL_BASE_URL", cards.DefaultBaseURL))
+}
+
+// open5eService builds the D&D entity resolver against the Open5e API. A single
+// OPEN5E_BASE_URL override retargets it (tests / a mirror), otherwise it points
+// at the public endpoint, which needs no key.
+func open5eService() *entities.Open5e {
+	return entities.NewWithBase(env("OPEN5E_BASE_URL", entities.DefaultBaseURL))
 }
 
 // rulingsService shares the Scryfall endpoint with cardsService: the rulings
@@ -345,6 +354,14 @@ func runServe() error {
 	}
 
 	cardDict := loadCardDictionary(ctx, store)
+
+	// Wire each corpus's entity resolver onto its registered definition. MTG's
+	// Scryfall resolver shares the card service + dictionary the chat already
+	// uses; D&D's Open5e resolver grounds spells/creatures/items/feats from the
+	// SRD. Done after the dictionary loads so a best-effort dictionary miss
+	// (text-heuristics-only detection) still leaves MTG with a working resolver.
+	data.SetResolver(data.CorpusMTG, entities.NewScryfall(cardsService(), cardDict))
+	data.SetResolver(data.CorpusDND, open5eService())
 
 	// Chat history shares the index's SQLite file and connection pool.
 	// Rebuilding the rules index does not touch these tables.

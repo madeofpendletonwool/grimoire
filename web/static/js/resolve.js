@@ -212,7 +212,7 @@ function finishTrace(row, bubble, prose, text, meta) {
 	renderAnswer(prose, text, "mtg");
 	bindRuleRefs(prose, "mtg");
 	bubble.classList.remove("is-streaming");
-	const cites = renderCitations(meta.sources, meta.cards, meta.unresolved_cards, "mtg");
+	const cites = renderCitations(meta.sources, meta.cards, null, meta.unresolved_cards, "mtg");
 	if (cites) bubble.append(cites);
 }
 

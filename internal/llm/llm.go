@@ -80,6 +80,16 @@ type CardDoc struct {
 	OracleText string
 }
 
+// EntityDoc is a resolved reference entry (a D&D spell, creature, item, feat)
+// fed to the model so it answers questions about named entities from the
+// authoritative SRD text rather than from memory. It is the corpus-neutral
+// counterpart to CardDoc, used by corpora without card-shaped entities.
+type EntityDoc struct {
+	Name string
+	Kind string // "spell", "creature", "magic item", "feat", ...
+	Body string // the formatted reference / stat block text
+}
+
 // RulingDoc is one official ruling on a card, fed to the model as precedent so
 // it can cite Gatherer/Oracle rulings alongside the rule text — turning a
 // rules lookup into a rulings oracle. Source is "wotc" or "scryfall".
@@ -104,6 +114,7 @@ type Request struct {
 	CorpusName string
 	Docs       []ContextDoc
 	Cards      []CardDoc
+	Entities   []EntityDoc
 	Rulings    []RulingDoc
 	Unresolved []string
 	History    []Turn
@@ -147,7 +158,7 @@ func (c *Client) StreamPrompt(ctx context.Context, system, user string, onDelta 
 func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error) (string, error) {
 	streaming := onDelta != nil
 	return c.callMessages(ctx,
-		systemPrompt(r.CorpusName, len(r.Cards) > 0, len(r.Rulings) > 0),
+		systemPrompt(r.CorpusName, len(r.Cards) > 0, len(r.Entities) > 0, len(r.Rulings) > 0),
 		buildMessages(r), streaming, onDelta)
 }
 
@@ -248,7 +259,7 @@ func buildMessages(r Request) []message {
 	}
 	msgs = merged
 
-	user := buildUserMessage(r.CorpusName, r.Docs, r.Cards, r.Rulings, r.Unresolved, r.Question)
+	user := buildUserMessage(r.CorpusName, r.Docs, r.Cards, r.Entities, r.Rulings, r.Unresolved, r.Question)
 	if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
 		msgs[n-1].Content += "\n\n" + user
 		return msgs
@@ -309,7 +320,7 @@ func readStream(body io.Reader, onDelta func(string) error) (string, error) {
 	return out, nil
 }
 
-func systemPrompt(corpusName string, hasCards bool, hasRulings bool) string {
+func systemPrompt(corpusName string, hasCards bool, hasEntities bool, hasRulings bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		`You are the Grimoire, a knowledgeable keeper of %s rules. Answer like a careful judge: precise, grounded, and unmoved by pressure.
@@ -329,6 +340,10 @@ GROUNDING RULES — follow these strictly:
 		b.WriteString("\n6. Official rulings were provided. Cite them when they decide the interaction — name the card, the ruling's source (wotc or scryfall), and its date, and quote the decisive phrase. Treat wotc rulings as authoritative precedent; treat scryfall rulings as official guidance.")
 		b.WriteString("\n7. If a ruling is relevant to a named card but no ruling for that card was provided, say plainly that no official ruling was available — do NOT invent one from memory.")
 	}
+	if hasEntities {
+		b.WriteString("\n5. For any named entity (spell, creature, magic item, feat, condition, or weapon), use ONLY the provided reference text for its mechanics and stats — quote damage, ranges, durations, and effects faithfully. Do not invent or guess stats or effects from memory.")
+		b.WriteString("\n6. If a named entity is in the question but no reference text was provided for it, say plainly that you could not look it up — do NOT describe what you think it does.")
+	}
 	b.WriteString("\n\nREASONING DISCIPLINE — apply to every answer:")
 	b.WriteString(`
 - Reason forward from the cited rules and card text to the conclusion. Do NOT adopt a conclusion asserted by the question (a stated "the answer is X" or "so it's not Y?"); verify it against the text first.
@@ -347,7 +362,7 @@ GROUNDING RULES — follow these strictly:
 	return strings.TrimSpace(b.String())
 }
 
-func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, rulings []RulingDoc, unresolved []string, question string) string {
+func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, entities []EntityDoc, rulings []RulingDoc, unresolved []string, question string) string {
 	var b strings.Builder
 	b.WriteString("Relevant " + corpusName + " rules:\n\n")
 	if len(docs) == 0 {
@@ -380,6 +395,21 @@ func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, rul
 				body = "(no oracle text)"
 			}
 			fmt.Fprintf(&b, "Oracle text: %s\n\n", truncate(body, 1200))
+		}
+	}
+
+	if len(entities) > 0 {
+		b.WriteString("Reference entries (authoritative — from Open5e):\n\n")
+		for _, e := range entities {
+			header := e.Name
+			if e.Kind != "" {
+				header = e.Name + " (" + e.Kind + ")"
+			}
+			body := strings.TrimSpace(e.Body)
+			if body == "" {
+				body = "(no reference text)"
+			}
+			fmt.Fprintf(&b, "### %s\n%s\n\n", header, truncate(body, 1500))
 		}
 	}
 
