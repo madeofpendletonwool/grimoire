@@ -50,6 +50,10 @@
 				<button type="button" class="icon-btn rail-open" id="rail-open" aria-label="Show sidebar" title="Show sidebar">☰</button>
 				<h1 class="conv-title" id="conv-title">New chat</h1>
 				<span class="corpus-chip" id="corpus-chip" title="This conversation's rule set"></span>
+				<div class="mode-toggle" id="mode-toggle" hidden role="radiogroup" aria-label="Mode">
+					<button type="button" class="mode-opt is-active" data-mode="ask" role="radio" aria-checked="true" title="Free Q&amp;A with the sage">💬 Ask</button>
+					<button type="button" class="mode-opt" data-mode="resolve" role="radio" aria-checked="false" title="Walk a board + spell sequence step by step">🔮 Resolve</button>
+				</div>
 				<div class="topbar-actions">
 					<button type="button" class="icon-btn" id="topbar-search" aria-label="Search rules and cards" title="Search rules and cards">🔎</button>
 					<button type="button" class="icon-btn" id="topbar-rename" aria-label="Rename conversation" title="Rename conversation" hidden>✎</button>
@@ -78,7 +82,34 @@
 					</div>
 					<ul class="slash-hints" id="slash-hints" role="listbox" aria-label="Commands" hidden></ul>
 				</form>
+				<form class="composer resolver" id="resolver" autocomplete="off" hidden>
+					<div class="resolver-grid">
+						<label class="resolver-field">
+							<span class="resolver-label">Board</span>
+							<textarea id="resolver-board" rows="3"
+								placeholder="One permanent per line:&#10;You: Blood Artist&#10;Opp: Doomed Traveler  # tapped"
+								aria-label="Board state"></textarea>
+						</label>
+						<label class="resolver-field">
+							<span class="resolver-label">Sequence</span>
+							<textarea id="resolver-sequence" rows="3"
+								placeholder="One spell/ability per line, in order:&#10;1. Opp casts Wrath of God&#10;2. You respond with …"
+								aria-label="Spell and ability sequence"></textarea>
+						</label>
+					</div>
+					<label class="resolver-note-row">
+						<span class="resolver-label">Note</span>
+						<input id="resolver-note" type="text"
+							placeholder="Whose turn, choices already made, anything else the resolver should know"
+							aria-label="Clarifying note">
+					</label>
+					<div class="composer-side">
+						<button type="submit" class="send-btn" id="resolve-btn" aria-label="Resolve" title="Resolve the sequence">➤</button>
+						<button type="button" class="send-btn stop-btn" id="resolve-stop" aria-label="Stop generating" title="Stop generating" hidden>■</button>
+					</div>
+				</form>
 				<p class="composer-foot" id="composer-foot"></p>
+				<p class="resolver-caveat" id="resolver-caveat" hidden>Assistant, not oracle — verify against the Comprehensive Rules.</p>
 			</div>
 		</main>
 

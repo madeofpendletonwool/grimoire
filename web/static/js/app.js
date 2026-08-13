@@ -6,6 +6,7 @@ import { state, loadCorpusPreference } from "./state.js";
 import { initDrawer } from "./drawer.js";
 import { initPalette, openPalette } from "./palette.js";
 import { initChat, refreshHistory, syncChrome, setCorpus, setFoot } from "./chat.js";
+import { initResolve } from "./resolve.js";
 
 function initRail() {
 	const app = $("app");
@@ -78,6 +79,7 @@ function start() {
 	initDrawer();
 	initPalette();
 	initChat();
+	initResolve();
 	syncChrome();
 	initAccount();
 	loadMeta();

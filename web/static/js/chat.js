@@ -6,6 +6,7 @@ import { state, activeCorpus, corpusLabel, supportsCards, saveCorpusPreference }
 import { renderAnswer, bindRuleRefs, renderCitations } from "./render.js";
 import { openRule, openCard, closeDrawer } from "./drawer.js";
 import { openPalette } from "./palette.js";
+import { syncModeChrome, renderWelcome, isResolveMode } from "./resolve.js";
 
 let abortStream = null;
 
@@ -59,6 +60,7 @@ export function initChat() {
 
 export function startNewChat() {
 	if (state.streaming) stopStreaming();
+	state.mode = "ask"; // "New chat" is a saved conversation; leave resolve mode.
 	state.chat = null;
 	closeDrawer();
 	clear($("messages"));
@@ -436,9 +438,14 @@ export function syncChrome() {
 		btn.setAttribute("aria-checked", on ? "true" : "false");
 	});
 
-	$("welcome-sub").textContent = corpus === "dnd"
-		? "Ask, and the tome shall answer — D&D 5e SRD."
-		: "Ask, and the tome shall answer — Magic: The Gathering.";
+	// Mode chrome (Ask/Resolve toggle + composer swap) follows corpus + mode.
+	syncModeChrome();
+
+	if (!isResolveMode()) {
+		$("welcome-sub").textContent = corpus === "dnd"
+			? "Ask, and the tome shall answer — D&D 5e SRD."
+			: "Ask, and the tome shall answer — Magic: The Gathering.";
+	}
 }
 
 /** Switching corpus starts a fresh thread: an open one is locked to its own. */
@@ -454,6 +461,10 @@ export function setCorpus(corpus) {
 }
 
 function renderSuggestions() {
+	if (isResolveMode()) {
+		renderWelcome(); // resolver owns its own puzzle suggestions
+		return;
+	}
 	const wrap = clear($("suggestions"));
 	for (const text of SUGGESTIONS[state.corpus] || SUGGESTIONS.mtg) {
 		wrap.append(el("button", {

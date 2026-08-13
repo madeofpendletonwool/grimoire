@@ -623,6 +623,115 @@ kbd {
 }
 .composer-foot.warn { opacity: 0.85; color: var(--ember); }
 
+/* ---------- Mode toggle (Ask / Resolve) ---------- */
+.mode-toggle {
+	display: flex;
+	gap: 2px;
+	flex: none;
+	padding: 3px;
+	background: var(--stone-700);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-pill);
+}
+.mode-opt {
+	padding: 0.2rem 0.55rem;
+	border: none;
+	border-radius: var(--r-pill);
+	background: none;
+	color: var(--parchment);
+	opacity: 0.6;
+	font-size: var(--fs-xs);
+	font-weight: 600;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+.mode-opt:hover { opacity: 0.9; }
+.mode-opt.is-active {
+	opacity: 1;
+	background: var(--accent-deep);
+	color: #fff;
+}
+
+/* ---------- Resolver composer ---------- */
+.composer.resolver {
+	flex-direction: column;
+	align-items: stretch;
+	gap: var(--sp-2);
+	padding: var(--sp-2);
+}
+.resolver-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--sp-2);
+}
+.resolver-field,
+.resolver-note-row {
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+	min-width: 0;
+}
+.resolver-label {
+	font-size: var(--fs-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	opacity: 0.5;
+}
+.resolver-field textarea,
+.resolver-note-row input {
+	min-width: 0;
+	max-height: 32vh;
+	padding: 0.4rem 0.5rem;
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	background: var(--stone-900);
+	color: var(--parchment);
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	line-height: 1.45;
+	resize: none;
+	overflow-y: auto;
+}
+.resolver-field textarea:focus,
+.resolver-note-row input:focus {
+	outline: none;
+	border-color: var(--gold-dim);
+	box-shadow: 0 0 0 2px rgba(201, 162, 39, 0.12);
+}
+.resolver-field textarea::placeholder,
+.resolver-note-row input::placeholder { color: var(--parchment); opacity: 0.3; }
+.resolver-note-row { flex-direction: row; align-items: center; gap: var(--sp-2); }
+.resolver-note-row .resolver-label { flex: none; }
+.resolver-note-row input { flex: 1; }
+.resolver .composer-side { align-self: flex-end; }
+.resolver-caveat {
+	max-width: var(--measure);
+	margin: var(--sp-1) auto 0;
+	font-size: var(--fs-xs);
+	font-style: italic;
+	opacity: 0.4;
+	text-align: center;
+}
+
+/* resolver recap shown as the user turn */
+.resolver-recap { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.recap-sec { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.recap-k {
+	font-size: var(--fs-xs);
+	font-weight: 700;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	opacity: 0.6;
+}
+.recap-v {
+	white-space: pre-wrap;
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	line-height: 1.4;
+}
+
 /* slash command hints */
 .slash-hints {
 	position: absolute;
@@ -1019,6 +1128,8 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.transcript { padding: var(--sp-4) var(--sp-3) var(--sp-3); }
 	.composer-dock { padding: 0 var(--sp-3) calc(var(--sp-3) + env(safe-area-inset-bottom)); }
 	.msg-user .bubble { max-width: 92%; }
+	.resolver-grid { grid-template-columns: 1fr; }
+	.mode-toggle .mode-opt { padding: 0.2rem 0.4rem; }
 
 	/* keep chrome off the notch and home indicator */
 	.topbar {

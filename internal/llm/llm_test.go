@@ -1,6 +1,11 @@
 package llm
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -96,5 +101,82 @@ func TestBuildUserMessage_NoCards(t *testing.T) {
 	}
 	if !strings.Contains(got, "(no directly matching rules found)") {
 		t.Errorf("empty rules should be noted: %q", got)
+	}
+}
+
+// newPromptClient points a configured client at a fake Messages endpoint. The
+// handler receives the parsed request so a test can assert on the prompt shape.
+func newPromptClient(t *testing.T, handler func(req messagesRequest) (status int, body string)) *Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req messagesRequest
+		_ = json.Unmarshal(raw, &req)
+		status, body := handler(req)
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return New(Config{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
+}
+
+func TestAnswerPrompt_SendsCustomSystemAndUser(t *testing.T) {
+	var seen messagesRequest
+	c := newPromptClient(t, func(req messagesRequest) (int, string) {
+		seen = req
+		return http.StatusOK, `{"content":[{"type":"text","text":"resolved trace"}]}`
+	})
+
+	out, err := c.AnswerPrompt(context.Background(), "RESOLVER SYSTEM", "the board and sequence")
+	if err != nil {
+		t.Fatalf("AnswerPrompt: %v", err)
+	}
+	if out != "resolved trace" {
+		t.Errorf("answer = %q", out)
+	}
+	if seen.System != "RESOLVER SYSTEM" {
+		t.Errorf("system prompt not forwarded, got %q", seen.System)
+	}
+	if len(seen.Messages) != 1 || seen.Messages[0].Role != "user" || seen.Messages[0].Content != "the board and sequence" {
+		t.Errorf("user message not forwarded, got %+v", seen.Messages)
+	}
+	if seen.Stream {
+		t.Errorf("non-streaming call must not set stream=true")
+	}
+	if seen.Model != "test-model" {
+		t.Errorf("model not forwarded, got %q", seen.Model)
+	}
+}
+
+func TestStreamPrompt_DecodesDeltas(t *testing.T) {
+	// One content_block_delta event carrying the trace, then stream end.
+	c := newPromptClient(t, func(req messagesRequest) (int, string) {
+		if !req.Stream {
+			t.Errorf("streaming call must set stream=true")
+		}
+		return http.StatusOK, "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"step 1 \"}}\n\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"cited\"}}\n\n"
+	})
+
+	var got strings.Builder
+	out, err := c.StreamPrompt(context.Background(), "sys", "user", func(text string) error {
+		got.WriteString(text)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamPrompt: %v", err)
+	}
+	if out != "step 1 cited" {
+		t.Errorf("concatenated answer = %q", out)
+	}
+	if got.String() != "step 1 cited" {
+		t.Errorf("deltas = %q", got.String())
+	}
+}
+
+func TestAnswerPrompt_NotConfigured(t *testing.T) {
+	c := New(Config{})
+	if _, err := c.AnswerPrompt(context.Background(), "s", "u"); err != ErrNotConfigured {
+		t.Errorf("expected ErrNotConfigured, got %v", err)
 	}
 }

@@ -115,18 +115,43 @@ func (c *Client) Stream(ctx context.Context, req Request, onDelta func(string) e
 	return c.run(ctx, req, onDelta)
 }
 
-// run performs the HTTP call. With onDelta nil it reads a single JSON body;
-// otherwise it asks for SSE and decodes the event stream.
+// AnswerPrompt runs a single-turn exchange with a caller-supplied system prompt
+// and user message. It is the entry point for features that need their own
+// prompt shape (the interaction resolver) while reusing the same Messages API
+// plumbing, streaming, and not-configured guard as the Q&A chat. onDelta nil
+// reads one JSON body; non-nil asks for SSE.
+func (c *Client) AnswerPrompt(ctx context.Context, system, user string) (string, error) {
+	return c.callMessages(ctx, system, []message{{Role: "user", Content: user}}, false, nil)
+}
+
+// StreamPrompt is the streaming form of AnswerPrompt.
+func (c *Client) StreamPrompt(ctx context.Context, system, user string, onDelta func(string) error) (string, error) {
+	if onDelta == nil {
+		return c.AnswerPrompt(ctx, system, user)
+	}
+	return c.callMessages(ctx, system, []message{{Role: "user", Content: user}}, true, onDelta)
+}
+
+// run builds the Q&A exchange from a Request and sends it.
 func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error) (string, error) {
+	streaming := onDelta != nil
+	return c.callMessages(ctx,
+		systemPrompt(r.CorpusName, len(r.Cards) > 0),
+		buildMessages(r), streaming, onDelta)
+}
+
+// callMessages performs the HTTP call for one exchange. With onDelta nil it
+// reads a single JSON body; otherwise it asks for SSE and decodes the event
+// stream.
+func (c *Client) callMessages(ctx context.Context, system string, msgs []message, streaming bool, onDelta func(string) error) (string, error) {
 	if !c.Configured() {
 		return "", ErrNotConfigured
 	}
-	streaming := onDelta != nil
 	reqBody := messagesRequest{
 		Model:     c.cfg.Model,
 		MaxTokens: maxAnswerTokens,
-		System:    systemPrompt(r.CorpusName, len(r.Cards) > 0),
-		Messages:  buildMessages(r),
+		System:    system,
+		Messages:  msgs,
 		Stream:    streaming,
 	}
 	body, err := json.Marshal(reqBody)
