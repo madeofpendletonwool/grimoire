@@ -46,6 +46,18 @@ The chat speaks the **Anthropic Messages API** and is fully configurable, so it 
 
 The key is read from the environment only — it is never baked into the image, the compose file, source, or logs. Without a key, search works fully and the chat shows a "configure a key" notice.
 
+### Semantic retrieval (optional)
+
+The chat grounds answers in rules it retrieves by keyword (FTS5). That misses questions whose words don't overlap the rule they need — "does my hexproof guy die to a board wipe?" shares no terms with the destroy/damage rules. Set an **OpenAI-compatible embeddings** endpoint and retrieval adds a vector pass alongside FTS5, merging in rules that are semantically close even when lexically distinct. FTS5 stays the backbone, so exact rule-number lookup (`702.2`) and keyword matches still work; embeddings only add recall. Off by default — retrieval is unchanged when unset.
+
+Anthropic has no embeddings API, so this targets the OpenAI `/embeddings` contract that compatible gateways also serve. Vectors are stored in the same SQLite file as little-endian float32 BLOBs and scored with a linear-scan cosine (fine for an index of thousands of rules). Vectors are (re)built during `grimoire index`, and also on the next `serve` if an index already exists without them. Changing the model later requires a reindex; a dimension mismatch falls back to FTS5 rather than mixing incompatible vectors.
+
+| Variable              | Default                          | Notes                                            |
+| --------------------- | -------------------------------- | ------------------------------------------------ |
+| `EMBEDDINGS_BASE_URL` | `https://api.openai.com/v1`      | Any OpenAI-compatible endpoint (z.ai: `https://api.z.ai/v1`). |
+| `EMBEDDINGS_API_KEY`  | _(empty)_                        | Secret. Enables semantic retrieval when set with `EMBEDDINGS_MODEL`. |
+| `EMBEDDINGS_MODEL`    | _(empty)_                        | Provider-specific (e.g. `text-embedding-3-small`, `embedding-3`). Required. |
+
 Answers are cached: a repeat (or grounding-equivalent) question returns instantly without a second model call. The key folds in the retrieved source set, so a rules **reindex** invalidates affected entries on its own — a stale answer can't survive a grounding change. Send `?nocache` on `/api/ask` or `/api/chats/{id}/messages` to force a fresh answer.
 
 | Variable                   | Default | Notes                                                                  |
