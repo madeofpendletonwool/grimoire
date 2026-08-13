@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strconv"
@@ -18,7 +19,8 @@ import (
 
 // Store is a searchable FTS5-backed document store.
 type Store struct {
-	db *sql.DB
+	db       *sql.DB
+	embedder Embedder // nil => FTS5-only retrieval (the default)
 }
 
 // Result is a single search hit.
@@ -59,9 +61,11 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) DB() *sql.DB { return s.db }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(schema)
-	if err != nil {
+	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
+	}
+	if _, err := s.db.Exec(vectorSchema); err != nil {
+		return fmt.Errorf("migrate vectors: %w", err)
 	}
 	return nil
 }
@@ -93,7 +97,7 @@ CREATE TABLE IF NOT EXISTS card_names (
 
 // Reset drops and rebuilds the docs tables (used on reindex).
 func (s *Store) Reset() error {
-	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names;`)
+	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names; DELETE FROM doc_vectors;`)
 	return err
 }
 
@@ -105,7 +109,7 @@ func (s *Store) Index(ctx context.Context, ds *data.Dataset) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM docs; DELETE FROM corpus_meta;`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM doc_vectors;`); err != nil {
 		return fmt.Errorf("clear docs: %w", err)
 	}
 
@@ -623,18 +627,42 @@ func isBareChapter(chapter string) bool {
 // Retrieve runs a lenient OR search used to gather grounding context for the
 // Q&A model. It never returns an error for an unsalvageable query — it simply
 // returns no docs, letting the model answer without context.
+//
+// When an embedder is configured, a top-N vector scan runs alongside FTS5 and
+// its hits are merged in. FTS5 stays the backbone (its results lead, so an
+// exact rule-number lookup still works); embeddings only add semantic recall
+// for questions that share no keywords with the rule they need. An embeddings
+// failure is best-effort: the FTS5 results are returned and the miss is logged
+// so the optional layer never takes retrieval down with it.
 func (s *Store) Retrieve(ctx context.Context, corpus data.Corpus, query string, limit int) ([]Result, error) {
 	q := strings.TrimSpace(query)
 	if limit <= 0 {
 		limit = 6
 	}
+	fts, err := s.ftsRetrieve(ctx, corpus, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("retrieve: %w", err)
+	}
+	if s.embedder == nil {
+		return fts, nil
+	}
+	vec, err := s.vectorRetrieve(ctx, corpus, query, limit)
+	if err != nil {
+		log.Printf("embeddings retrieve skipped: %v", err)
+		return fts, nil
+	}
+	return mergeResults(fts, vec), nil
+}
+
+// ftsRetrieve is the FTS5-only retrieval path (the pre-embeddings behavior).
+func (s *Store) ftsRetrieve(ctx context.Context, corpus data.Corpus, q string, limit int) ([]Result, error) {
 	matches, err := toFTSQueryOR(q)
 	if err != nil {
 		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx, ftsSearchSQL, matches, corpus, limit)
 	if err != nil {
-		return nil, fmt.Errorf("retrieve: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 	var out []Result

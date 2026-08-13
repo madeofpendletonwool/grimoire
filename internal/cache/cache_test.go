@@ -34,7 +34,8 @@ func TestPutAndGetRoundTrip(t *testing.T) {
 
 	sources := json.RawMessage(`[{"number":"702.2"}]`)
 	cards := json.RawMessage(`[{"name":"Lightning Bolt"}]`)
-	if err := s.Put(ctx, "k1", "mtg", "Deathtouch is lethal.", sources, cards); err != nil {
+	rulings := json.RawMessage(`[{"source":"WotC"}]`)
+	if err := s.Put(ctx, "k1", "mtg", "Deathtouch is lethal.", sources, cards, rulings); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 
@@ -53,6 +54,9 @@ func TestPutAndGetRoundTrip(t *testing.T) {
 	}
 	if string(got.Cards) != string(cards) {
 		t.Errorf("cards = %s, want %s", got.Cards, cards)
+	}
+	if string(got.Rulings) != string(rulings) {
+		t.Errorf("rulings = %s, want %s", got.Rulings, rulings)
 	}
 	if time.Since(got.CreatedAt) > 2*time.Second {
 		t.Errorf("created_at looks stale: %v", got.CreatedAt)
@@ -73,7 +77,7 @@ func TestGetMissReturnsNil(t *testing.T) {
 func TestGetTreatsExpiredAsMiss(t *testing.T) {
 	s := testStore(t, DefaultTTL)
 	ctx := context.Background()
-	if err := s.Put(ctx, "k", "mtg", "old answer", nil, nil); err != nil {
+	if err := s.Put(ctx, "k", "mtg", "old answer", nil, nil, nil); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	// Age the row past the TTL so the next read treats it as expired.
@@ -94,10 +98,10 @@ func TestPutRefreshesExistingEntry(t *testing.T) {
 	s := testStore(t, DefaultTTL)
 	ctx := context.Background()
 
-	if err := s.Put(ctx, "k", "mtg", "first", nil, nil); err != nil {
+	if err := s.Put(ctx, "k", "mtg", "first", nil, nil, nil); err != nil {
 		t.Fatalf("put first: %v", err)
 	}
-	if err := s.Put(ctx, "k", "mtg", "second", nil, nil); err != nil {
+	if err := s.Put(ctx, "k", "mtg", "second", nil, nil, nil); err != nil {
 		t.Fatalf("put second: %v", err)
 	}
 	got, _ := s.Get(ctx, "k")
@@ -109,7 +113,7 @@ func TestPutRefreshesExistingEntry(t *testing.T) {
 func TestPutAcceptsNilCitations(t *testing.T) {
 	s := testStore(t, DefaultTTL)
 	ctx := context.Background()
-	if err := s.Put(ctx, "k", "dnd", "no citations here", nil, nil); err != nil {
+	if err := s.Put(ctx, "k", "dnd", "no citations here", nil, nil, nil); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	got, _ := s.Get(ctx, "k")

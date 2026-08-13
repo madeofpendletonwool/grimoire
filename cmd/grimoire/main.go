@@ -18,6 +18,9 @@
 //	ANTHROPIC_BASE_URL  LLM endpoint (default https://api.anthropic.com; z.ai: https://api.z.ai/api/anthropic)
 //	ANTHROPIC_API_KEY   LLM secret key (enables the Q&A chat)
 //	ANTHROPIC_MODEL     model name (e.g. glm-4.6, claude-3-5-sonnet-20241022)
+//	EMBEDDINGS_BASE_URL OpenAI-compatible embeddings endpoint (default https://api.openai.com/v1)
+//	EMBEDDINGS_API_KEY  embeddings secret key (enables semantic retrieval when set with EMBEDDINGS_MODEL)
+//	EMBEDDINGS_MODEL    embeddings model name (e.g. text-embedding-3-small)
 //	SCRYFALL_BASE_URL   MTG card lookup endpoint (default https://api.scryfall.com; no key needed)
 //	MTG_RULES_URL       override MTG comp rules source
 //	MTGJSON_URL         override MTGJSON AtomicCards source (card-name dictionary)
@@ -42,8 +45,10 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
+	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
+	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/server"
 )
 
@@ -83,8 +88,9 @@ Usage:
 
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
-  GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY,
-  ANTHROPIC_MODEL, SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, DND_REPO, DND_REF`)
+  GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
+  EMBEDDINGS_BASE_URL, EMBEDDINGS_API_KEY, EMBEDDINGS_MODEL,
+  SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, DND_REPO, DND_REF`)
 }
 
 func env(key, def string) string {
@@ -145,8 +151,36 @@ func llmConfig() llm.Config {
 	}
 }
 
+// embeddingsConfig reads the OpenAI-compatible embeddings endpoint settings.
+// Default base URL is OpenAI's; z.ai and other compatible gateways work by
+// overriding EMBEDDINGS_BASE_URL (e.g. https://api.z.ai/v1).
+func embeddingsConfig() embeddings.Config {
+	return embeddings.Config{
+		BaseURL: env("EMBEDDINGS_BASE_URL", embeddings.DefaultBaseURL),
+		APIKey:  os.Getenv("EMBEDDINGS_API_KEY"),
+		Model:   env("EMBEDDINGS_MODEL", ""),
+	}
+}
+
+// embeddingsClient returns a configured embeddings client, or nil when
+// embeddings are not configured (the default — retrieval is then FTS5-only).
+func embeddingsClient() *embeddings.Client {
+	c := embeddings.New(embeddingsConfig())
+	if !c.Configured() {
+		return nil
+	}
+	return c
+}
+
 func cardsService() *cards.Service {
 	return cards.NewWithBase(env("SCRYFALL_BASE_URL", cards.DefaultBaseURL))
+}
+
+// rulingsService shares the Scryfall endpoint with cardsService: the rulings
+// layer resolves card names to ids via the same Scryfall API, so a single
+// SCRYFALL_BASE_URL override retargets both.
+func rulingsService() *rulings.Service {
+	return rulings.NewWithBase(env("SCRYFALL_BASE_URL", rulings.DefaultBaseURL))
 }
 
 // mtgjsonURL returns the AtomicCards endpoint used to build the card-name
@@ -198,6 +232,15 @@ func buildIndex(ctx context.Context, store *index.Store) error {
 		return err
 	}
 	log.Printf("index built: %d records", total)
+
+	// Semantic vectors are best-effort, like the card dictionary: without them
+	// retrieval is FTS5-only; with them the Q&A step gains semantic recall for
+	// questions that share no keywords with the rule they need.
+	if err := store.IndexEmbeddings(ctx); err != nil {
+		log.Printf("embeddings skipped: %v (retrieval will be FTS5-only)", err)
+	} else if embedded, _ := store.Embedded(ctx); embedded {
+		log.Printf("indexed semantic vectors")
+	}
 
 	// The card dictionary is best-effort: the chat still works without it,
 	// just with weaker card detection (text heuristics only).
@@ -260,6 +303,7 @@ func runIndex() error {
 		return err
 	}
 	defer store.Close()
+	store.SetEmbedder(embeddingsClient())
 
 	if err := store.Reset(); err != nil {
 		return fmt.Errorf("reset: %w", err)
@@ -276,9 +320,28 @@ func runServe() error {
 		return err
 	}
 	defer store.Close()
+	embedClient := embeddingsClient()
+	store.SetEmbedder(embedClient)
 
 	if err := ensureIndexed(ctx, store); err != nil {
 		return fmt.Errorf("ensure index: %w", err)
+	}
+
+	// Populate semantic vectors when embeddings are configured but a rules
+	// index already exists without them (e.g. enabled after first boot). A
+	// failure is best-effort: retrieval falls back to FTS5-only.
+	if embedClient != nil {
+		embedded, embedErr := store.Embedded(ctx)
+		if embedErr != nil {
+			log.Printf("embeddings check: %v", embedErr)
+		} else if !embedded {
+			log.Printf("indexing semantic vectors (model %s)...", embedClient.Model())
+			if err := store.IndexEmbeddings(ctx); err != nil {
+				log.Printf("embeddings skipped: %v (retrieval will be FTS5-only)", err)
+			} else {
+				log.Printf("indexed semantic vectors (model %s)", embedClient.Model())
+			}
+		}
 	}
 
 	cardDict := loadCardDictionary(ctx, store)
@@ -312,7 +375,7 @@ func runServe() error {
 		log.Printf("adopted %d pre-authentication conversations", adopted)
 	}
 
-	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), cardDict, chats, answers,
+	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), rulingsService(), cardDict, chats, answers,
 		server.Auth{Users: users, OpenRegistration: openRegistration()})
 	if err != nil {
 		return err
@@ -331,7 +394,11 @@ func runServe() error {
 		_ = httpSrv.Shutdown(shutdown)
 	}()
 
-	log.Printf("Grimoire listening on %s (chat configured: %t)", addr(), llm.New(llmConfig()).Configured())
+	embedStatus := "off"
+	if embedClient != nil {
+		embedStatus = embedClient.Model()
+	}
+	log.Printf("Grimoire listening on %s (chat configured: %t, embeddings: %s)", addr(), llm.New(llmConfig()).Configured(), embedStatus)
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
