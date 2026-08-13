@@ -15,6 +15,7 @@ A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** a
 - **🔐 Yours alone** — the whole app sits behind a login. The first visit to a fresh install creates the keeper account (no seeded password to forget to change), account creation closes behind it, and conversations are scoped per account. Passwords are argon2id; sessions are server-side and revocable.
 - **🃏 Card lookup** — pull the real oracle text of any Magic card by name via Scryfall (no API key required). The chat consults it automatically when a card is mentioned, so it never invents card effects; when it cannot resolve a name it says so instead of guessing. The palette autocompletes as you type, so you never have to spell out "Asmoranomardicadaistinaculdacar" in full.
 - **🔮 Interaction resolver** — a separate Resolve mode (Magic only) for the questions that are hardest to google. State a board and a proposed spell/ability sequence, and the sage walks the resulting interactions step by step — the stack, APNAP trigger ordering, continuous-effect layers, and replacement effects — citing the rule at each step. Grounded in real card text and the full interaction chapters (117, 603, 613, 616). It is an assistant, not a Comprehensive-Rules oracle, so the UI says so plainly.
+- **📇 Study mode** — a spaced-repetition deck over the corpus, for new players and judges-in-training. MTG keyword abilities (chapter 702) and D&D conditions turn into flashcards; grade each card Again / Hard / Good / Easy and an SM-2 scheduler brings it back on the right day. Progress persists per account across reloads.
 - **✦ / ⚔ Two corpora** — Magic and D&D, each with its own accent (mana-blue vs. dragon-red). Pick one per conversation.
 - **📜 Medieval, not mid-2000s** — parchment reserved for the content surfaces (answers, rules, cards) against candlelit-stone chrome. Serif for prose, sans for UI, gold for emphasis. No build step, no JS framework, no bundler — just ES modules.
 - **🐳 One command to run** — `docker compose up`. The index builds itself on first start.
@@ -132,6 +133,23 @@ an assistant rather than an oracle — verify anything match-deciding against th
 rule it cites. A resolve is stateless and not saved; the Q&A chat is where
 saved conversations live.
 
+## Study mode
+
+Study mode (the 📇 button in the sidebar) turns the corpus into a
+spaced-repetition flashcard deck. The corpus is already a question bank — MTG
+keyword abilities (chapter 702, one card per keyword: Deathtouch, Ward, …) and
+D&D SRD conditions — so the cards are generated from the existing FTS5 index
+rather than authored by hand. No LLM is required.
+
+A session deals the cards due now plus a few new ones; each card has a front
+(the keyword name / condition to recall) and a back (the full rule text). Grade
+each card **Again / Hard / Good / Easy** and an **SM-2** scheduler reschedules
+it: an Again brings it back within the session, a Good/Easy spaces it out by
+days that grow with each correct recall and the card's personal ease factor.
+Schedules live in a per-user `reviews` table in the same SQLite file as the rest
+of the app, so progress survives reloads and reindexes (the concept keys are
+stable rule numbers).
+
 ## HTTP API
 
 | Method | Path           | Body / Params                                   | Returns                              |
@@ -148,6 +166,8 @@ saved conversations live.
 | `PATCH`| `/api/chats/{id}` | `{title}`                                    | `{chat:{…}}`                         |
 | `DELETE`| `/api/chats/{id}` | —                                           | `204`                                |
 | `POST` | `/api/chats/{id}/messages` | `{question}`                         | SSE: `meta`, `delta`, `done`, `error` |
+| `GET`  | `/api/study/queue` | `corpus`, `topic` (optional), `limit`        | `{cards:[{key,front,back,…}], stats:{total,new,due,learned}}` |
+| `POST` | `/api/study/grade` | `{key, corpus, grade}`                       | `{card:{…, reps, interval_days, ease, due_at}}` |
 | `GET`  | `/api/meta`    | —                                               | `{corpora:[…], chat_configured, chat_model}` |
 | `GET`  | `/api/auth/state` | —                                            | `{authenticated, username, setup_required, registration_open}` |
 | `POST` | `/api/auth/setup` | `{username, password}`                       | `{user:{username}}` + session cookie; `403` once closed |
@@ -210,6 +230,7 @@ internal/
   index/          SQLite + FTS5 store; full-text + rule-number search
   llm/            Anthropic Messages client (configurable base URL), RAG + streaming
   server/         HTTP handlers, JSON API, SSE chat endpoint, session gate
+  study/          spaced-repetition reviews (SM-2) over the corpus (same SQLite file)
 web/
   templates/      the app shell, plus the login / first-run gate
   static/js/      ES modules: app, chat, palette, drawer, render, markdown, api, auth

@@ -52,6 +52,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/server"
+	"github.com/madeofpendletonwool/grimoire/internal/study"
 )
 
 func main() {
@@ -383,6 +384,13 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+
+	// Spaced-repetition review schedules share that file too: the concept keys
+	// are stable rule numbers, so a reindex never strands a user's progress.
+	studies, err := study.New(store.DB())
+	if err != nil {
+		return err
+	}
 	// Upgrade path: an install that predates accounts has history filed under
 	// the anonymous owner. Hand it to the first keeper on the way up, so it is
 	// already theirs by the time they sign in.
@@ -392,7 +400,7 @@ func runServe() error {
 		log.Printf("adopted %d pre-authentication conversations", adopted)
 	}
 
-	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), rulingsService(), cardDict, chats, answers,
+	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()})
 	if err != nil {
 		return err

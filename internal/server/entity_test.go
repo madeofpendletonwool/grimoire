@@ -75,7 +75,7 @@ func TestAskDNDEntityGrounding(t *testing.T) {
 	}
 	up := httptest.NewServer(http.HandlerFunc(anthropic))
 	t.Cleanup(up.Close)
-	s, err := New(store, llm.New(llm.Config{BaseURL: up.URL, APIKey: "test-key", Model: "test-model"}), nil, nil, nil, nil, answers, Auth{})
+	s, err := New(store, llm.New(llm.Config{BaseURL: up.URL, APIKey: "test-key", Model: "test-model"}), nil, nil, nil, nil, answers, nil, Auth{})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}

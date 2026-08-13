@@ -23,6 +23,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
+	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/web"
 )
 
@@ -45,6 +46,7 @@ type Server struct {
 	cardDict         *cards.Dictionary
 	chats            *chat.Store
 	answers          *cache.Store
+	study            *study.Store
 	users            *auth.Store
 	openRegistration bool
 	tmpl             *template.Template
@@ -54,12 +56,13 @@ type Server struct {
 // New builds a Server from an open index store, an LLM client, a card lookup
 // service, a rulings lookup service, an optional card-name dictionary (powers
 // lowercase/unquoted card detection in the chat), a chat store, an answer cache,
-// and the authentication wiring. A nil card service disables card features
-// gracefully; a nil rulings service disables the rulings layer the same way; a
-// nil dictionary leaves detection on the text heuristics alone; a nil chat store
-// disables saved conversations; a nil answer cache disables response caching; a
-// zero Auth leaves the API unauthenticated.
-func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulingsSvc *rulings.Service, cardDict *cards.Dictionary, chats *chat.Store, answers *cache.Store, ac Auth) (*Server, error) {
+// a study store, and the authentication wiring. A nil card service disables
+// card features gracefully; a nil rulings service disables the rulings layer the
+// same way; a nil dictionary leaves detection on the text heuristics alone; a
+// nil chat store disables saved conversations; a nil answer cache disables
+// response caching; a nil study store disables the study mode; a zero Auth
+// leaves the API unauthenticated.
+func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulingsSvc *rulings.Service, cardDict *cards.Dictionary, chats *chat.Store, answers *cache.Store, studyStore *study.Store, ac Auth) (*Server, error) {
 	tmpl, err := template.New("").ParseFS(web.Templates, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -71,6 +74,7 @@ func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulings
 	return &Server{
 		store: store, llm: client, cards: cardSvc, rulings: rulingsSvc, cardDict: cardDict, chats: chats,
 		answers: answers,
+		study:   studyStore,
 		users:   ac.Users, openRegistration: ac.OpenRegistration,
 		tmpl: tmpl, static: static,
 	}, nil
@@ -97,6 +101,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/chats/{id}", s.handleRenameChat)
 	mux.HandleFunc("DELETE /api/chats/{id}", s.handleDeleteChat)
 	mux.HandleFunc("POST /api/chats/{id}/messages", s.handleChatMessage)
+	mux.HandleFunc("GET /api/study/queue", s.handleStudyQueue)
+	mux.HandleFunc("POST /api/study/grade", s.handleStudyGrade)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))
