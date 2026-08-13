@@ -13,6 +13,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
+	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 )
 
 const singleFaceJSON = `{
@@ -36,7 +37,7 @@ func newTestServer(t *testing.T, scryfallHandler http.HandlerFunc) (*Server, *ht
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	s, err := New(store, llm.New(llm.Config{}), cards.NewWithBase(srv.URL), nil, nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), cards.NewWithBase(srv.URL), rulings.NewWithBase(srv.URL), nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestHandleCardSearch_NilService(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +221,7 @@ func TestLookupQuestionCards_NilService(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, Auth{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,4 +340,79 @@ func TestLookupQuestionCards_ReportsMisses(t *testing.T) {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// TestLookupCardRulings_GathersAndAttributes verifies the rulings layer pulls
+// official rulings for each resolved card and attributes them by source and
+// date — the precedent layer that turns a rules lookup into a rulings oracle.
+// It stubs the Scryfall /cards/named and /cards/{id}/rulings endpoints.
+func TestLookupCardRulings_GathersAndAttributes(t *testing.T) {
+	s, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/cards/named":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"abc-123","name":"Derevi, Empyrial Tactician"}`))
+		case r.URL.Path == "/cards/abc-123/rulings":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"object":"list","data":[
+				{"object":"ruling","source":"wotc","published_at":"2020-11-10","comment":"You can activate Derevi's last ability only when it is in the command zone."},
+				{"object":"ruling","source":"scryfall","published_at":"2015-01-19","comment":"Derevi is banned as a commander in Duel Commander."}
+			]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	hits := []cardView{{Name: "Derevi, Empyrial Tactician"}}
+	docs, views := s.lookupCardRulings(context.Background(), data.CorpusMTG, hits)
+	if len(docs) != 2 || len(views) != 2 {
+		t.Fatalf("rulings = %d docs / %d views, want 2 each", len(docs), len(views))
+	}
+	if docs[0].CardName != "Derevi, Empyrial Tactician" {
+		t.Errorf("ruling should carry the card name: %q", docs[0].CardName)
+	}
+	if docs[0].Source != "wotc" || docs[0].PublishedAt != "2020-11-10" {
+		t.Errorf("wotc ruling attribution wrong: %+v", docs[0])
+	}
+	if views[1].Source != "scryfall" {
+		t.Errorf("scryfall ruling attribution wrong: %+v", views[1])
+	}
+}
+
+func TestLookupCardRulings_MTGOnly(t *testing.T) {
+	// D&D corpus must never trigger rulings lookups even with cards present.
+	s, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("scryfall should not be called for D&D rulings")
+	})
+	docs, views := s.lookupCardRulings(context.Background(), "dnd", []cardView{{Name: "Fireball"}})
+	if docs != nil || views != nil {
+		t.Errorf("expected nil for D&D, got docs=%v views=%v", docs, views)
+	}
+}
+
+func TestLookupCardRulings_NilService(t *testing.T) {
+	// A nil rulings service is graceful (no panic, no lookups).
+	store, err := index.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	srv, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, Auth{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, views := srv.lookupCardRulings(context.Background(), data.CorpusMTG, []cardView{{Name: "Lightning Bolt"}})
+	if docs != nil || views != nil {
+		t.Errorf("expected nil with no rulings service, got %v / %v", docs, views)
+	}
+}
+
+func TestLookupCardRulings_NoCardsIsNoOp(t *testing.T) {
+	s, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no upstream call expected when no cards resolved")
+	})
+	docs, views := s.lookupCardRulings(context.Background(), data.CorpusMTG, nil)
+	if docs != nil || views != nil {
+		t.Errorf("expected nil when no cards, got %v / %v", docs, views)
+	}
 }

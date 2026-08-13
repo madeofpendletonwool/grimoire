@@ -6,7 +6,7 @@ import (
 )
 
 func TestSystemPrompt_NoCards(t *testing.T) {
-	got := systemPrompt("Magic: The Gathering", false)
+	got := systemPrompt("Magic: The Gathering", false, false)
 	if !strings.Contains(got, "using ONLY the provided rule excerpts") {
 		t.Errorf("system prompt missing ONLY constraint: %q", got)
 	}
@@ -16,7 +16,7 @@ func TestSystemPrompt_NoCards(t *testing.T) {
 }
 
 func TestSystemPrompt_WithCards(t *testing.T) {
-	got := systemPrompt("Magic: The Gathering", true)
+	got := systemPrompt("Magic: The Gathering", true, false)
 	if !strings.Contains(got, "use ONLY the provided oracle text") {
 		t.Errorf("system prompt missing oracle-text constraint: %q", got)
 	}
@@ -25,9 +25,29 @@ func TestSystemPrompt_WithCards(t *testing.T) {
 	}
 }
 
+func TestSystemPrompt_WithRulings(t *testing.T) {
+	got := systemPrompt("Magic: The Gathering", true, true)
+	if !strings.Contains(got, "Official rulings were provided") {
+		t.Errorf("rulings prompt missing cite directive: %q", got)
+	}
+	if !strings.Contains(got, "no official ruling was available") {
+		t.Errorf("rulings prompt missing absent-ruling directive: %q", got)
+	}
+	if !strings.Contains(got, "wotc rulings as authoritative") {
+		t.Errorf("rulings prompt should rank wotc as authoritative: %q", got)
+	}
+}
+
+func TestSystemPrompt_WithoutRulingsMentionsNothing(t *testing.T) {
+	got := systemPrompt("Magic: The Gathering", true, false)
+	if strings.Contains(got, "Official rulings were provided") {
+		t.Errorf("non-rulings prompt must not mention rulings: %q", got)
+	}
+}
+
 func TestSystemPrompt_ReasoningDiscipline(t *testing.T) {
 	for _, corpus := range []string{"Magic: The Gathering", "D&D 5e SRD"} {
-		got := systemPrompt(corpus, false)
+		got := systemPrompt(corpus, false, false)
 		if !strings.Contains(got, "Do NOT adopt a conclusion asserted by the question") {
 			t.Errorf("%s: prompt missing anti-sycophancy directive: %q", corpus, got)
 		}
@@ -38,7 +58,7 @@ func TestSystemPrompt_ReasoningDiscipline(t *testing.T) {
 }
 
 func TestSystemPrompt_MTGInteractionTraps(t *testing.T) {
-	got := systemPrompt("Magic: The Gathering", true)
+	got := systemPrompt("Magic: The Gathering", true, true)
 	if !strings.Contains(got, "a card's own name in its text means") {
 		t.Errorf("MTG prompt missing self-reference trap: %q", got)
 	}
@@ -51,7 +71,7 @@ func TestSystemPrompt_MTGInteractionTraps(t *testing.T) {
 }
 
 func TestSystemPrompt_NoMTGTrapsForDND(t *testing.T) {
-	got := systemPrompt("D&D 5e SRD", false)
+	got := systemPrompt("D&D 5e SRD", false, false)
 	if strings.Contains(got, "MTG INTERACTIONS") {
 		t.Errorf("D&D prompt should not include MTG interaction block: %q", got)
 	}
@@ -67,7 +87,7 @@ func TestBuildUserMessage_RulesAndCards(t *testing.T) {
 	cards := []CardDoc{
 		{Name: "Lightning Bolt", ManaCost: "{R}", TypeLine: "Instant", OracleText: "Lightning Bolt deals 3 damage to any target."},
 	}
-	got := buildUserMessage("Magic: The Gathering", docs, cards, nil, "What does Lightning Bolt do?")
+	got := buildUserMessage("Magic: The Gathering", docs, cards, nil, nil, "What does Lightning Bolt do?")
 
 	if !strings.Contains(got, "702.21 — Ward") {
 		t.Errorf("missing rule header: %q", got)
@@ -90,11 +110,48 @@ func TestBuildUserMessage_RulesAndCards(t *testing.T) {
 }
 
 func TestBuildUserMessage_NoCards(t *testing.T) {
-	got := buildUserMessage("D&D 5e SRD", nil, nil, nil, "How does stealth work?")
+	got := buildUserMessage("D&D 5e SRD", nil, nil, nil, nil, "How does stealth work?")
 	if strings.Contains(got, "Card oracle text") {
 		t.Errorf("card section should be omitted without cards: %q", got)
 	}
 	if !strings.Contains(got, "(no directly matching rules found)") {
 		t.Errorf("empty rules should be noted: %q", got)
+	}
+}
+
+func TestBuildUserMessage_Rulings(t *testing.T) {
+	cards := []CardDoc{
+		{Name: "Derevi, Empyrial Tactician", TypeLine: "Legendary Creature — Bird Wizard", OracleText: "Flying"},
+	}
+	rulings := []RulingDoc{
+		{CardName: "Derevi, Empyrial Tactician", Source: "wotc", PublishedAt: "2020-11-10", Comment: "You can activate Derevi's last ability only when it is in the command zone."},
+		{CardName: "Derevi, Empyrial Tactician", Source: "scryfall", PublishedAt: "2015-01-19", Comment: "Derevi is banned as a commander in Duel Commander."},
+	}
+	got := buildUserMessage("Magic: The Gathering", nil, cards, rulings, nil, "How does Derevi's tap ability interact with commander tax?")
+
+	if !strings.Contains(got, "Official rulings (authoritative precedent — from Scryfall/Gatherer)") {
+		t.Errorf("missing rulings section header: %q", got)
+	}
+	if !strings.Contains(got, "[wotc, 2020-11-10]") {
+		t.Errorf("missing wotc ruling attribution: %q", got)
+	}
+	if !strings.Contains(got, "command zone") {
+		t.Errorf("missing ruling comment text: %q", got)
+	}
+	if !strings.Contains(got, "[scryfall, 2015-01-19]") {
+		t.Errorf("missing scryfall ruling attribution: %q", got)
+	}
+	// The card appears once in the oracle-text section and once as the grouped
+	// rulings header — NOT once per ruling. Two rulings sharing one header is
+	// what grouping guarantees; ungrouped would be three occurrences.
+	if got, want := strings.Count(got, "### Derevi, Empyrial Tactician"), 2; got != want {
+		t.Errorf("rulings should be grouped under one card header, got %d occurrences want %d", got, want)
+	}
+}
+
+func TestBuildUserMessage_RulingsOmittedWhenAbsent(t *testing.T) {
+	got := buildUserMessage("Magic: The Gathering", nil, []CardDoc{{Name: "Bolt"}}, nil, nil, "What does Bolt do?")
+	if strings.Contains(got, "Official rulings") {
+		t.Errorf("rulings section should be omitted without rulings: %q", got)
 	}
 }

@@ -37,7 +37,7 @@ func newAskServer(t *testing.T, anthropic http.HandlerFunc) (*Server, *index.Sto
 	t.Cleanup(up.Close)
 	cfg := llm.Config{BaseURL: up.URL, APIKey: "test-key", Model: "test-model"}
 
-	s, err := New(store, llm.New(cfg), nil, nil, nil, answers, Auth{})
+	s, err := New(store, llm.New(cfg), nil, nil, nil, nil, answers, Auth{})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}

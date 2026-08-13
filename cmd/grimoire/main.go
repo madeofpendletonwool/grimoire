@@ -48,6 +48,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
+	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/server"
 )
 
@@ -173,6 +174,13 @@ func embeddingsClient() *embeddings.Client {
 
 func cardsService() *cards.Service {
 	return cards.NewWithBase(env("SCRYFALL_BASE_URL", cards.DefaultBaseURL))
+}
+
+// rulingsService shares the Scryfall endpoint with cardsService: the rulings
+// layer resolves card names to ids via the same Scryfall API, so a single
+// SCRYFALL_BASE_URL override retargets both.
+func rulingsService() *rulings.Service {
+	return rulings.NewWithBase(env("SCRYFALL_BASE_URL", rulings.DefaultBaseURL))
 }
 
 // mtgjsonURL returns the AtomicCards endpoint used to build the card-name
@@ -367,7 +375,7 @@ func runServe() error {
 		log.Printf("adopted %d pre-authentication conversations", adopted)
 	}
 
-	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), cardDict, chats, answers,
+	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), rulingsService(), cardDict, chats, answers,
 		server.Auth{Users: users, OpenRegistration: openRegistration()})
 	if err != nil {
 		return err
