@@ -598,6 +598,32 @@ func (s *Store) groupDocs(ctx context.Context, corpus data.Corpus, group string)
 	return out, nil
 }
 
+// Chapter returns every numbered rule in a chapter — the leading number of a
+// dotted rule, e.g. "613" returns 613.1 through the last 613.x sub-rule — in
+// rule order. A chapter token that is not bare digits returns nil with no
+// error. The interaction resolver uses it to ground a whole mechanic
+// (priority/stack, triggers, layers, replacement effects) at once.
+func (s *Store) Chapter(ctx context.Context, corpus data.Corpus, chapter string) ([]Result, error) {
+	if !isBareChapter(chapter) {
+		return nil, nil
+	}
+	return s.groupDocs(ctx, corpus, chapter)
+}
+
+// isBareChapter reports whether a token is digits only, the form a chapter
+// prefix must take before it is safe to splice into a number: prefix match.
+func isBareChapter(chapter string) bool {
+	if chapter == "" {
+		return false
+	}
+	for _, r := range chapter {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // Retrieve runs a lenient OR search used to gather grounding context for the
 // Q&A model. It never returns an error for an unsalvageable query — it simply
 // returns no docs, letting the model answer without context.

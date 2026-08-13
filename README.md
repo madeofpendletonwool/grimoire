@@ -14,6 +14,7 @@ A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** a
 - **🔎 Full-text search** across both rule sets (SQLite + FTS5). Search by word, phrase, or a direct rule number like `205.1a`. Opening a numbered rule expands it to the full mechanic section — the parent plus every sub-rule — so you see how it actually works.
 - **🔐 Yours alone** — the whole app sits behind a login. The first visit to a fresh install creates the keeper account (no seeded password to forget to change), account creation closes behind it, and conversations are scoped per account. Passwords are argon2id; sessions are server-side and revocable.
 - **🃏 Card lookup** — pull the real oracle text of any Magic card by name via Scryfall (no API key required). The chat consults it automatically when a card is mentioned, so it never invents card effects; when it cannot resolve a name it says so instead of guessing. The palette autocompletes as you type, so you never have to spell out "Asmoranomardicadaistinaculdacar" in full.
+- **🔮 Interaction resolver** — a separate Resolve mode (Magic only) for the questions that are hardest to google. State a board and a proposed spell/ability sequence, and the sage walks the resulting interactions step by step — the stack, APNAP trigger ordering, continuous-effect layers, and replacement effects — citing the rule at each step. Grounded in real card text and the full interaction chapters (117, 603, 613, 616). It is an assistant, not a Comprehensive-Rules oracle, so the UI says so plainly.
 - **✦ / ⚔ Two corpora** — Magic and D&D, each with its own accent (mana-blue vs. dragon-red). Pick one per conversation.
 - **📜 Medieval, not mid-2000s** — parchment reserved for the content surfaces (answers, rules, cards) against candlelit-stone chrome. Serif for prose, sans for UI, gold for emphasis. No build step, no JS framework, no bundler — just ES modules.
 - **🐳 One command to run** — `docker compose up`. The index builds itself on first start.
@@ -100,6 +101,37 @@ go run ./cmd/grimoire index
 
 Environment variables are the same as above (`GRIMOIRE_ADDR`, `GRIMOIRE_DB`, `ANTHROPIC_*`, …).
 
+## Interaction resolver (Magic)
+
+Resolve mode (the 🔮 toggle in the top bar, Magic only) answers the questions a
+rules lookup can't: *given this board and this sequence of plays, what exactly
+happens, and in what order?* It is built for Commander, where a single board
+wipe can stack a dozen dies-triggers across two players.
+
+You state the board and the sequence in a compact, line-oriented form:
+
+```
+Board                         Sequence
+You: Blood Artist             1. Opp casts Wrath of God
+You: Zulaport Cutthroat
+You: Doomed Traveler
+```
+
+Each permanent is `[controller]: <card> [# tapped | +1/+1 counters: N]`; each
+sequence step is `[N.] <action>` (the actor can live in the prose:
+"Opp casts…"). The resolver looks up every named card on Scryfall, grounds in
+the full interaction chapters — priority and the stack (117), triggered
+abilities and APNAP (603), interaction of continuous effects / layers (613),
+and replacement and prevention effects (616) — plus any keyword abilities and
+state-based actions the specific cards pull in, then streams a numbered, cited
+walkthrough.
+
+It is **LLM-assisted, not a Comprehensive-Rules engine**: it reasons over the
+provided text and cites the rule at each step, but the UI is honest that it is
+an assistant rather than an oracle — verify anything match-deciding against the
+rule it cites. A resolve is stateless and not saved; the Q&A chat is where
+saved conversations live.
+
 ## HTTP API
 
 | Method | Path           | Body / Params                                   | Returns                              |
@@ -109,6 +141,7 @@ Environment variables are the same as above (`GRIMOIRE_ADDR`, `GRIMOIRE_DB`, `AN
 | `GET`  | `/api/card`    | `q` (MTG card name)                             | `{ card: {...} }` or `{ card: null, matches: [...] }` |
 | `GET`  | `/api/card/search` | `q`, `limit` (MTG card name fragment)     | `{ matches: [{name,mana_cost,type_line,…}] }` |
 | `POST` | `/api/ask`     | `{corpus, question}`                            | `{configured, answer, sources:[…], cards:[…]}` — stateless one-shot |
+| `POST` | `/api/resolve` | `{board, sequence, note}` (Magic)              | SSE: `meta`, `delta`, `done`, `error` — step-by-step interaction trace |
 | `GET`  | `/api/chats`   | —                                               | `{chats:[…]}`                        |
 | `POST` | `/api/chats`   | `{corpus}`                                      | `{chat:{…}}`                         |
 | `GET`  | `/api/chats/{id}` | —                                            | `{chat:{…}, messages:[…]}`           |

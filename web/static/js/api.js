@@ -62,17 +62,17 @@ export const api = {
 };
 
 /**
- * Post a question and consume the answer as server-sent events.
+ * Consume a server-sent events stream from a POST endpoint. Handlers:
+ * onMeta(payload), onDelta(text), onDone(payload), onError(message, payload).
+ * Returns a promise that settles when the stream closes.
  *
  * Uses fetch + a stream reader rather than EventSource, which cannot POST.
- * Handlers: onMeta(citations), onDelta(text), onDone(info), onError(message).
- * Returns a promise that settles when the stream closes.
  */
-export async function streamAnswer(chatID, question, handlers, signal) {
-	const res = await fetch(`/api/chats/${encodeURIComponent(chatID)}/messages`, {
+async function postSSE(url, payload, handlers, signal) {
+	const res = await fetch(url, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ question }),
+		body: JSON.stringify(payload),
 		signal,
 	});
 	if (!res.ok || !res.body) {
@@ -104,6 +104,16 @@ export async function streamAnswer(chatID, question, handlers, signal) {
 		}
 	}
 	if (buffer.trim()) dispatch(buffer, handlers);
+}
+
+/** Post a chat question and consume the answer as server-sent events. */
+export function streamAnswer(chatID, question, handlers, signal) {
+	return postSSE(`/api/chats/${encodeURIComponent(chatID)}/messages`, { question }, handlers, signal);
+}
+
+/** Post a board + sequence to the resolver and consume the trace as SSE. */
+export function streamResolve(board, sequence, note, handlers, signal) {
+	return postSSE("/api/resolve", { board, sequence, note }, handlers, signal);
 }
 
 function dispatch(frame, handlers) {

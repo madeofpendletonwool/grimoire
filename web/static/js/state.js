@@ -6,6 +6,7 @@
 
 export const state = {
 	corpus: "mtg",     // corpus for new chats
+	mode: "ask",       // "ask" (free Q&A) | "resolve" (MTG interaction resolver)
 	chat: null,        // the open conversation, or null on the welcome screen
 	chats: [],         // sidebar list
 	meta: null,        // /api/meta payload
@@ -38,3 +39,6 @@ export function corpusLabel(corpus) {
 
 /** Card lookup is MTG-only — Scryfall is the Magic card authority. */
 export const supportsCards = (corpus) => corpus === "mtg";
+
+/** The interaction resolver is MTG-only — it grounds in Magic's stack/trigger/layer/replacement rules. */
+export const supportsResolve = (corpus) => corpus === "mtg";

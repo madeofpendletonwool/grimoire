@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/card", s.handleCard)
 	mux.HandleFunc("GET /api/card/search", s.handleCardSearch)
 	mux.HandleFunc("POST /api/ask", s.handleAsk)
+	mux.HandleFunc("POST /api/resolve", s.handleResolve)
 	mux.HandleFunc("GET /api/chats", s.handleListChats)
 	mux.HandleFunc("POST /api/chats", s.handleCreateChat)
 	mux.HandleFunc("GET /api/chats/{id}", s.handleGetChat)
