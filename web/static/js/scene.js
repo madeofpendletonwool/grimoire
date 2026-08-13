@@ -1,10 +1,14 @@
 // The chamber the app sits in: a layered pixel backdrop that drifts with the
 // pointer, and the small settings popup that chooses it.
 //
-// The art is a set of 384x216 parallax layers, back to front. They are scaled
-// only by whole numbers and blended for luminosity, so what reaches the screen
-// is the scene's shape lit in Grimoire's own colours rather than a picture
-// competing with the text on top of it.
+// Picking a scene picks a whole theme, not just a picture. Each one's hue was
+// measured from its own art at build time and applied to the chrome's stone
+// ramp and nine-slice frames — see scripts/build-assets.py and themes.css. The
+// parchment, the ink and the gold never change: the room changes, the tome
+// does not.
+//
+// The art is a set of 384x216 parallax layers, scaled by whole numbers only so
+// the pixels stay square.
 
 import { $, el, clear } from "./dom.js";
 import { gi, sprite } from "./icons.js";
@@ -21,8 +25,19 @@ export const SCENES = Object.freeze({
 });
 const DEFAULT_SCENE = "cave";
 
-/** How far the nearest layer travels, corner to corner, in pixels. */
-const DRIFT = 14;
+/**
+ * How far the nearest layer travels, corner to corner, in pixels. Generous on
+ * purpose: at a dozen pixels the effect is invisible, which reads as a static
+ * image rather than as restraint.
+ */
+const DRIFT = 52;
+
+/**
+ * Depth is not linear. Raising it to a power keeps the distant layers almost
+ * still while letting the foreground sweep, which is what actually reads as
+ * distance — an even spread just looks like the whole picture sliding.
+ */
+const DEPTH_CURVE = 2.2;
 
 const state = {
 	scene: DEFAULT_SCENE,
@@ -51,10 +66,19 @@ function remember(key, value) {
 
 /* ---------- the backdrop ---------- */
 
-/** Layers are 216px tall; scale to the next whole multiple that covers us. */
+/**
+ * The art is 384x216 and has to cover the viewport. Anything smaller leaves a
+ * band of flat colour where the sky should be, and that band reads as a seam,
+ * not as distance — so the zoom is whatever whole number reaches the window's
+ * height. Whole numbers only: a fractional scale resamples the pixels. Width
+ * takes care of itself, since nearly every layer tiles and repeat-x covers
+ * whatever the art does not reach.
+ */
 function rescale() {
 	const root = $("scene");
-	if (root) root.style.setProperty("--scene-scale", Math.max(3, Math.ceil(window.innerHeight / 216)));
+	if (!root) return;
+	const cover = Math.ceil(window.innerHeight / 216);
+	root.style.setProperty("--scene-scale", Math.min(6, Math.max(3, cover)));
 }
 
 function build(name) {
@@ -64,14 +88,24 @@ function build(name) {
 	clear(root);
 	state.layers = [];
 	state.scene = name;
+	// Drives themes.css: the stone ramp, the frame sprites and the sky colour
+	// all key off this one attribute.
+	document.documentElement.dataset.scene = name;
 
 	const scene = SCENES[name];
 	if (scene) {
-		for (let i = 0; i < scene.layers; i++) {
+		root.append(el("div", { class: "scene-sky" }));
+		// The packs number their layers front to back: 0 is the foreground and
+		// the highest index is the sky. So they are appended in reverse, back
+		// first, and 0 ends up painting on top — stacking them the other way
+		// buries the whole scene under its own sky.
+		for (let i = scene.layers - 1; i >= 0; i--) {
 			const layer = el("div", { class: "scene-layer" });
 			layer.style.backgroundImage = `url("/static/assets/scenes/${name}/${i}.png")`;
-			// Back layers barely move; the foreground carries the parallax.
-			layer.dataset.depth = String(i / Math.max(1, scene.layers - 1));
+			// Depth 1 is the foreground and travels furthest; 0 is the sky and
+			// holds still.
+			const depth = 1 - i / Math.max(1, scene.layers - 1);
+			layer.dataset.depth = String(Math.pow(depth, DEPTH_CURVE));
 			root.append(layer);
 			state.layers.push(layer);
 		}
@@ -86,7 +120,7 @@ function apply() {
 	for (const layer of state.layers) {
 		const depth = Number(layer.dataset.depth);
 		const x = state.target.x * DRIFT * depth;
-		const y = state.target.y * DRIFT * depth * 0.45;
+		const y = state.target.y * DRIFT * depth * 0.4;
 		layer.style.transform = `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)`;
 	}
 }
@@ -131,8 +165,8 @@ function buildPopup() {
 
 	popup.append(el("h2", { class: "set-title", text: "Settings" }));
 
-	const scenes = el("div", { class: "set-group", attrs: { role: "radiogroup", "aria-label": "Backdrop" } });
-	scenes.append(el("p", { class: "set-label", text: "Backdrop" }));
+	const scenes = el("div", { class: "set-group", attrs: { role: "radiogroup", "aria-label": "Theme" } });
+	scenes.append(el("p", { class: "set-label", text: "Theme" }));
 	const pick = (key) => {
 		remember(SCENE_KEY, key);
 		build(key);

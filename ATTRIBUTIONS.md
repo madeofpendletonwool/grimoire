@@ -42,10 +42,16 @@ sheet, unmodified; `web/static/js/icons.js` names the cells Grimoire uses.
 ### Parallax Backgrounds — Caves, Dead Forest, Snowy Mountains, Plains
 **Admurin** · <https://admurin.itch.io>
 
-The chamber behind the app, selectable in Settings. Layers are used as-is and
-composited at runtime: `web/static/pixel.css` pushes them through a sepia and
-contrast filter so the cool violet-grey art takes Grimoire's warm colour, and a
-veil above them holds a floor under text contrast.
+The chamber behind the app, and the source of its four themes. The layers ship
+unmodified and are composited at runtime, back to front, each drifting with the
+pointer in proportion to its depth.
+
+They also *colour* the app. `scripts/build-assets.py` measures a representative
+hue from each scene's own pixels and applies it to the chrome's existing
+lightness ladder, then regenerates the stone nine-slice frames to match — so
+choosing a backdrop retints the whole interface without touching the contrast
+between any two steps. The parchment, ink and gold stay constant across all
+four, because that is the surface the reading happens on.
 
 Free for commercial use, credit appreciated but not required. The licence
 forbids redistribution as a game asset and use for AI training.
