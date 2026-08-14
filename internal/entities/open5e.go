@@ -163,34 +163,93 @@ func (r *Open5e) resolveName(ctx context.Context, name string, budget *int) (*da
 	return ent, nil
 }
 
-// search finds the best SRD match for a name via Open5e's cross-endpoint search.
-// The search spans every document, so results are filtered to the SRD and the
-// preferred edition is chosen when several carry the same name.
+// maxSearchVariants bounds how many query forms one name may spend a search
+// call on. The verbatim name plus a couple of prefix-stripped forms is enough
+// to recover any creator-prefixed SRD spell; the cap keeps a long candidate
+// from spending the whole lookup budget on retries.
+const maxSearchVariants = 4
+
+// search finds the best SRD match for a name via Open5e's cross-endpoint
+// search. The search itself is not fuzzy about extra words: a creator-prefixed
+// name ("Tenser's Floating Disk", "Leomund's Tiny Hut", "Melf's Acid Arrow")
+// returns zero results even though the SRD renamed the spell to "Floating
+// Disk". So the verbatim name is tried first; on a miss the leading word is
+// dropped and the search retried — the D&D analogue of MTG's fuzzy card
+// lookup. A pure typo with no exact match on any form falls back to the
+// strongest credible near-match, gated by cards.NameMatches so a fuzzy search
+// can never attach the wrong entity.
 func (r *Open5e) search(ctx context.Context, name string, budget *int) (searchHit, error) {
+	var bestFuzzy searchHit
+	bestFuzzyScore := -1.0
+	for _, q := range searchVariants(name) {
+		page, err := r.querySearch(ctx, q, budget)
+		if err != nil {
+			return searchHit{}, err
+		}
+		// Exact name match on any form is authoritative — return at once.
+		if hit, ok := bestExactSRDHit(q, page.Results); ok {
+			return hit, nil
+		}
+		// Otherwise remember the strongest credible fuzzy hit across forms;
+		// it is the fallback only if no form yields an exact match.
+		if hit, ok := bestFuzzySRDHit(q, page.Results); ok {
+			if bestFuzzyScore < 0 || hit.MatchScore > bestFuzzyScore || (hit.MatchScore == bestFuzzyScore && srdRank(hit.Document.Key) < srdRank(bestFuzzy.Document.Key)) {
+				bestFuzzy, bestFuzzyScore = hit, hit.MatchScore
+			}
+		}
+	}
+	if bestFuzzyScore >= 0 {
+		return bestFuzzy, nil
+	}
+	return searchHit{}, ErrNotFound
+}
+
+// searchVariants returns the query forms to try against Open5e search, in order:
+// the verbatim name, then the name with leading words dropped one at a time.
+// The remainder must stay at least two words: a single-word suffix ("Disk",
+// "Spell") is too noisy to search on its own and could fuzzy-attach to an
+// unrelated short name. The total is capped at maxSearchVariants.
+func searchVariants(name string) []string {
+	words := strings.Fields(name)
+	if len(words) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(words))
+	out = append(out, strings.Join(words, " "))
+	for i := 1; i+2 <= len(words) && len(out) < maxSearchVariants; i++ {
+		out = append(out, strings.Join(words[i:], " "))
+	}
+	return out
+}
+
+// querySearch runs one Open5e cross-endpoint search for a single query string.
+// A transport error is returned; an empty or missing result is a normal empty
+// page so the retry loop can treat "no match for this form" as another miss.
+func (r *Open5e) querySearch(ctx context.Context, query string, budget *int) (searchResponse, error) {
 	if *budget <= 0 {
-		return searchHit{}, ErrNotFound
+		return searchResponse{}, ErrNotFound
 	}
 	*budget--
 	if err := r.throttle(ctx); err != nil {
-		return searchHit{}, err
+		return searchResponse{}, err
 	}
 	params := url.Values{
-		"query":  {name},
+		"query":  {query},
 		"limit":  {fmt.Sprint(searchLimit)},
 		"fields": {"document,object_pk,object_name,object_model,route,text,match_type,match_score"},
 	}
 	var page searchResponse
 	if err := r.getJSON(ctx, "/v2/search/", params, &page); err != nil {
-		return searchHit{}, err
+		return searchResponse{}, err
 	}
-	return bestSRDHit(name, page.Results)
+	return page, nil
 }
 
-// bestSRDHit picks the canonical SRD match from cross-endpoint search results.
-// Exact name matches win; among ties the 2024 SRD is preferred, then older SRD
-// editions. A non-exact hit is accepted only when its normalized name equals
-// the candidate's, so a fuzzy search cannot attach the wrong entity.
-func bestSRDHit(query string, results []searchHit) (searchHit, error) {
+// bestExactSRDHit picks the canonical exact SRD match from cross-endpoint
+// search results: exact match_type, or a result whose normalized name equals
+// the candidate's. Among ties the 2024 SRD is preferred, then older SRD
+// editions, then score.
+func bestExactSRDHit(query string, results []searchHit) (searchHit, bool) {
 	want := nameKey(query)
 	var best searchHit
 	bestRank := -1
@@ -200,21 +259,17 @@ func bestSRDHit(query string, results []searchHit) (searchHit, error) {
 		if rank >= len(srdDocumentKeys) {
 			continue // not an SRD document
 		}
-		exact := strings.EqualFold(h.MatchType, "exact") || nameKey(h.ObjectName) == want
-		if !exact {
+		exactType := strings.EqualFold(h.MatchType, "exact")
+		if !exactType && nameKey(h.ObjectName) != want {
 			continue
 		}
-		// Prefer exact match_type, then document edition, then score.
-		exactType := strings.EqualFold(h.MatchType, "exact")
 		better := false
 		if best.Document.Key == "" {
 			better = true
 		} else if exactType && !strings.EqualFold(best.MatchType, "exact") {
 			better = true
 		} else if exactType == strings.EqualFold(best.MatchType, "exact") {
-			if rank < bestRank {
-				better = true
-			} else if rank == bestRank && h.MatchScore > bestScore {
+			if rank < bestRank || (rank == bestRank && h.MatchScore > bestScore) {
 				better = true
 			}
 		}
@@ -222,10 +277,42 @@ func bestSRDHit(query string, results []searchHit) (searchHit, error) {
 			best, bestRank, bestScore = h, rank, h.MatchScore
 		}
 	}
-	if best.Document.Key == "" {
-		return searchHit{}, ErrNotFound
+	return best, best.Document.Key != ""
+}
+
+// bestFuzzySRDHit picks the strongest credible near-match from results when no
+// exact name match exists. A result qualifies only when cards.NameMatches
+// accepts it as a plausible misspelling of the candidate, so a fuzzy search
+// cannot attach the wrong entity (e.g. "Firebal" -> "Fireball" yes,
+// "Firebal" -> "Delayed Blast Fireball" no). Ranking prefers the newer SRD
+// edition, then the search score.
+func bestFuzzySRDHit(query string, results []searchHit) (searchHit, bool) {
+	want := nameKey(query)
+	var best searchHit
+	bestRank := -1
+	var bestScore float64 = -1
+	for _, h := range results {
+		rank := srdRank(h.Document.Key)
+		if rank >= len(srdDocumentKeys) {
+			continue
+		}
+		if nameKey(h.ObjectName) == want {
+			continue // exact matches are handled by bestExactSRDHit
+		}
+		if !cards.NameMatches(query, h.ObjectName) {
+			continue
+		}
+		better := false
+		if best.Document.Key == "" {
+			better = true
+		} else if rank < bestRank || (rank == bestRank && h.MatchScore > bestScore) {
+			better = true
+		}
+		if better {
+			best, bestRank, bestScore = h, rank, h.MatchScore
+		}
 	}
-	return best, nil
+	return best, best.Document.Key != ""
 }
 
 // buildEntity fetches the full SRD object for a search hit and formats it into

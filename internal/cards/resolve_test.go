@@ -131,15 +131,15 @@ func TestNameMatches(t *testing.T) {
 		{"Prizefight", "Prize Fight", true}, // hypothetical reverse spacing
 		{"lightningbolt", "Lightning Bolt", true},
 		// Minor misspellings (MAD-113): Scryfall's fuzzy matcher corrects
-		// these; nameMatches must accept its answer.
+		// these; NameMatches must accept its answer.
 		{"gient growth", "Giant Growth", true},
 		{"counterspel", "Counterspell", true},
 		// Two unrelated names must never fuzzy onto each other.
 		{"Completely Different Thing", "Lightning Bolt", false},
 	}
 	for _, c := range cases {
-		if got := nameMatches(c.span, c.card); got != c.want {
-			t.Errorf("nameMatches(%q, %q) = %v, want %v", c.span, c.card, got, c.want)
+		if got := NameMatches(c.span, c.card); got != c.want {
+			t.Errorf("NameMatches(%q, %q) = %v, want %v", c.span, c.card, got, c.want)
 		}
 	}
 }
@@ -170,7 +170,7 @@ func (m *mappingLooker) Lookup(_ context.Context, name string) (*Card, error) {
 
 func TestResolve_ToleratesSpacingAndTypos(t *testing.T) {
 	// Regression for MAD-113: Scryfall resolves "prize fight" to Prizefight
-	// (one word). Before the fix, nameMatches rejected that match because
+	// (one word). Before the fix, NameMatches rejected that match because
 	// "prize" and "fight" are not whole words of "Prizefight", so the card
 	// came back unresolved and the model answered from memory.
 	l := &mappingLooker{byQuery: map[string]*Card{

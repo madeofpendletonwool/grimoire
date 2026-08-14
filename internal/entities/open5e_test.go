@@ -227,3 +227,162 @@ func TestOpen5e_NilSafe(t *testing.T) {
 		t.Errorf("nil resolver should resolve nothing, got entities=%v unresolved=%v err=%v", entities, unresolved, err)
 	}
 }
+
+// TestOpen5e_ResolvesCreatorPrefix confirms the Open5e search retry that
+// drops a creator prefix. The 2024 SRD dropped the creator names from many
+// spells ("Tenser's Floating Disk" -> "Floating Disk", "Leomund's Tiny Hut"
+// -> "Tiny Hut"), and Open5e's search returns zero results for the prefixed
+// name, so the resolver must strip the prefix and re-search to ground the
+// canonical entry. Regression for MAD-141.
+func TestOpen5e_ResolvesCreatorPrefix(t *testing.T) {
+	cases := []struct {
+		name      string
+		question  string
+		searchKey string // the prefix-stripped form the SRD match is filed under
+		objectKey string
+		spell     string
+		search    string
+		obj       string
+	}{
+		{
+			name:      "tensers floating disk",
+			question:  `What does Tenser's Floating Disk do?`,
+			searchKey: "Floating Disk",
+			objectKey: "v2/spells/srd-2024_floating-disk",
+			spell:     "Floating Disk",
+			search:    floatingDiskSearch,
+			obj:       floatingDiskObject,
+		},
+		{
+			name:      "leomunds tiny hut",
+			question:  `What does "Leomund's Tiny Hut" do?`,
+			searchKey: "Tiny Hut",
+			objectKey: "v2/spells/srd-2024_tiny-hut",
+			spell:     "Tiny Hut",
+			search:    tinyHutSearch,
+			obj:       tinyHutObject,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := open5eServer(t,
+				map[string]string{c.searchKey: c.search},
+				map[string]string{c.objectKey: c.obj},
+			)
+			r := NewWithBase(srv.URL)
+			entities, unresolved, err := r.Resolve(context.Background(), c.question)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if len(unresolved) != 0 {
+				t.Errorf("unresolved = %v, want none (prefix should strip to %q)", unresolved, c.spell)
+			}
+			if len(entities) != 1 || entities[0].Name != c.spell {
+				t.Fatalf("resolved %+v, want %q", entities, c.spell)
+			}
+		})
+	}
+}
+
+// TestOpen5e_StripsOnlyThePrefixThatYieldsAHit confirms the resolver does not
+// over-strip: "Melf's Acid Arrow" must resolve via "Acid Arrow" (the
+// two-word suffix), and a single trailing word is never searched on its own.
+// The object is keyed on the stripped form's object_pk so the fetch path is
+// exercised too.
+func TestOpen5e_StripsOnlyThePrefixThatYieldsAHit(t *testing.T) {
+	queries := map[string]bool{}
+	srv := open5eServer(t,
+		map[string]string{"Acid Arrow": acidArrowSearch},
+		map[string]string{"v2/spells/srd-2024_acid-arrow": acidArrowObject},
+	)
+	orig := srv.Config.Handler
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/search/" {
+			queries[r.URL.Query().Get("query")] = true
+		}
+		orig.ServeHTTP(w, r)
+	})
+	r := NewWithBase(srv.URL)
+	entities, unresolved, err := r.Resolve(context.Background(), `What does "Melf's Acid Arrow" do?`)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(unresolved) != 0 || len(entities) != 1 || entities[0].Name != "Acid Arrow" {
+		t.Fatalf("resolved entities=%v unresolved=%v, want Acid Arrow", entities, unresolved)
+	}
+	if !queries["Melf's Acid Arrow"] {
+		t.Errorf("verbatim name was not searched; queries=%v", queries)
+	}
+	if !queries["Acid Arrow"] {
+		t.Errorf("prefix-stripped form was not searched; queries=%v", queries)
+	}
+	if queries["Arrow"] {
+		t.Errorf("single-word suffix should not be searched (too noisy); queries=%v", queries)
+	}
+}
+
+// TestOpen5e_FuzzyTypo confirms a pure typo with no exact match falls back to
+// the strongest credible near-match. "Firebal" must ground as "Fireball", and
+// "Delayed Blast Fireball" — also returned by the search — must be rejected so
+// a fuzzy search cannot attach the wrong entity. Regression for MAD-141.
+func TestOpen5e_FuzzyTypo(t *testing.T) {
+	srv := open5eServer(t,
+		map[string]string{"Firebal": fireballFuzzySearch},
+		map[string]string{"v2/spells/srd-2024_fireball": fireballObject},
+	)
+	r := NewWithBase(srv.URL)
+	entities, unresolved, err := r.Resolve(context.Background(), `What does "Firebal" do?`)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(unresolved) != 0 {
+		t.Errorf("unresolved = %v, want none (Firebal should fuzzy-match Fireball)", unresolved)
+	}
+	if len(entities) != 1 || entities[0].Name != "Fireball" {
+		t.Fatalf("resolved %+v, want Fireball (not Delayed Blast Fireball)", entities)
+	}
+}
+
+const floatingDiskSearch = `{"count":1,"results":[
+  {"document":{"key":"srd-2024","name":"System Reference Document 5.2"},"object_pk":"srd-2024_floating-disk","object_name":"Floating Disk","object_model":"Spell","route":"v2/spells/","text":"Floating Disk\n\nCreates a circular plane of force.","match_type":"exact","match_score":1.0}
+]}`
+
+const floatingDiskObject = `{
+  "name":"Floating Disk","document":{"key":"srd-2024","name":"System Reference Document 5.2"},
+  "level":1,"school":{"name":"Conjuration","key":"conjuration"},
+  "desc":"This spell creates a 3-foot-diameter circular plane of force that floats 3 feet above the ground.",
+  "range_text":"30 feet","casting_time":"1 minute","duration":"1 hour",
+  "classes":[{"name":"Wizard","key":"srd-2024_wizard"}]
+}`
+
+const tinyHutSearch = `{"count":1,"results":[
+  {"document":{"key":"srd-2024","name":"System Reference Document 5.2"},"object_pk":"srd-2024_tiny-hut","object_name":"Tiny Hut","object_model":"Spell","route":"v2/spells/","text":"Tiny Hut\n\nA 10-foot Emanation springs into existence.","match_type":"exact","match_score":1.0}
+]}`
+
+const tinyHutObject = `{
+  "name":"Tiny Hut","document":{"key":"srd-2024","name":"System Reference Document 5.2"},
+  "level":3,"school":{"name":"Evocation","key":"evocation"},
+  "desc":"A 10-foot Emanation springs into existence around you. Creatures and objects inside when you cast it can pass through freely.",
+  "range_text":"self","casting_time":"1 minute","duration":"8 hours",
+  "classes":[{"name":"Bard","key":"srd-2024_bard"},{"name":"Wizard","key":"srd-2024_wizard"}]
+}`
+
+const acidArrowSearch = `{"count":1,"results":[
+  {"document":{"key":"srd-2024","name":"System Reference Document 5.2"},"object_pk":"srd-2024_acid-arrow","object_name":"Acid Arrow","object_model":"Spell","route":"v2/spells/","text":"Acid Arrow\n\nA shimmering arrow.","match_type":"exact","match_score":1.0}
+]}`
+
+const acidArrowObject = `{
+  "name":"Acid Arrow","document":{"key":"srd-2024","name":"System Reference Document 5.2"},
+  "level":2,"school":{"name":"Evocation","key":"evocation"},
+  "desc":"A shimmering arrow of acid leaps from your hand.",
+  "range_text":"90 feet","casting_time":"action","duration":"instantaneous",
+  "classes":[{"name":"Wizard","key":"srd-2024_wizard"}]
+}`
+
+// fireballFuzzySearch models Open5e's response to a typo: "Firebal" returns
+// both the intended "Fireball" and the unrelated "Delayed Blast Fireball" as
+// fuzzy hits with equal scores. Only the credible match may be accepted.
+const fireballFuzzySearch = `{"count":2,"results":[
+  {"document":{"key":"srd-2024","name":"System Reference Document 5.2"},"object_pk":"srd-2024_fireball","object_name":"Fireball","object_model":"Spell","route":"v2/spells/","text":"Fireball","match_type":"fuzzy","match_score":0.9333},
+  {"document":{"key":"srd-2014","name":"SRD 5.1"},"object_pk":"srd-2014_delayed-blast-fireball","object_name":"Delayed Blast Fireball","object_model":"Spell","route":"v2/spells/","text":"Delayed Blast Fireball","match_type":"fuzzy","match_score":0.9333}
+]}`
