@@ -1,6 +1,11 @@
-# 📜 Grimoire
+<div align="center">
+  <img src="docs/assets/sprites/spellbook@2x.png" width="64" height="64" alt="">
+  <h1>Grimoire</h1>
+</div>
 
-A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** and **D&D 5e (SRD)** — a chat-first sage that answers grounded in the real rules and real card text, with full-text search and card lookup a keystroke away. Ships as a single Go binary in a tiny Docker container.
+A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** and **D&D 5e (SRD)** — a chat-first sage that answers grounded in the real rules, real card text, official rulings and real SRD entries, with full-text search and lookup a keystroke away. Ships as a single Go binary in a tiny Docker container.
+
+<p align="center"><img src="docs/assets/scene-cave.png" width="768" alt="The candlelit cavern backdrop the app ships with, layered parallax pixel art"></p>
 
 ![status](https://img.shields.io/badge/status-ready-green) ![go](https://img.shields.io/badge/go-1.26-00ADD8) ![docker](https://img.shields.io/badge/docker-multistage-2496ED)
 
@@ -8,20 +13,22 @@ A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** a
 
 ## Features
 
-- **💬 Chat first** — the app is a conversation. Ask a question, get an answer streamed token by token, grounded in retrieved rules and real card text, with every rule and card it consulted cited beneath. Follow-up questions carry the earlier turns, so "what if it were tapped instead?" resolves against what was already said.
-- **📚 Conversations are saved** — threads persist in SQLite with auto-generated titles, and the sidebar groups them by date. Rename, delete, resume across reloads and devices. A conversation's rule set is locked when it is created, because the grounding differs per corpus.
-- **⌘K Command palette** — one search box over both rule sets and Scryfall. Results open in a reference drawer beside the conversation, so consulting a rule never takes you out of the chat. Slash commands work in the composer too: `/card Lightning Bolt`, `/rule 702.2`, `/search`.
-- **🔎 Full-text search** across both rule sets (SQLite + FTS5). Search by word, phrase, or a direct rule number like `205.1a`. Opening a numbered rule expands it to the full mechanic section — the parent plus every sub-rule — so you see how it actually works.
-- **🔐 Yours alone** — the whole app sits behind a login. The first visit to a fresh install creates the keeper account, who becomes the admin (no seeded password to forget to change). The admin then invites friends via single-use links; self-service creation stays off, and conversations are scoped per account. Passwords are argon2id; sessions are server-side and revocable.
-- **🃏 Card lookup** — pull the real oracle text of any Magic card by name via Scryfall (no API key required). The chat consults it automatically when a card is mentioned, so it never invents card effects; when it cannot resolve a name it says so instead of guessing. The palette autocompletes as you type, so you never have to spell out "Asmoranomardicadaistinaculdacar" in full.
-- **🔮 Interaction resolver** — a separate Resolve mode (Magic only) for the questions that are hardest to google. State a board and a proposed spell/ability sequence, and the sage walks the resulting interactions step by step — the stack, APNAP trigger ordering, continuous-effect layers, and replacement effects — citing the rule at each step. Grounded in real card text and the full interaction chapters (117, 603, 613, 616). It is an assistant, not a Comprehensive-Rules oracle, so the UI says so plainly.
-- **📇 Study mode** — a spaced-repetition deck over the corpus, for new players and judges-in-training. MTG keyword abilities (chapter 702) and D&D conditions turn into flashcards; grade each card Again / Hard / Good / Easy and an SM-2 scheduler brings it back on the right day. Progress persists per account across reloads.
-- **✦ / ⚔ Two corpora** — Magic and D&D, each with its own accent (mana-blue vs. dragon-red). Pick one per conversation.
-- **📜 An actual tome, not a theme** — the interface is built from real pixel art rather than emoji and CSS gradients. Answers, rules and cards sit on a nine-sliced parchment page; the reference drawer is the book's right-hand page, spine and all; the sign-in screen is the book shut, and opens into it. Sprites carry the nouns the app is about — spellbook, scroll, mana orb, wizard's staff, candle. Long rules text stays in real high-resolution serif, because a pixel font would tax the one thing this app exists to do. See [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
-- **🏔 Four themes, taken from the art** — pick a chamber in Settings and the whole interface follows it: a violet cavern, a brown dead forest, blue-grey peaks, or open plains. Each theme's colour is *measured* from that scene's own pixels at build time and applied to the chrome's existing lightness ladder, so a retinted interface is exactly as legible as the default. The backdrop is a real parallax stack that drifts with the pointer — the sky holds still, the foreground travels. The parchment never changes: the room changes, the book does not.
-- **{T}: Add {G}** — Magic's mana, tap and set symbols render as symbols, in card text, rule text and the sage's prose, via the Mana and Keyrune fonts. No build step, no JS framework, no bundler — just ES modules, and every font self-hosted so it works offline.
-- **🐳 One command to run** — `docker compose up`. The index builds itself on first start.
-- **No hard dependencies** — pure-Go SQLite (FTS5), no CGO, single static binary.
+- <img src="docs/assets/sprites/staff.png" width="32" height="32" align="absmiddle"> **Chat first** — the app is a conversation. Ask a question, get an answer streamed token by token, grounded in retrieved rules, real card text, official rulings and real SRD entries, with every source it consulted cited beneath. Follow-up questions carry the earlier turns, so "what if it were tapped instead?" resolves against what was already said.
+- <img src="docs/assets/sprites/openBook.png" width="32" height="32" align="absmiddle"> **Conversations are saved** — threads persist in SQLite with auto-generated titles, and the sidebar groups them by date. Rename, delete, resume across reloads and devices. A conversation's rule set is locked when it is created, because the grounding differs per corpus.
+- <img src="docs/assets/icons/search.svg" width="22" height="22" align="absmiddle"> **Command palette** — one search box over both rule sets and Scryfall. Results open in a reference drawer beside the conversation, so consulting a rule never takes you out of the chat. Slash commands work in the composer too: `/card Lightning Bolt`, `/rule 702.2`, `/search`.
+- <img src="docs/assets/icons/mic.svg" width="22" height="22" align="absmiddle"> **Voice input** — a mic button beside the composer transcribes speech via the browser's Web Speech API (Chrome/Edge over HTTPS or localhost). Nothing is sent until the transcript is reviewed and sent like any other message.
+- <img src="docs/assets/sprites/magnifier.png" width="32" height="32" align="absmiddle"> **Full-text search** across both rule sets (SQLite + FTS5). Search by word, phrase, or a direct rule number like `205.1a`. Opening a numbered rule expands it to the full mechanic section — the parent plus every sub-rule — so you see how it actually works.
+- <img src="docs/assets/sprites/key.png" width="32" height="32" align="absmiddle"> **Yours alone** — the whole app sits behind a login. The first visit to a fresh install creates the keeper account, who becomes the admin (no seeded password to forget to change). The admin then invites friends via single-use links; self-service creation stays off, and conversations are scoped per account. Passwords are argon2id; sessions are server-side and revocable.
+- <img src="docs/assets/sprites/card.png" width="32" height="32" align="absmiddle"> **Card lookup + official rulings** — pull the real oracle text of any Magic card by name via Scryfall (no API key required). The chat consults it automatically when a card is mentioned, so it never invents card effects; when it cannot resolve a name it says so instead of guessing. Each looked-up card brings its official rulings (Gatherer/Oracle, Wizards release notes, Scryfall notes) along as precedent, so an answer can cite the ruling that decides the question, not just the rule text. The palette autocompletes as you type, so you never have to spell out "Asmoranomardicadaistinaculdacar" in full.
+- <img src="docs/assets/sprites/swords.png" width="32" height="32" align="absmiddle"> **D&D entities, grounded the same way** — spells, creatures, magic items, feats and conditions mentioned in a D&D question are looked up in the SRD via Open5e's free API before answering, the way Magic questions ground in Scryfall. SRD entries are preferred over community homebrew, and lookup tolerates the way names are actually written: a creator prefix ("Tenser's Floating Disk" still finds the renamed SRD spell) or a typo resolves via the same credibility-gated fuzzy match the MTG side uses.
+- <img src="docs/assets/sprites/mirror.png" width="32" height="32" align="absmiddle"> **Interaction resolver** — a separate Resolve mode (Magic only) for the questions that are hardest to google. State a board and a proposed spell/ability sequence, and the sage walks the resulting interactions step by step — the stack, APNAP trigger ordering, continuous-effect layers, and replacement effects — citing the rule at each step. Grounded in real card text and the full interaction chapters (117, 603, 613, 616). It is an assistant, not a Comprehensive-Rules oracle, so the UI says so plainly.
+- <img src="docs/assets/sprites/hourglass.png" width="32" height="32" align="absmiddle"> **Study mode** — a spaced-repetition deck over the corpus, for new players and judges-in-training. MTG keyword abilities (chapter 702) and D&D conditions turn into flashcards; grade each card Again / Hard / Good / Easy and an SM-2 scheduler brings it back on the right day. Progress persists per account across reloads.
+- <img src="docs/assets/sprites/orbBlue.png" width="32" height="32" align="absmiddle"> **Two corpora** — Magic and D&D, each with its own accent (mana-blue vs. dragon-red). Pick one per conversation.
+- <img src="docs/assets/sprites/bookGold.png" width="32" height="32" align="absmiddle"> **An actual tome, built from game assets** — the chrome is assembled from licensed game art rather than emoji and CSS gradients: a nine-sliced pixel UI kit carries the frames, a 32px sprite sheet the icons, layered parallax packs the scenes. Answers, rules and cards sit on a nine-sliced parchment page; the reference drawer is the book's right-hand page, spine and all; the sign-in screen is the book shut, and opens into it. Two icon systems divide the labour — pixel sprites for the nouns the app is about (spellbook, scroll, mana orb, wizard's staff, candle), monochrome vectors for the small affordances (close, send, search) that must stay crisp at any size or take the accent colour. Long rules text stays in real high-resolution serif — the pixel font is for labels only — because a pixel font would tax the one thing this app exists to do. The whole system (tokens, frames, icon rule, theme derivation, invariants) is written down in [docs/DESIGN.md](docs/DESIGN.md); credits and licences in [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+- <img src="docs/assets/sprites/moon.png" width="32" height="32" align="absmiddle"> **Four themes, taken from the art** — pick a chamber in Settings and the whole interface follows it: a violet cavern, a brown dead forest, blue-grey peaks, or open plains. Each theme's colour is *measured* from that scene's own pixels at build time and applied to the chrome's existing lightness ladder, so a retinted interface is exactly as legible as the default. The backdrop is a real parallax stack that drifts with the pointer — the sky holds still, the foreground travels. The parchment never changes: the room changes, the book does not.
+- <img src="docs/assets/sprites/runestone.png" width="32" height="32" align="absmiddle"> **{T}: Add {G}** — Magic's mana, tap and set symbols render as symbols, in card text, rule text and the sage's prose, via the Mana and Keyrune fonts. No build step, no JS framework, no bundler — just ES modules, and every font self-hosted so it works offline.
+- <img src="docs/assets/sprites/chest.png" width="32" height="32" align="absmiddle"> **One command to run** — `docker compose up`. The index builds itself on first start.
+- <img src="docs/assets/sprites/shield.png" width="32" height="32" align="absmiddle"> **No hard dependencies** — pure-Go SQLite (FTS5), no CGO, single static binary.
 
 ## Quick start (Docker)
 
@@ -119,7 +126,7 @@ Environment variables are the same as above (`GRIMOIRE_ADDR`, `GRIMOIRE_DB`, `AN
 
 ## Interaction resolver (Magic)
 
-Resolve mode (the 🔮 toggle in the top bar, Magic only) answers the questions a
+Resolve mode (the Resolve toggle in the top bar, Magic only) answers the questions a
 rules lookup can't: *given this board and this sequence of plays, what exactly
 happens, and in what order?* It is built for Commander, where a single board
 wipe can stack a dozen dies-triggers across two players.
@@ -150,7 +157,7 @@ saved conversations live.
 
 ## Study mode
 
-Study mode (the 📇 button in the sidebar) turns the corpus into a
+Study mode (the Study button in the sidebar) turns the corpus into a
 spaced-repetition flashcard deck. The corpus is already a question bank — MTG
 keyword abilities (chapter 702, one card per keyword: Deathtouch, Ward, …) and
 D&D SRD conditions — so the cards are generated from the existing FTS5 index
@@ -173,7 +180,7 @@ stable rule numbers).
 | `GET`  | `/api/section` | `number`, `corpus=mtg\|dnd`                     | `{ parent:{…}, children:[…] }` (full mechanic section) |
 | `GET`  | `/api/card`    | `q` (MTG card name)                             | `{ card: {...} }` or `{ card: null, matches: [...] }` |
 | `GET`  | `/api/card/search` | `q`, `limit` (MTG card name fragment)     | `{ matches: [{name,mana_cost,type_line,…}] }` |
-| `POST` | `/api/ask`     | `{corpus, question}`                            | `{configured, answer, sources:[…], cards:[…]}` — stateless one-shot |
+| `POST` | `/api/ask`     | `{corpus, question}`, `?nocache`               | `{configured, cached, answer, sources:[…], cards:[…], entities:[…], rulings:[…], unresolved_cards:[…]}` — stateless one-shot |
 | `POST` | `/api/resolve` | `{board, sequence, note}` (Magic)              | SSE: `meta`, `delta`, `done`, `error` — step-by-step interaction trace |
 | `GET`  | `/api/chats`   | —                                               | `{chats:[…]}`                        |
 | `POST` | `/api/chats`   | `{corpus}`                                      | `{chat:{…}}`                         |
@@ -216,7 +223,7 @@ curl -b jar -X POST localhost:8080/api/ask -H 'content-type: application/json' \
   -d '{"corpus":"mtg","question":"What does Lightning Bolt do?"}'
 ```
 
-## Card lookup (Scryfall)
+## Card, rulings & entity lookup
 
 MTG card questions are grounded in real card text, not guesswork. The Q&A chat
 detects card names mentioned in a question (quoted, bracketed, after the word
@@ -230,13 +237,36 @@ calls Scryfall's name-ordered search directly (one round-trip per keystroke)
 rather than the fuzzy named lookup, so autocomplete stays responsive without
 doubling the rate-limit pressure on the public API.
 
+When a card is looked up, its **official rulings** come with it — Gatherer /
+Oracle rulings, Wizards release notes and Scryfall notes from Scryfall's
+rulings API, cached and rate-limited the same way. The model is told to treat
+wotc rulings as authoritative precedent and Scryfall notes as official
+guidance, and to cite them (card, source, date, decisive phrase) when they
+decide the question.
+
+### Entity lookup (Open5e, D&D)
+
+The D&D side works the same way through [Open5e](https://open5e.com)'s free
+API: spells, creatures, magic items, feats and conditions mentioned in a
+question are resolved to their SRD text before answering, and the model is
+instructed to answer from that text rather than inventing mechanics. Search
+hits are filtered to the SRD documents (2024 edition preferred, then older),
+so community homebrew never grounds an answer. Lookup tolerates real-world
+naming: the 2024 SRD renamed creator-prefixed spells ("Tenser's Floating
+Disk" → "Floating Disk"), so a leading word is dropped and the search retried;
+a pure typo falls back to the strongest credible near-match, gated by the same
+fuzzy check the MTG card lookup uses so a near-miss can never attach the wrong
+entity.
+
 ## Data sources
 
 - **MTG** — the official [Comprehensive Rules](https://magic.wizards.com/en/rules) (parsed locally into numbered rules + glossary).
 - **MTG card names** — [MTGJSON](https://mtgjson.com)'s `AtomicCards` (one entry per unique card name). Indexed on first run into a dictionary the chat uses to detect card mentions the text heuristics miss (lowercase, unquoted, no Title Case).
+- **MTG cards + rulings** — [Scryfall](https://scryfall.com)'s public API (oracle text, fuzzy name match, official rulings). No key required.
 - **D&D** — the community [5e SRD in Markdown](https://github.com/downfallx/dnd-5e-srd-markdown).
+- **D&D entities** — [Open5e](https://open5e.com)'s REST API (SRD spells, creatures, items, feats) for grounding D&D questions in real statblocks and spell text. No key required.
 
-Both are fetched and indexed at first run. Overrides: `MTG_RULES_URL`, `MTGJSON_URL`, `DND_REPO`, `DND_REF`.
+The rules corpora are fetched and indexed at first run. Overrides: `MTG_RULES_URL`, `MTGJSON_URL`, `DND_REPO`, `DND_REF`. The live lookups (cards, rulings, Open5e) can be retargeted at a mirror: `SCRYFALL_BASE_URL`, `OPEN5E_BASE_URL`.
 
 ## Architecture
 
@@ -244,16 +274,21 @@ Both are fetched and indexed at first run. Overrides: `MTG_RULES_URL`, `MTGJSON_
 cmd/grimoire      CLI entrypoint: `serve` (default) | `index`
 internal/
   auth/           accounts + server-side sessions (argon2id, same SQLite file)
+  cache/          grounded-answer cache: repeat questions skip the model (same SQLite file)
   cards/          Scryfall card lookup (named + search), cached + rate-limited
   chat/           saved conversations + messages (same SQLite file as the index)
-  data/           fetch + parse MTG (.txt) and D&D (markdown) into records
+  data/           fetch + parse MTG (.txt) and D&D (markdown) into records; corpus registry + entity-resolver interface
+  embeddings/     OpenAI-compatible embeddings client for semantic retrieval
+  entities/       per-corpus entity resolution into grounding text (MTG cards, D&D via Open5e)
   index/          SQLite + FTS5 store; full-text + rule-number search
   llm/            Anthropic Messages client (configurable base URL), RAG + streaming
+  resolver/       Magic interaction resolver: board + sequence → step-by-step prompt
+  rulings/        official MTG card rulings from Scryfall, cached + rate-limited
   server/         HTTP handlers, JSON API, SSE chat endpoint, session gate
   study/          spaced-repetition reviews (SM-2) over the corpus (same SQLite file)
 web/
   templates/      the app shell, plus the login / first-run gate
-  static/js/      ES modules: app, chat, palette, drawer, render, markdown, api, auth
+  static/js/      ES modules: chat, palette, reference drawer, study, resolve, voice, scene, icons
 ```
 
 The binary embeds all front-end assets, so the runtime image is just the binary + CA certs.
@@ -278,7 +313,6 @@ Working on the interface? Read **[docs/DESIGN.md](docs/DESIGN.md)** first. It
 covers the token system, the two icon systems and when to use each, the
 nine-slice contract, how the four themes are derived from the backdrop art, and
 the invariants that keep the pixel art crisp and the text readable.
-[CLAUDE.md](CLAUDE.md) is the short orientation for the repo as a whole.
 
 ### Regenerating the art
 
@@ -287,10 +321,17 @@ in, so a normal build needs none of this. The scripts exist for when the art or
 the fonts change. They are pure-stdlib Python 3 — no pip install.
 
 ```bash
-python3 scripts/build-assets.py     # sprites, nine-slice frames, scenes, favicons
-python3 scripts/fetch-gameicons.py  # web/static/js/gameicons.js
-python3 scripts/fetch-fonts.py      # web/static/fonts/ + fonts.css
+python3 scripts/build-assets.py            # sprites, nine-slice frames, scenes, favicons
+python3 scripts/fetch-gameicons.py         # web/static/js/gameicons.js
+python3 scripts/fetch-fonts.py             # web/static/fonts/ + fonts.css
+python3 scripts/export-readme-assets.py    # docs/assets/ — the art this README shows
 ```
+
+`export-readme-assets.py` is the odd one out: it needs no upstream packs, because
+it derives the README's wordmark, bullet sprites, vector glyphs and scene banner
+from the assets already committed under `web/static/`. The sprite cells and glyph
+paths are read from `js/icons.js` and `js/gameicons.js`, so the README can never
+show art the app itself doesn't render.
 
 `build-assets.py` reads the upstream art packs from `icon-packs/`, which is
 **gitignored on purpose** — one of the licences permits adapting the material
