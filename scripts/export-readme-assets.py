@@ -13,6 +13,10 @@ Outputs to docs/assets/ (all committed):
   sprites/<name>@3x.png    pre-tripled cells (the welcome-sigil scale)
   icons/<name>.svg         vector glyphs, filled with the app's --gold
   scene-<name>.png         every parallax layer stacked and pre-doubled
+  ui/, fonts/, favicon-32.png, icon-192.png
+                          straight copies for the MkDocs site, which is
+                          skinned with the app's own chrome (frames,
+                          webfonts, favicon) — see stylesheets/grimoire.css
 
 The named cells and glyph paths are parsed from web/static/js/icons.js and
 web/static/js/gameicons.js, so this script can never drift from what the app
@@ -22,6 +26,7 @@ actually renders.
 import json
 import os
 import re
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -67,6 +72,23 @@ VECTORS = ["search", "mic"]
 
 # Parallax scenes to composite into single strips.
 SCENE_STRIPS = ["cave"]
+
+# Derived output the MkDocs site reuses verbatim (nothing is rebuilt for it —
+# the docs are skinned with exactly the pixels the app ships). Frames are the
+# default-theme chrome; the fonts are the prose/display/pixel voices the CSS
+# declares @font-face for.
+SITE_UI = [
+    "panel-parchment.png", "panel-stone.png", "panel-stone-active.png",
+    "button.png", "button-active.png", "chip.png", "chip-active.png",
+    "field.png", "field-focus.png", "page.png", "select.png",
+    "bar.png", "bar-fill.png", "book-cover.png",
+]
+SITE_FONTS = [
+    "eb-garamond-400.woff2", "eb-garamond-400-italic.woff2",
+    "eb-garamond-600.woff2", "eb-garamond-700.woff2",
+    "cinzel-600.woff2", "cinzel-700.woff2", "departure-mono.woff2",
+]
+SITE_ROOT_FILES = ["favicon-32.png", "icon-192.png"]
 
 
 def named_cells():
@@ -138,10 +160,26 @@ def export_scenes():
         pngkit.write(os.path.join(OUT, f"scene-{key}.png"), strip.scale(2))
 
 
+def export_site():
+    """Copy the app's own chrome into docs/assets for the MkDocs site."""
+    static = lambda *p: os.path.join(ROOT, "web", "static", *p)
+    for names, src in ((SITE_UI, static("assets", "ui")),
+                       (SITE_FONTS, static("fonts")),
+                       (SITE_ROOT_FILES, static("assets"))):
+        parts = os.path.relpath(src, static()).split(os.sep)
+        if parts[0] == "assets":  # web/static/assets/ui -> docs/assets/ui
+            parts = parts[1:]
+        outdir = os.path.join(OUT, *parts)
+        os.makedirs(outdir, exist_ok=True)
+        for name in names:
+            shutil.copyfile(os.path.join(src, name), os.path.join(outdir, name))
+
+
 def main():
     export_sprites(named_cells())
     export_vectors(vector_paths())
     export_scenes()
+    export_site()
     print(json.dumps({"sprites": sorted(SPRITES), "vectors": VECTORS,
                       "scenes": SCENE_STRIPS, "out": os.path.relpath(OUT, ROOT)}))
 

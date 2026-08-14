@@ -1,0 +1,103 @@
+# Material for MkDocs, skinned to look like the app itself.
+#
+# The theme is configured `font: false` (nothing may load from a third party,
+# per the app's design invariants) — stylesheets/grimoire.css declares the
+# app's own self-hosted fonts and chrome instead. Build locally with:
+#
+#     pip install -r docs/requirements.txt
+#     mkdocs serve
+#
+# CI builds on every push that touches docs/ and publishes to GitHub Pages
+# (.github/workflows/docs.yml).
+
+site_name: Grimoire
+site_url: https://madeofpendletonwool.github.io/grimoire/
+site_description: >-
+  A self-hosted, nerdily-themed rules reference for Magic: The Gathering and
+  D&D 5e (SRD) — a chat-first sage grounded in the real rules, real card text,
+  official rulings and real SRD entries. Deployment, features and development
+  documentation.
+
+repo_url: https://github.com/madeofpendletonwool/grimoire
+repo_name: madeofpendletonwool/grimoire
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: en
+  font: false # the app self-hosts its fonts; docs/grimoire.css does the same
+  logo: assets/sprites/spellbook.png
+  favicon: assets/favicon-32.png
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.path
+    - navigation.top
+    - navigation.tracking
+    - navigation.footer
+    - navigation.prune
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+  palette:
+    scheme: slate # the chrome is candlelit stone; grimoire.css does the rest
+
+extra_css:
+  - stylesheets/grimoire.css
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      title: On this page
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: false
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+copyright: >-
+  Built from the app's own art — credits and licences in
+  <a href="https://github.com/madeofpendletonwool/grimoire/blob/main/ATTRIBUTIONS.md">ATTRIBUTIONS.md</a>.
+  Source under the MIT license.
+
+nav:
+  - Home: index.md
+  - Features:
+      - Q&A Chat: features/chat.md
+      - Search & Command Palette: features/search.md
+      - Card & Entity Lookup: features/lookup.md
+      - Interaction Resolver: features/resolver.md
+      - Study Mode: features/study.md
+      - The Tome & Themes: features/tome.md
+  - Deployment:
+      - Quick Start: deployment/quickstart.md
+      - Configuration: deployment/configuration.md
+      - Accounts & Invites: deployment/accounts.md
+      - HTTP API: deployment/api.md
+  - Development:
+      - Getting Started: development/index.md
+      - Architecture: development/architecture.md
+      - Design System: DESIGN.md

@@ -255,8 +255,8 @@ python3 scripts/fetch-fonts.py      # fonts/ + fonts.css
 
 `build-assets.py` reads from `icon-packs/`, which is **gitignored on purpose**:
 one upstream licence permits adapting the material but not republishing the
-pack, so the repo carries only derived output. Get the packs from the links in
-[ATTRIBUTIONS.md](../ATTRIBUTIONS.md) first.
+pack, so the repo carries only derived output. Get the packs from the links
+in [ATTRIBUTIONS.md](https://github.com/madeofpendletonwool/grimoire/blob/main/ATTRIBUTIONS.md) first.
 
 Its recolour maps are **exhaustive** — an unmapped colour aborts the build
 rather than shipping a half-recoloured sprite. If it fails after an art update,
