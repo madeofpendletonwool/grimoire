@@ -12,7 +12,7 @@ A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** a
 - **📚 Conversations are saved** — threads persist in SQLite with auto-generated titles, and the sidebar groups them by date. Rename, delete, resume across reloads and devices. A conversation's rule set is locked when it is created, because the grounding differs per corpus.
 - **⌘K Command palette** — one search box over both rule sets and Scryfall. Results open in a reference drawer beside the conversation, so consulting a rule never takes you out of the chat. Slash commands work in the composer too: `/card Lightning Bolt`, `/rule 702.2`, `/search`.
 - **🔎 Full-text search** across both rule sets (SQLite + FTS5). Search by word, phrase, or a direct rule number like `205.1a`. Opening a numbered rule expands it to the full mechanic section — the parent plus every sub-rule — so you see how it actually works.
-- **🔐 Yours alone** — the whole app sits behind a login. The first visit to a fresh install creates the keeper account (no seeded password to forget to change), account creation closes behind it, and conversations are scoped per account. Passwords are argon2id; sessions are server-side and revocable.
+- **🔐 Yours alone** — the whole app sits behind a login. The first visit to a fresh install creates the keeper account, who becomes the admin (no seeded password to forget to change). The admin then invites friends via single-use links; self-service creation stays off, and conversations are scoped per account. Passwords are argon2id; sessions are server-side and revocable.
 - **🃏 Card lookup** — pull the real oracle text of any Magic card by name via Scryfall (no API key required). The chat consults it automatically when a card is mentioned, so it never invents card effects; when it cannot resolve a name it says so instead of guessing. The palette autocompletes as you type, so you never have to spell out "Asmoranomardicadaistinaculdacar" in full.
 - **🔮 Interaction resolver** — a separate Resolve mode (Magic only) for the questions that are hardest to google. State a board and a proposed spell/ability sequence, and the sage walks the resulting interactions step by step — the stack, APNAP trigger ordering, continuous-effect layers, and replacement effects — citing the rule at each step. Grounded in real card text and the full interaction chapters (117, 603, 613, 616). It is an assistant, not a Comprehensive-Rules oracle, so the UI says so plainly.
 - **📇 Study mode** — a spaced-repetition deck over the corpus, for new players and judges-in-training. MTG keyword abilities (chapter 702) and D&D conditions turn into flashcards; grade each card Again / Hard / Good / Easy and an SM-2 scheduler brings it back on the right day. Progress persists per account across reloads.
@@ -70,15 +70,23 @@ Answers are cached: a repeat (or grounding-equivalent) question returns instantl
 
 ## Accounts
 
-Grimoire is single-household software, so it has a login but no user management
-screen. On a fresh install the app has no accounts and the login page offers to
-create the first one: whoever reaches the app claims it. Creation then closes,
-and later arrivals only see a login form.
+Grimoire is single-household software, so it has a login but no open sign-up.
+On a fresh install the app has no accounts and the login page offers to create
+the first one: whoever reaches the app claims it, and that first account is the
+**admin** (the keeper). Account creation then closes, and later arrivals only
+see a login form.
+
+The admin invites friends in from **Settings → Invitations**: each click mints a
+single-use invite link (`/?invite=…`) that lets exactly one person make an
+account, then spends. The admin can see which links are pending, used, or
+expired, and revoke a pending one. Self-service creation stays off by default —
+an invite is the only way in past the first keeper.
 
 | Variable                     | Default | Notes                                                                     |
 | ---------------------------- | ------- | ------------------------------------------------------------------------- |
 | `GRIMOIRE_SESSION_TTL`       | `720h`  | How long a session lasts. Any Go duration (`24h`, `168h`, …).              |
-| `GRIMOIRE_OPEN_REGISTRATION` | `false` | Keep account creation open after the first keeper, for a household of more than one. |
+| `GRIMOIRE_INVITE_TTL`        | `168h`  | How long a freshly minted invite link stays usable. `0` = never expire.   |
+| `GRIMOIRE_OPEN_REGISTRATION` | `false` | Leave self-service account creation open after the first keeper (the original escape hatch; invites are the recommended path). |
 
 - Passwords are hashed with **argon2id** (64 MiB, 3 passes) using a per-password
   random salt; the parameters travel inside every stored hash, so raising the
@@ -88,11 +96,16 @@ and later arrivals only see a login form.
   stolen cookie stops working the moment you log out. The cookie is `HttpOnly`
   and `SameSite=Lax`, and is marked `Secure` automatically when the request
   arrives over TLS or through a proxy that sets `X-Forwarded-Proto: https`.
+- Invite codes are treated the same way as session tokens: the link carries the
+  raw secret, the database stores only its SHA-256 digest, and the raw code is
+  returned to the admin **once**, at creation — the list never shows it.
 - Accounts live in the same SQLite file as everything else, so they survive
   `grimoire index` and ride along with the `/data` volume.
 - **Upgrading from a version without accounts?** Conversations recorded under the
   old anonymous owner are handed to the first account created, so no history is
-  lost behind the new login.
+  lost behind the new login. Upgrading from a version before admins/invites? The
+  oldest existing account is marked admin on the way up, matching "first created
+  user is the admin."
 
 ## Run locally (no Docker)
 
@@ -171,16 +184,21 @@ stable rule numbers).
 | `GET`  | `/api/study/queue` | `corpus`, `topic` (optional), `limit`        | `{cards:[{key,front,back,…}], stats:{total,new,due,learned}}` |
 | `POST` | `/api/study/grade` | `{key, corpus, grade}`                       | `{card:{…, reps, interval_days, ease, due_at}}` |
 | `GET`  | `/api/meta`    | —                                               | `{corpora:[…], chat_configured, chat_model}` |
-| `GET`  | `/api/auth/state` | —                                            | `{authenticated, username, setup_required, registration_open}` |
-| `POST` | `/api/auth/setup` | `{username, password}`                       | `{user:{username}}` + session cookie; `403` once closed |
+| `GET`  | `/api/auth/state` | —                                            | `{authenticated, username, is_admin, setup_required, registration_open}` |
+| `POST` | `/api/auth/setup` | `{username, password}`                       | `{user:{username}}` + session cookie; `403` once closed; first caller becomes the admin |
+| `POST` | `/api/auth/register` | `{username, password, invite}`            | `{user:{username}}` + session cookie; invite-gated signup (open path); `410` once the invite is spent/expired |
 | `POST` | `/api/auth/login` | `{username, password}`                       | `{user:{username}}` + session cookie; `401` on a bad pair |
 | `POST` | `/api/auth/logout` | —                                           | `204`, session revoked                |
+| `POST` | `/api/invites`   | `{note?}` (admin)                            | `{invite:{id,code,url,status,note,created_at,expires_at?}}` — `code`/`url` shown once, at creation |
+| `GET`  | `/api/invites`   | — (admin)                                    | `{invites:[{id,status,note,created_at,expires_at?,used_at?}]}` — never the raw `code` |
+| `DELETE`| `/api/invites/{id}` | — (admin)                                 | `204`; revokes a pending link (or trims a spent one) |
 | `GET`  | `/healthz`     | —                                               | `{status, indexed}`                  |
 
-Every `/api/*` endpoint requires a session except the three auth handshake
-routes above. `/healthz` is deliberately open so the container healthcheck
-works. Unauthenticated API calls get `401` with a JSON body; an unauthenticated
-browser hitting `/` gets the login screen.
+Every `/api/*` endpoint requires a session except the auth handshake routes
+above (`state`, `setup`, `register`, `login`) and the admin-only invite routes
+(which require a session *and* the admin role). `/healthz` is deliberately open
+so the container healthcheck works. Unauthenticated API calls get `401` with a
+JSON body; an unauthenticated browser hitting `/` gets the login screen.
 
 `/api/ask` remains for scripted one-off questions. The UI uses the `/api/chats`
 endpoints, which save the thread and stream the answer.

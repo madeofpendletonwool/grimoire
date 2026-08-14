@@ -135,6 +135,22 @@ function onPointer(e) {
 
 /* ---------- the settings popup ---------- */
 
+// sectionBuilders lets other modules (admin.js) append their own section to the
+// settings popup. buildPopup runs them on every rebuild, so a theme change —
+// which rebuilds the popup from scratch — re-adds the contributed section
+// rather than wiping it.
+const sectionBuilders = [];
+
+/** Register a function that returns a DOM node to append to the settings popup. */
+export function addSettingsSection(builder) {
+	if (typeof builder === "function") sectionBuilders.push(builder);
+}
+
+/** Re-render the settings popup from scratch (used after registering a section). */
+export function rebuildSettings() {
+	buildPopup();
+}
+
 const CREDITS = [
 	["Book UI", "Crusenho Agus Hennihuno", "https://crusenho.itch.io/complete-ui-book-styles-pack"],
 	["Icons", "Shikashi", "https://cheekyinkling.itch.io/shikashis-fantasy-icons-pack"],
@@ -204,6 +220,13 @@ function buildPopup() {
 		));
 	}
 	popup.append(credits);
+
+	// Contributed sections (e.g. the admin's invitation manager). Each builder
+	// returns a node, or null to add nothing this time around.
+	for (const build of sectionBuilders) {
+		const node = build();
+		if (node) popup.append(node);
+	}
 }
 
 function setCursor(on) {

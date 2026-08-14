@@ -1482,6 +1482,107 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .set-credit a { color: inherit; text-decoration: none; }
 .set-credit a:hover { color: var(--gold-bright); text-decoration: underline; }
 
+/* ---------- Invitations (admin section of the settings popup) ---------- */
+.set-hint {
+	margin: var(--sp-1) 0 0;
+	padding: 0 var(--sp-2);
+	font-size: var(--fs-xs);
+	opacity: 0.5;
+}
+.invite-new-row { margin: 0 0 var(--sp-1); }
+.invite-new {
+	justify-content: center;
+	border-color: var(--gold-dim);
+	background: rgba(255, 208, 113, 0.12);
+	color: var(--gold-bright);
+	font-size: var(--fs-sm);
+}
+.invite-new:hover:not(:disabled) { background: rgba(255, 208, 113, 0.2); }
+.invite-new:disabled { opacity: 0.5; cursor: default; }
+.invite-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1);
+	margin: 0 0 var(--sp-1);
+	padding: var(--sp-1) var(--sp-2);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+}
+.invite-head {
+	display: flex;
+	gap: var(--sp-2);
+	align-items: baseline;
+	flex: 1 1 100%;
+}
+.invite-status {
+	flex: none;
+	padding: 0 0.35rem;
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--gold-dim);
+}
+.invite-status.is-used,
+.invite-status.is-expired { color: var(--ink-soft); opacity: 0.6; }
+.invite-note { font-size: var(--fs-sm); }
+.invite-meta {
+	margin: 0;
+	flex: 1 1 auto;
+	font-size: var(--fs-xs);
+	opacity: 0.55;
+}
+.invite-link {
+	display: flex;
+	gap: var(--sp-1);
+	flex: 1 1 100%;
+	align-items: center;
+}
+.invite-link.fresh { animation: rise 0.14s ease; }
+.invite-url {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 0.2rem var(--sp-1);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	background: var(--stone-900);
+	color: var(--ink);
+	font-size: var(--fs-xs);
+}
+.invite-copy {
+	flex: none;
+	padding: 0.2rem var(--sp-2);
+	border: 1px solid var(--gold-dim);
+	border-radius: var(--r-sm);
+	background: none;
+	color: var(--gold-bright);
+	font-size: var(--fs-xs);
+	cursor: pointer;
+}
+.invite-copy:hover { background: rgba(255, 208, 113, 0.12); }
+.invite-once {
+	margin: 0;
+	flex: 1 1 100%;
+	font-size: var(--fs-xs);
+	color: var(--gold-bright);
+	opacity: 0.8;
+}
+.invite-revoke {
+	flex: none;
+	border: none;
+	background: none;
+	padding: 0.2rem 0;
+	color: var(--ink-soft);
+	font-size: var(--fs-xs);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
+}
+.invite-revoke:hover:not(:disabled) { color: var(--ink); }
+.invite-revoke:disabled { opacity: 0.5; cursor: default; }
+
 /* ---------- Magic symbols ---------- */
 /* Mana ships its own sizing; these only settle it into our type. Pips inside
    prose ride a touch high so they sit on the baseline of a serif face. */

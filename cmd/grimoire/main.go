@@ -13,6 +13,8 @@
 //	GRIMOIRE_SESSION_TTL       session lifetime, Go duration (default 720h)
 //	GRIMOIRE_OPEN_REGISTRATION keep account creation open after the first
 //	                           account exists (default false)
+//	GRIMOIRE_INVITE_TTL        how long admin invite links stay usable, Go
+//	                           duration (default 168h / 7d; 0 = never expire)
 //	GRIMOIRE_ANSWER_CACHE_TTL  how long cached Q&A answers stay fresh, Go
 //	                           duration (default 168h / 7d)
 //	ANTHROPIC_BASE_URL  LLM endpoint (default https://api.anthropic.com; z.ai: https://api.z.ai/api/anthropic)
@@ -91,7 +93,7 @@ Usage:
 
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
-  GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
+  GRIMOIRE_INVITE_TTL, GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
   EMBEDDINGS_BASE_URL, EMBEDDINGS_API_KEY, EMBEDDINGS_MODEL,
   SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, OPEN5E_BASE_URL, DND_REPO, DND_REF`)
 }
@@ -128,6 +130,27 @@ func openRegistration() bool {
 		return true
 	}
 	return false
+}
+
+// inviteTTL reads how long a freshly minted invite link stays usable. An empty
+// value picks the default (7d); a value of zero ("0s") means invites never
+// expire. An unparseable value falls back to the default — a burned invite that
+// a friend has to ask about again is a nuisance, a server that refuses to start
+// over a typo is worse.
+func inviteTTL() time.Duration {
+	raw := os.Getenv("GRIMOIRE_INVITE_TTL")
+	if raw == "" {
+		return auth.DefaultInviteTTL
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		log.Printf("GRIMOIRE_INVITE_TTL=%q is not a valid duration — using %s", raw, auth.DefaultInviteTTL)
+		return auth.DefaultInviteTTL
+	}
+	if d < 0 {
+		return 0 // negative is treated as "never expire", same as zero
+	}
+	return d
 }
 
 // answerCacheTTL reads how long a cached Q&A answer stays fresh. An unparseable
@@ -380,7 +403,7 @@ func runServe() error {
 	}
 
 	// Accounts and sessions share that file too, for the same reason.
-	users, err := auth.New(store.DB(), sessionTTL())
+	users, err := auth.New(store.DB(), sessionTTL(), inviteTTL())
 	if err != nil {
 		return err
 	}

@@ -40,7 +40,7 @@ func newChatServer(t *testing.T, anthropic http.HandlerFunc) *Server {
 	if err != nil {
 		t.Fatalf("open answer cache: %v", err)
 	}
-	users, err := auth.New(store.DB(), 0)
+	users, err := auth.New(store.DB(), 0, 0)
 	if err != nil {
 		t.Fatalf("open auth store: %v", err)
 	}

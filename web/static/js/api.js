@@ -27,6 +27,29 @@ export const api = {
 
 	logout: () => fetch("/api/auth/logout", { method: "POST" }).then(json),
 
+	// Sign up from an admin's invite link (the signed-out gate). Self-service
+	// creation stays off; an invite code is the only way in past the first user.
+	register: (username, password, invite) =>
+		fetch("/api/auth/register", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ username, password, invite }),
+		}).then(json),
+
+	// Invite management — admin only. The server returns each invite's raw code
+	// exactly once, at creation; the list never carries it.
+	createInvite: (note) =>
+		fetch("/api/invites", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(note ? { note } : {}),
+		}).then(json),
+
+	listInvites: () => fetch("/api/invites").then(json),
+
+	revokeInvite: (id) =>
+		fetch(`/api/invites/${encodeURIComponent(id)}`, { method: "DELETE" }).then(json),
+
 	search: (corpus, q, limit = 20, signal) =>
 		fetch(`/api/search?corpus=${encodeURIComponent(corpus)}&q=${encodeURIComponent(q)}&limit=${limit}`,
 			{ signal }).then(json),

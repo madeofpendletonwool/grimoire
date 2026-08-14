@@ -9,6 +9,7 @@ import { initChat, refreshHistory, syncChrome, setCorpus, setFoot } from "./chat
 import { initResolve } from "./resolve.js";
 import { initVoice } from "./voice.js";
 import { initStudy } from "./study.js";
+import { initAdmin } from "./admin.js";
 import { hydrate } from "./icons.js";
 import { initScene, initSettings } from "./scene.js";
 
@@ -93,6 +94,7 @@ function start() {
 	initStudy();
 	syncChrome();
 	initAccount();
+	initAdmin();
 	loadMeta();
 	refreshHistory();
 	if (!isNarrow()) $("composer-input").focus();

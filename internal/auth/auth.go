@@ -1,12 +1,16 @@
-// Package auth stores accounts and server-side sessions for Grimoire.
+// Package auth stores accounts, server-side sessions, and invite links for
+// Grimoire.
 //
 // The tables live in the same SQLite file as the search index and the chat
 // history. That is safe: index.Store.Reset only clears the docs tables, so
 // rebuilding the rules index never signs anyone out.
 //
-// Grimoire is a personal, self-hosted app, so there is no registration flow to
-// speak of: whoever reaches an empty install claims it by creating the first
-// account, and the door is shut behind them unless the operator opens it again.
+// Grimoire is a personal, self-hosted app, so account creation is not open by
+// default: whoever reaches an empty install claims it by creating the first
+// account — which becomes the admin — and the door is shut behind them. The
+// admin then invites friends by minting single-use invite links; signing up
+// requires one. (An operator can still flip GRIMOIRE_OPEN_REGISTRATION to leave
+// self-service creation open, the original escape hatch.)
 package auth
 
 import (
@@ -32,6 +36,9 @@ var (
 	ErrInvalidCredentials = errors.New("wrong name or passphrase")
 	ErrUsernameTaken      = errors.New("that name is already spoken for")
 	ErrNoSession          = errors.New("no valid session")
+	ErrInviteInvalid      = errors.New("invite link is not valid")
+	ErrInviteUsed         = errors.New("invite link has already been used")
+	ErrInviteExpired      = errors.New("invite link has expired")
 )
 
 // DefaultSessionTTL is how long a session lives when the operator does not say
@@ -39,10 +46,19 @@ var (
 // being logged out weekly is worse than the marginal risk.
 const DefaultSessionTTL = 30 * 24 * time.Hour
 
-// User is an account. The password hash never leaves the store.
+// DefaultInviteTTL is how long a freshly minted invite link stays usable when
+// the operator does not say otherwise. Long enough to hand a friend a link in
+// person, short enough that one left lying around does not stay open forever.
+// An inviteTTL of zero means invites never expire.
+const DefaultInviteTTL = 7 * 24 * time.Hour
+
+// User is an account. The password hash never leaves the store. IsAdmin is
+// true only for the first account ever created — the keeper who can mint
+// invites — so an admin is made once, at install time, not by promotion.
 type User struct {
 	ID        string
 	Username  string
+	IsAdmin   bool
 	CreatedAt time.Time
 }
 
@@ -55,21 +71,24 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
-// Store persists users and sessions.
+// Store persists users, sessions, and invites.
 type Store struct {
-	db  *sql.DB
-	ttl time.Duration
+	db        *sql.DB
+	ttl       time.Duration
+	inviteTTL time.Duration
 }
 
 // New builds an auth store on an existing database handle and ensures its
-// schema exists. A ttl of zero picks DefaultSessionTTL.
-func New(db *sql.DB, ttl time.Duration) (*Store, error) {
+// schema exists. A ttl of zero picks DefaultSessionTTL. An inviteTTL of zero
+// means freshly minted invites never expire; the caller (main) applies the
+// default for an unset env var.
+func New(db *sql.DB, ttl, inviteTTL time.Duration) (*Store, error) {
 	if ttl <= 0 {
 		ttl = DefaultSessionTTL
 	}
-	s := &Store{db: db, ttl: ttl}
-	if _, err := db.Exec(schema); err != nil {
-		return nil, fmt.Errorf("auth migrate: %w", err)
+	s := &Store{db: db, ttl: ttl, inviteTTL: inviteTTL}
+	if err := s.migrate(); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -79,6 +98,7 @@ CREATE TABLE IF NOT EXISTS users (
 	id            TEXT PRIMARY KEY,
 	username      TEXT NOT NULL UNIQUE,
 	password_hash TEXT NOT NULL,
+	is_admin      INTEGER NOT NULL DEFAULT 0,
 	created_at    INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -88,7 +108,69 @@ CREATE TABLE IF NOT EXISTS sessions (
 	expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
+CREATE TABLE IF NOT EXISTS invites (
+	id         TEXT PRIMARY KEY,
+	code_hash  TEXT NOT NULL UNIQUE,
+	created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER,
+	used_by    TEXT REFERENCES users(id) ON DELETE SET NULL,
+	used_at    INTEGER,
+	note       TEXT
+);
+CREATE INDEX IF NOT EXISTS invites_created_by ON invites(created_by);
 `
+
+// migrate installs the schema and brings an older database up to date. The
+// only additive change so far is the accounts is_admin column: an install
+// upgraded from before admins existed gets it added, and its oldest account —
+// the keeper who was first through the door — is marked admin to match "first
+// created user is the admin."
+func (s *Store) migrate() error {
+	if _, err := s.db.Exec(schema); err != nil {
+		return fmt.Errorf("auth migrate schema: %w", err)
+	}
+	if err := addColumnIfMissing(s.db, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("auth migrate is_admin: %w", err)
+	}
+	// First created user is the admin. Idempotent: this only ever sets the
+	// oldest account to admin, never clears one, so re-running on upgrade is
+	// safe and correct.
+	if _, err := s.db.Exec(`UPDATE users SET is_admin = 1
+		WHERE id = (SELECT id FROM users ORDER BY created_at ASC, id ASC LIMIT 1)`); err != nil {
+		return fmt.Errorf("auth migrate admin backfill: %w", err)
+	}
+	return nil
+}
+
+// addColumnIfMissing runs ALTER TABLE ADD COLUMN when the column is absent.
+// SQLite has no IF NOT EXISTS for ADD COLUMN, so the pragma is checked first;
+// the query is otherwise free to fail harmlessly if two boots race the check.
+func addColumnIfMissing(db *sql.DB, table, column, decl string) error {
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == column {
+			rows.Close()
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, decl))
+	return err
+}
 
 // Count reports how many accounts exist. Zero means the install is unclaimed
 // and the UI should offer to create the first account.
@@ -104,7 +186,7 @@ func (s *Store) Count(ctx context.Context) (int, error) {
 // authentication existed. It returns ErrNoUsers on an unclaimed install.
 func (s *Store) First(ctx context.Context) (*User, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, username, created_at FROM users ORDER BY created_at ASC, id ASC LIMIT 1`)
+		`SELECT id, username, is_admin, created_at FROM users ORDER BY created_at ASC, id ASC LIMIT 1`)
 	u, err := scanUser(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoUsers
@@ -112,8 +194,18 @@ func (s *Store) First(ctx context.Context) (*User, error) {
 	return u, err
 }
 
-// CreateUser hashes the passphrase and records a new account.
+// CreateUser hashes the passphrase and records a new account. The first account
+// ever created is the admin — the keeper who can mint invite links — so the
+// invariant lives here rather than in the caller. Counting before the insert is
+// safe: SQLite serializes writers, and this is a single-household install.
 func (s *Store) CreateUser(ctx context.Context, username, password string) (*User, error) {
+	return s.createUser(ctx, s.db, username, password)
+}
+
+// createUser is the runner-parametric core of CreateUser, so the same logic
+// runs inside a RegisterWithInvite transaction. runner is satisfied by both
+// *sql.DB and *sql.Tx.
+func (s *Store) createUser(ctx context.Context, q runner, username, password string) (*User, error) {
 	name, err := normalizeUsername(username)
 	if err != nil {
 		return nil, err
@@ -126,10 +218,15 @@ func (s *Store) CreateUser(ctx context.Context, username, password string) (*Use
 		return nil, err
 	}
 
-	u := &User{ID: uuid.NewString(), Username: name, CreatedAt: time.Now().UTC()}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)`,
-		u.ID, u.Username, hash, u.CreatedAt.UnixMilli())
+	var existing int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&existing); err != nil {
+		return nil, fmt.Errorf("count users: %w", err)
+	}
+
+	u := &User{ID: uuid.NewString(), Username: name, IsAdmin: existing == 0, CreatedAt: time.Now().UTC()}
+	_, err = q.ExecContext(ctx,
+		`INSERT INTO users (id, username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)`,
+		u.ID, u.Username, hash, u.IsAdmin, u.CreatedAt.UnixMilli())
 	if err != nil {
 		// The UNIQUE index is the only constraint on the table, so a
 		// constraint failure can only mean the name is taken.
@@ -141,20 +238,35 @@ func (s *Store) CreateUser(ctx context.Context, username, password string) (*Use
 	return u, nil
 }
 
+// IsAdmin reports whether the user is the install's admin. It is the source of
+// truth for gating admin-only endpoints, rather than a value carried on a
+// looked-up session, so a stale context can never authorize an admin action.
+func (s *Store) IsAdmin(ctx context.Context, userID string) (bool, error) {
+	var isAdmin int
+	err := s.db.QueryRowContext(ctx, `SELECT is_admin FROM users WHERE id = ?`, userID).Scan(&isAdmin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("is admin: %w", err)
+	}
+	return isAdmin == 1, nil
+}
+
 // Authenticate checks a passphrase against an account. An unknown name still
 // pays for a full argon2 verification against a dummy hash, so a caller cannot
 // tell "no such account" from "wrong passphrase" by timing the response.
 func (s *Store) Authenticate(ctx context.Context, username, password string) (*User, error) {
 	name := strings.ToLower(strings.TrimSpace(username))
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, username, created_at, password_hash FROM users WHERE username = ?`, name)
+		`SELECT id, username, is_admin, created_at, password_hash FROM users WHERE username = ?`, name)
 
 	var (
 		u       User
 		created int64
 		hash    string
 	)
-	switch err := row.Scan(&u.ID, &u.Username, &created, &hash); {
+	switch err := row.Scan(&u.ID, &u.Username, &u.IsAdmin, &created, &hash); {
 	case errors.Is(err, sql.ErrNoRows):
 		_, _ = verifyPassword(dummyHash(), password)
 		return nil, ErrInvalidCredentials
@@ -202,7 +314,7 @@ func (s *Store) Lookup(ctx context.Context, token string) (*User, error) {
 	}
 	digest := tokenHash(token)
 	row := s.db.QueryRowContext(ctx,
-		`SELECT u.id, u.username, u.created_at, s.expires_at
+		`SELECT u.id, u.username, u.is_admin, u.created_at, s.expires_at
 		   FROM sessions s JOIN users u ON u.id = s.user_id
 		  WHERE s.token_hash = ?`, digest)
 
@@ -210,7 +322,7 @@ func (s *Store) Lookup(ctx context.Context, token string) (*User, error) {
 		u                User
 		created, expires int64
 	)
-	switch err := row.Scan(&u.ID, &u.Username, &created, &expires); {
+	switch err := row.Scan(&u.ID, &u.Username, &u.IsAdmin, &created, &expires); {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, ErrNoSession
 	case err != nil:
@@ -242,6 +354,9 @@ func (s *Store) EndSession(ctx context.Context, token string) error {
 // server-side expiry instead of guessing at it.
 func (s *Store) TTL() time.Duration { return s.ttl }
 
+// InviteTTL is the lifetime new invites get; zero means invites never expire.
+func (s *Store) InviteTTL() time.Duration { return s.inviteTTL }
+
 // tokenHash is what the sessions table stores. SHA-256 is the right primitive
 // here rather than argon2: the token is 256 bits of entropy already, so there
 // is nothing for an attacker to brute-force and no reason to pay for a slow KDF
@@ -254,11 +369,13 @@ func tokenHash(token string) string {
 func scanUser(r interface{ Scan(...any) error }) (*User, error) {
 	var (
 		u       User
+		isAdmin int
 		created int64
 	)
-	if err := r.Scan(&u.ID, &u.Username, &created); err != nil {
+	if err := r.Scan(&u.ID, &u.Username, &isAdmin, &created); err != nil {
 		return nil, err
 	}
+	u.IsAdmin = isAdmin == 1
 	u.CreatedAt = time.UnixMilli(created).UTC()
 	return &u, nil
 }
@@ -297,4 +414,235 @@ func checkPassword(password string) error {
 		return fmt.Errorf("passphrase must be at most %d characters", maxPassword)
 	}
 	return nil
+}
+
+/* ---------- invites ---------- */
+
+// Invite is a single-use registration link. Code is the bearer secret and is
+// populated only by CreateInvite — it is what the admin copies and hands out,
+// and what the invites table stores is only a digest of it, so a leaked
+// database copy cannot be replayed to mint an account.
+type Invite struct {
+	ID        string
+	Code      string // the raw secret; only set on CreateInvite
+	CreatedBy string
+	CreatedAt time.Time
+	ExpiresAt time.Time // zero value means no expiry
+	UsedBy    string    // empty until consumed
+	UsedAt    time.Time // zero value until consumed
+	Note      string
+}
+
+// Used reports whether the invite has already minted an account. A used invite
+// is kept (rather than deleted) so the admin can see who redeemed it and when.
+func (i Invite) Used() bool { return i.UsedBy != "" }
+
+// Expired reports whether the invite's TTL has elapsed. No expiry means never.
+func (i Invite) Expired() bool { return !i.ExpiresAt.IsZero() && time.Now().UTC().After(i.ExpiresAt) }
+
+// Pending reports whether the invite can still mint an account.
+func (i Invite) Pending() bool { return !i.Used() && !i.Expired() }
+
+// maxNote caps an optional, admin-supplied label ("for Alice") so a runaway
+// note cannot stuff the row.
+const maxNote = 200
+
+func normalizeNote(note string) string {
+	note = strings.TrimSpace(note)
+	if len([]rune(note)) > maxNote {
+		note = string([]rune(note)[:maxNote])
+	}
+	return note
+}
+
+// CreateInvite mints a new single-use invite on behalf of an admin. The raw
+// code is returned once, here; only its digest is stored. A zero inviteTTL on
+// the store means the invite never expires.
+func (s *Store) CreateInvite(ctx context.Context, createdBy, note string) (*Invite, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return nil, fmt.Errorf("invite code: %w", err)
+	}
+	code := base64.RawURLEncoding.EncodeToString(raw)
+
+	now := time.Now().UTC()
+	inv := &Invite{
+		ID:        uuid.NewString(),
+		Code:      code,
+		CreatedBy: createdBy,
+		CreatedAt: now,
+		Note:      normalizeNote(note),
+	}
+	if s.inviteTTL > 0 {
+		inv.ExpiresAt = now.Add(s.inviteTTL)
+	}
+	var expires sql.NullInt64
+	if !inv.ExpiresAt.IsZero() {
+		expires = sql.NullInt64{Int64: inv.ExpiresAt.UnixMilli(), Valid: true}
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO invites (id, code_hash, created_by, created_at, expires_at, note)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		inv.ID, tokenHash(code), inv.CreatedBy, inv.CreatedAt.UnixMilli(), expires, inv.Note)
+	if err != nil {
+		return nil, fmt.Errorf("create invite: %w", err)
+	}
+	return inv, nil
+}
+
+// ListInvites returns every invite the admin has minted, newest first. The raw
+// code is never present: it was returned once at creation and is not stored.
+func (s *Store) ListInvites(ctx context.Context) ([]Invite, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, created_by, created_at, expires_at, used_by, used_at, note
+		   FROM invites ORDER BY created_at DESC, id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list invites: %w", err)
+	}
+	defer rows.Close()
+	var out []Invite
+	for rows.Next() {
+		inv, err := scanInvite(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *inv)
+	}
+	return out, rows.Err()
+}
+
+// RevokeInvite deletes an invite, pending or not. Revoking an unknown id is not
+// an error: the caller wanted it gone, and it is. Deleting a spent invite is
+// how the admin trims the list once they no longer need the audit row.
+func (s *Store) RevokeInvite(ctx context.Context, id string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM invites WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("revoke invite: %w", err)
+	}
+	return nil
+}
+
+// ConsumeInvite validates a code and marks it used by userID in one atomic
+// step, so two requests presenting the same link cannot both mint an account.
+// The WHERE used_by IS NULL guard makes the UPDATE a no-op for a code that was
+// redeemed in the gap between the SELECT and the UPDATE.
+func (s *Store) ConsumeInvite(ctx context.Context, code, userID string) error {
+	_, err := s.consumeInvite(ctx, s.db, code, userID)
+	return err
+}
+
+// consumeInvite is the runner-parametric core of ConsumeInvite; it returns the
+// invite's id on success so RegisterWithInvite can tie the consume to the
+// account creation inside one transaction.
+func (s *Store) consumeInvite(ctx context.Context, q runner, code, userID string) (string, error) {
+	if code == "" {
+		return "", ErrInviteInvalid
+	}
+	row := q.QueryRowContext(ctx,
+		`SELECT id, expires_at, used_by FROM invites WHERE code_hash = ?`, tokenHash(code))
+	var (
+		id       string
+		expires  sql.NullInt64
+		usedByID sql.NullString
+	)
+	if err := row.Scan(&id, &expires, &usedByID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrInviteInvalid
+		}
+		return "", fmt.Errorf("consume invite lookup: %w", err)
+	}
+	if usedByID.Valid {
+		return "", ErrInviteUsed
+	}
+	if expires.Valid && time.Now().UTC().UnixMilli() >= expires.Int64 {
+		return "", ErrInviteExpired
+	}
+	now := time.Now().UTC()
+	res, err := q.ExecContext(ctx,
+		`UPDATE invites SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL`,
+		userID, now.UnixMilli(), id)
+	if err != nil {
+		return "", fmt.Errorf("consume invite update: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("consume invite rows: %w", err)
+	}
+	if n == 0 {
+		// Lost the race: another request redeemed it between the SELECT and
+		// the UPDATE. Read back as used rather than guessing.
+		return "", ErrInviteUsed
+	}
+	return id, nil
+}
+
+// RegisterWithInvite validates an invite, creates a non-admin account, and
+// consumes the invite — all in one transaction, so a failure mid-way leaves
+// neither a half-made account nor a burned invite. The new account is never an
+// admin: invites only exist once the install's admin has been bootstrapped, so
+// a user count above zero already governs createUser's admin rule.
+func (s *Store) RegisterWithInvite(ctx context.Context, username, password, code string) (*User, error) {
+	// Validate the cheap inputs before opening a transaction, so a malformed
+	// request pays nothing for a connection.
+	if _, err := normalizeUsername(username); err != nil {
+		return nil, err
+	}
+	if err := checkPassword(password); err != nil {
+		return nil, err
+	}
+	if code == "" {
+		return nil, ErrInviteInvalid
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("register tx: %w", err)
+	}
+	defer tx.Rollback() // noop after a successful commit
+
+	// Create the account first, then consume the invite against the real id.
+	// Both run inside the transaction, so an invalid or already-spent invite
+	// rolls the account back rather than leaving an orphan the friend cannot
+	// retry because the name is now taken.
+	u, err := s.createUser(ctx, tx, username, password)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.consumeInvite(ctx, tx, code, u.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("register commit: %w", err)
+	}
+	return u, nil
+}
+
+// runner is the subset of *sql.DB the tx-aware auth helpers need, satisfied by
+// both *sql.DB and *sql.Tx.
+type runner interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func scanInvite(r interface{ Scan(...any) error }) (*Invite, error) {
+	var (
+		inv     Invite
+		expires sql.NullInt64
+		usedBy  sql.NullString
+		usedAt  sql.NullInt64
+		created int64
+		note    sql.NullString
+	)
+	if err := r.Scan(&inv.ID, &inv.CreatedBy, &created, &expires, &usedBy, &usedAt, &note); err != nil {
+		return nil, err
+	}
+	inv.CreatedAt = time.UnixMilli(created).UTC()
+	if expires.Valid {
+		inv.ExpiresAt = time.UnixMilli(expires.Int64).UTC()
+	}
+	inv.UsedBy = usedBy.String
+	if usedAt.Valid {
+		inv.UsedAt = time.UnixMilli(usedAt.Int64).UTC()
+	}
+	inv.Note = note.String
+	return &inv, nil
 }
