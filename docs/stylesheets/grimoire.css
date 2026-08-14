@@ -118,6 +118,7 @@
 	--md-primary-fg-color: var(--stone-800);
 	--md-primary-bg-color: var(--parchment);
 	--md-accent-fg-color: var(--gold-bright);
+	--md-accent-bg-color: #1a1208; /* hover text on gold — ink, never the theme default */
 	--md-typeset-color: var(--ink);
 	--md-code-bg-color: var(--stone-800);
 	--md-code-fg-color: var(--parchment-2);
@@ -348,8 +349,10 @@ img[src*="/sprites/"] {
 }
 .md-content__inner {
 	/* The tome's page: a nine-sliced parchment sprite, 2x (slice 5, width 10),
-	   supplying background, corners and border in one — so no background-color
-	   and no border-radius here. */
+	   supplying background, corners and border in one — so no border-radius
+	   here. The background-color underneath is the sprite's own fill color
+	   (the tokens are the sprite's pixels), so it changes nothing when the
+	   fill renders and saves the page if a browser drops it. */
 	margin-top: 0.9rem;
 	margin-bottom: 2.6rem;
 	padding: clamp(1.1rem, 3vw, 2rem) clamp(1.1rem, 3.5vw, 2.3rem) clamp(1.4rem, 3vw, 2.3rem);
@@ -358,6 +361,7 @@ img[src*="/sprites/"] {
 	border-color: transparent;
 	border-radius: 0;
 	border-image: url("../assets/ui/panel-parchment.png") 5 fill;
+	background-color: var(--parchment);
 	box-shadow: var(--shadow-3);
 }
 .md-content__inner::before {
@@ -970,8 +974,10 @@ img[src*="/sprites/"] {
 	outline-offset: 2px;
 }
 
-/* ---------- Home hero — the welcome screen ---------- */
-
+/* ---------- Home hero — the gate screen's composition ----------
+   The hero sits on the parchment page, so it takes the gate's colors (the
+   app's own Cinzel-on-parchment title is --outline), not the welcome
+   screen's gold — gold-bright on parchment is 1:1 and reads as nothing. */
 .gr-hero {
 	text-align: center;
 	padding: 1.6rem 0 1.2rem;
@@ -992,8 +998,8 @@ img[src*="/sprites/"] {
 	letter-spacing: 0.16em;
 	text-indent: 0.16em; /* balance the tracking on the last letter */
 	text-transform: uppercase;
-	color: var(--gold-bright);
-	text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+	color: var(--outline);
+	text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 .gr-hero .gr-sub {
 	margin: 0 auto 1.4rem;
@@ -1001,7 +1007,7 @@ img[src*="/sprites/"] {
 	font-family: var(--font-prose);
 	font-style: italic;
 	font-size: 1.18rem;
-	color: var(--ink-soft);
+	color: var(--ink);
 }
 .gr-hero .gr-actions {
 	display: flex;
