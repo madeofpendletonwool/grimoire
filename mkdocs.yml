@@ -24,6 +24,7 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  custom_dir: docs-overrides
   language: en
   font: false # the app self-hosts its fonts; docs/grimoire.css does the same
   logo: assets/sprites/spellbook.png

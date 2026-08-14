@@ -1,0 +1,12 @@
+{#-
+  Theme extension. The site is skinned deliberately: candlelit-stone chrome
+  around a light parchment page (the app's own design), so automatic dark-mode
+  filters would invert the dark ink text on parchment into unreadable silver
+  while leaving the warm panels alone. darkreader-lock asks those filters to
+  leave the pages alone; every other browser ignores it.
+-#}
+{% extends "base.html" %}
+{% block site_meta %}
+  {{ super() }}
+  <meta name="darkreader-lock">
+{% endblock %}
