@@ -9,6 +9,8 @@ A self-hosted, nerdily-themed **rules reference** for **Magic: The Gathering** a
 
 ![status](https://img.shields.io/badge/status-ready-green) ![go](https://img.shields.io/badge/go-1.26-00ADD8) ![docker](https://img.shields.io/badge/docker-multistage-2496ED)
 
+<p align="center"><img src="docs/assets/sprites/openBook.png" width="32" height="32" align="absmiddle"> <strong>Full documentation:</strong> <a href="https://madeofpendletonwool.github.io/grimoire/">madeofpendletonwool.github.io/grimoire</a></p>
+
 ---
 
 ## Features
@@ -313,6 +315,19 @@ Working on the interface? Read **[docs/DESIGN.md](docs/DESIGN.md)** first. It
 covers the token system, the two icon systems and when to use each, the
 nine-slice contract, how the four themes are derived from the backdrop art, and
 the invariants that keep the pixel art crisp and the text readable.
+
+### The documentation site
+
+The pages at **[madeofpendletonwool.github.io/grimoire](https://madeofpendletonwool.github.io/grimoire/)** are
+[Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) in `docs/`,
+skinned with the app's own art (`docs/stylesheets/grimoire.css`), and built by
+`.github/workflows/docs.yml` on every push to `main` that touches them.
+Preview locally:
+
+```bash
+pip install -r docs/requirements.txt
+mkdocs serve
+```
 
 ### Regenerating the art
 

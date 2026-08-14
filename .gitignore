@@ -3,6 +3,9 @@
 /bin/
 /dist/
 
+# mkdocs build output
+/site/
+
 # local data + index (built at runtime)
 /data/
 /runtime/
