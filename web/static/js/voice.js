@@ -11,17 +11,23 @@ const SpeechRecognitionCtor =
 /**
  * Wire the mic button. When the browser exposes no SpeechRecognition (Firefox,
  * Safari) or the page is not in a secure context (Web Speech needs HTTPS or
- * localhost), the button stays disabled with an explanatory tooltip.
+ * localhost), the button stays dimmed and reports why when clicked — a dead
+ * disabled button with only a hover tooltip is easy to miss (and absent on
+ * touch).
  */
 export function initVoice() {
 	const button = $("voice-btn");
 	if (!button) return;
 
 	if (!SpeechRecognitionCtor || !window.isSecureContext) {
-		button.disabled = true;
-		button.title = "Voice input isn't available here — try Chrome or Edge over HTTPS.";
+		const reason = window.isSecureContext
+			? "Voice input needs Chrome or Edge — this browser lacks the Web Speech API."
+			: "Voice input needs a secure connection (HTTPS or localhost). This page is over HTTP, so the mic is off.";
+		markUnavailable(button, reason);
 		return;
 	}
+
+	button.disabled = false;
 
 	const input = $("composer-input");
 	const recognition = new SpeechRecognitionCtor();
@@ -93,4 +99,17 @@ export function initVoice() {
 		input.selectionStart = input.selectionEnd = text.length;
 		input.dispatchEvent(new Event("input", { bubbles: true }));
 	}
+}
+
+/**
+ * Voice isn't supported here. Keep the button dimmed but clickable so the
+ * reason surfaces in the composer footer on click — discoverable on touch and
+ * mouse, unlike a hover-only tooltip on a disabled control.
+ */
+function markUnavailable(button, reason) {
+	button.disabled = false;
+	button.classList.add("is-unavailable");
+	button.setAttribute("aria-disabled", "true");
+	button.title = "Voice input unavailable — click for details";
+	button.addEventListener("click", () => setFoot(reason, true));
 }

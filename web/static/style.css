@@ -735,8 +735,10 @@ kbd {
 	font-size: var(--fs-md);
 	transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
-.voice-btn:hover:not(:disabled) { opacity: 1; }
+.voice-btn:hover:not(:disabled):not(.is-unavailable) { opacity: 1; }
 .voice-btn:disabled { opacity: 0.35; cursor: default; }
+.voice-btn.is-unavailable { opacity: 0.4; cursor: help; }
+.voice-btn.is-unavailable:hover { opacity: 0.55; }
 .voice-btn.is-active {
 	background: var(--accent);
 	border-color: var(--accent-deep);
