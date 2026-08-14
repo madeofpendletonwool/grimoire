@@ -34,7 +34,7 @@ type Resolution struct {
 // A phrase is tried whole first. If that misses, the phrase is segmented
 // greedily longest-first, which is what recovers names run together without
 // punctuation ("Kokusho the Evening Star Sakashima the Impostor" -> two
-// cards). Every hit is checked with nameMatches so Scryfall's lenient fuzzy
+// cards). Every hit is checked with NameMatches so Scryfall's lenient fuzzy
 // matching can't attach an over-long span to the wrong card.
 func Resolve(ctx context.Context, l Looker, phrases []string) Resolution {
 	var res Resolution
@@ -51,7 +51,7 @@ func Resolve(ctx context.Context, l Looker, phrases []string) Resolution {
 		}
 		budget--
 		c, err := l.Lookup(ctx, name)
-		if err != nil || c == nil || !nameMatches(name, c.Name) {
+		if err != nil || c == nil || !NameMatches(name, c.Name) {
 			return nil
 		}
 		return c
@@ -120,8 +120,10 @@ func spanWorthTrying(toks []string) bool {
 	return !connectorWords[last] && !isStopwordLower(last)
 }
 
-// nameMatches reports whether a card is a credible match for the span we
-// searched.
+// NameMatches reports whether a card is a credible match for the span we
+// searched. It is the shared credibility check behind Grimoire's lookup: the
+// D&D/Open5e resolver reuses it for entity names so fuzzy tolerance is
+// consistent across corpora.
 //
 // Scryfall's fuzzy matcher bridges two kinds of user error that we must not
 // reject:
@@ -139,7 +141,7 @@ func spanWorthTrying(toks []string) bool {
 //  2. Close spelling — the alphanumeric forms of the two are within a small
 //     edit distance, and the span is not longer than the card by more than
 //     that budget (the run-on guard).
-func nameMatches(span, cardName string) bool {
+func NameMatches(span, cardName string) bool {
 	spanWords := nameWords(span)
 	if len(spanWords) == 0 {
 		return false
