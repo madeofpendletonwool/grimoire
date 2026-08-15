@@ -20,6 +20,11 @@
 //	ANTHROPIC_BASE_URL  LLM endpoint (default https://api.anthropic.com; z.ai: https://api.z.ai/api/anthropic)
 //	ANTHROPIC_API_KEY   LLM secret key (enables the Q&A chat)
 //	ANTHROPIC_MODEL     model name (e.g. glm-4.6, claude-3-5-sonnet-20241022)
+//	ANTHROPIC_FALLBACK_BASE_URL, ANTHROPIC_FALLBACK_API_KEY, ANTHROPIC_FALLBACK_MODEL
+//	                    standby provider used when the primary fails (out of
+//	                    quota, bad key, overloaded, unreachable). Base URL
+//	                    defaults to Anthropic's, model to ANTHROPIC_MODEL.
+//	                    Further rungs: ANTHROPIC_FALLBACK_2_*, _3_, ...
 //	EMBEDDINGS_BASE_URL OpenAI-compatible embeddings endpoint (default https://api.openai.com/v1)
 //	EMBEDDINGS_API_KEY  embeddings secret key (enables semantic retrieval when set with EMBEDDINGS_MODEL)
 //	EMBEDDINGS_MODEL    embeddings model name (e.g. text-embedding-3-small)
@@ -95,6 +100,7 @@ Usage:
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
   GRIMOIRE_INVITE_TTL, GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
+  ANTHROPIC_FALLBACK_BASE_URL, ANTHROPIC_FALLBACK_API_KEY, ANTHROPIC_FALLBACK_MODEL (and _2_, _3_, ...),
   EMBEDDINGS_BASE_URL, EMBEDDINGS_API_KEY, EMBEDDINGS_MODEL,
   SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, OPEN5E_BASE_URL, DND_REPO, DND_REF, DND_DOCS_DIR`)
 }
@@ -176,6 +182,40 @@ func llmConfig() llm.Config {
 		APIKey:  os.Getenv("ANTHROPIC_API_KEY"),
 		Model:   env("ANTHROPIC_MODEL", "glm-4.6"),
 	}
+}
+
+// llmFallbacks reads the standby providers the chat falls back to when the
+// primary fails — an exhausted balance, a dead key, an endpoint having a bad
+// day. They are read from ANTHROPIC_FALLBACK_* and then numbered
+// ANTHROPIC_FALLBACK_2_*, _3_, ... and are tried in that order. The chain stops
+// at the first gap, so a missing key ends it rather than skipping a rung.
+//
+// A fallback needs only a key: its base URL defaults to Anthropic's (the usual
+// destination when a cheaper gateway runs dry) and its model to the primary's
+// (right when the same model is served from a second account).
+func llmFallbacks(primary llm.Config) []llm.Config {
+	var out []llm.Config
+	for i := 1; ; i++ {
+		prefix := "ANTHROPIC_FALLBACK_"
+		if i > 1 {
+			prefix = fmt.Sprintf("ANTHROPIC_FALLBACK_%d_", i)
+		}
+		key := os.Getenv(prefix + "API_KEY")
+		if strings.TrimSpace(key) == "" {
+			return out
+		}
+		out = append(out, llm.Config{
+			BaseURL: env(prefix+"BASE_URL", llm.DefaultBaseURL),
+			APIKey:  key,
+			Model:   env(prefix+"MODEL", primary.Model),
+		})
+	}
+}
+
+// llmClient builds the chat client over the primary provider and its fallbacks.
+func llmClient() *llm.Client {
+	primary := llmConfig()
+	return llm.New(primary, llmFallbacks(primary)...)
 }
 
 // embeddingsConfig reads the OpenAI-compatible embeddings endpoint settings.
@@ -285,6 +325,12 @@ func buildIndex(ctx context.Context, store *index.Store) error {
 	// D&D chat detects entity mentions by text heuristics only.
 	if err := buildDNDNameDictionary(ctx, store); err != nil {
 		log.Printf("d&d name dictionary skipped: %v (chat will detect entities by text heuristics only)", err)
+	}
+
+	// Record the local-books fingerprint the index was built against, so the
+	// next boot can tell whether the library changed and rebuild on its own.
+	if err := store.SetMeta(ctx, "dnd_docs_fingerprint", data.DNDDocsFingerprint(fetchOpts().DNDDocsDir)); err != nil {
+		log.Printf("record books fingerprint: %v", err)
 	}
 	return nil
 }
@@ -411,6 +457,22 @@ func runServe() error {
 		return fmt.Errorf("ensure index: %w", err)
 	}
 
+	// A changed local library reindexes on its own: fingerprint the books
+	// directory and compare against the one the index was built with. Nobody
+	// should need a terminal because a PDF was added.
+	if dir := fetchOpts().DNDDocsDir; dir != "" {
+		now := data.DNDDocsFingerprint(dir)
+		built, err := store.GetMeta(ctx, "dnd_docs_fingerprint")
+		if err != nil {
+			log.Printf("books fingerprint check: %v", err)
+		} else if now != built {
+			log.Println("local D&D books changed since the last build — reindexing...")
+			if err := buildIndex(ctx, store); err != nil {
+				log.Printf("books reindex failed (serving the existing index): %v", err)
+			}
+		}
+	}
+
 	// Populate semantic vectors when embeddings are configured but a rules
 	// index already exists without them (e.g. enabled after first boot). A
 	// failure is best-effort: retrieval falls back to FTS5-only.
@@ -479,8 +541,10 @@ func runServe() error {
 		log.Printf("adopted %d pre-authentication conversations", adopted)
 	}
 
-	srv, err := server.New(store, llm.New(llmConfig()), cardsService(), rulingsService(), cardDict, chats, answers, studies,
-		server.Auth{Users: users, OpenRegistration: openRegistration()})
+	chatClient := llmClient()
+	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
+		server.Auth{Users: users, OpenRegistration: openRegistration()},
+		func(ctx context.Context) error { return buildIndex(ctx, store) })
 	if err != nil {
 		return err
 	}
@@ -502,7 +566,11 @@ func runServe() error {
 	if embedClient != nil {
 		embedStatus = embedClient.Model()
 	}
-	log.Printf("Grimoire listening on %s (chat configured: %t, embeddings: %s)", addr(), llm.New(llmConfig()).Configured(), embedStatus)
+	chatStatus := fmt.Sprintf("%t", chatClient.Configured())
+	if fb := chatClient.FallbackModels(); len(fb) > 0 {
+		chatStatus += fmt.Sprintf(", falling back to %s", strings.Join(fb, " then "))
+	}
+	log.Printf("Grimoire listening on %s (chat configured: %s, embeddings: %s)", addr(), chatStatus, embedStatus)
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}

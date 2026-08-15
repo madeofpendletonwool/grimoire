@@ -17,16 +17,24 @@ The extractor is layout-aware where it matters for rulebooks:
   become markdown ATX headings; Grimoire's chunker turns each heading section
   into citation-anchored records.
 - Repeated running heads / footers / page numbers are dropped by frequency.
-- Line-wrap hyphens from the print layout are healed ("ref-erence" -> "reference").
-- A "Sage Advice" PDF (official Q&A compendium) is special-cased: each bold-
-  italic question becomes its own heading, so every Q&A is its own record and
-  the sage can cite rulings as precedent.
+- Line wraps from the print layout are healed, both the visible hyphen
+  ("ref-\nerence" -> "reference") and the soft hyphen (U+00AD) that books
+  typeset from a word processor leave behind.
+- Word spacing survives either encoding: a book whose OCR emits each space as
+  its own text span is joined with those spaces intact, rather than arriving as
+  one unsearchable run-on word.
+- A "Sage Advice" PDF (official Q&A compendium) is special-cased: the
+  compendium sets each question in bold italic and keeps that style running
+  into the start of the answer, so a bold-italic run is cut at its question
+  mark — the question becomes a heading, the remainder opens the answer. Every
+  Q&A is then its own record and the sage can cite rulings as precedent.
 - Scanned PDFs (no text layer) are reported and skipped; run OCR on them first
   if you want them in.
 
-The output is plain text with headings — OCR noise in the underlying text
-("leveI" for "level") is left as-is; full-text search tolerates it, and
-attempts to "fix" it risk corrupting real words.
+The output is plain text with headings — OCR letter substitution in the
+underlying text ("leveI" for "level", "Vou" for "You") is left as-is;
+full-text search tolerates it, and attempts to "fix" it risk corrupting real
+words.
 """
 
 import argparse
@@ -105,7 +113,7 @@ class Line:
         self.size, self.bold_italic, self.text = size, bold_italic, text
 
 
-def page_lines(page, drop):
+def page_lines(page, drop, sage=False):
     """Yield styled fragments for one page in reading order: left column top
     to bottom, then right. Each PDF line is first split into consecutive
     same-style span groups, because OCR'd books routinely set a heading's last
@@ -135,28 +143,52 @@ def page_lines(page, drop):
                 continue
             if re.fullmatch(r"\d{1,4}", whole):  # bare page number
                 continue
-            # Split the line into consecutive same-style span groups.
-            groups = []  # [ [style, texts, char_counts...] ]
+            # Split the line into consecutive same-size span groups. Size, not
+            # weight, is the boundary that matters: a heading differs from the
+            # paragraph after it by size, while an italic phrase inside a
+            # sentence (a spell name inside a Sage Advice question) is the same
+            # size and must not break the sentence into fragments. Whether a
+            # group reads as bold-italic is then a property of the group — the
+            # 80%-of-characters test below — rather than of every span in it.
+            groups = []  # [ (size, {text, n, bi_n}) ]
             for span in raw:
                 text = span["text"]
                 if not text.strip():
+                    # Whitespace-only spans are separators, not content: OCR'd
+                    # books (the PHB) emit every inter-word space as its own
+                    # span, and dropping them glues the whole book into
+                    # unsearchable run-on words.
+                    if groups:
+                        groups[-1][1]["text"].append(" ")
                     continue
                 font = span["font"].lower()
                 bi = "bold" in font and "italic" in font
-                style = (round(span["size"]), bi)
-                if groups and groups[-1][0] == style:
+                size = round(span["size"])
+                if groups and groups[-1][0] == size:
                     g = groups[-1][1]
                     g["text"].append(text)
                     g["n"] += len(text.strip())
                     if bi:
                         g["bi_n"] += len(text.strip())
                 else:
-                    groups.append((style, {"text": [text], "n": len(text.strip()), "bi_n": len(text.strip()) if bi else 0}))
-            for style, g in groups:
+                    groups.append((size, {"text": [text], "n": len(text.strip()), "bi_n": len(text.strip()) if bi else 0}))
+            for size, g in groups:
                 text = "".join(g["text"]).strip()
                 if not text:
                     continue
-                lines.append(Line(col, y0, y1, float(style[0]), g["n"] > 0 and g["bi_n"] >= g["n"] * 0.8, text))
+                # "Mostly bold-italic" identifies display type in a rulebook.
+                # In a Q&A compendium it is the wrong test: a question's last
+                # line shares its line with the first words of the answer, so
+                # the bold-italic share there is whatever the wrap happened to
+                # leave — sometimes 0.9, sometimes 0.4. Losing the question
+                # entirely on that coin flip is worse than over-including, and
+                # split_question cuts the answer back off at the question mark,
+                # so any bold-italic at all marks the line.
+                if sage:
+                    bold_italic = g["bi_n"] > 0
+                else:
+                    bold_italic = g["n"] > 0 and g["bi_n"] >= g["n"] * 0.8
+                lines.append(Line(col, y0, y1, float(size), bold_italic, text))
     lines.sort(key=lambda l: (l.col, l.y))
     return lines
 
@@ -170,10 +202,18 @@ def runs(lines):
     cur = None
     for line in lines:
         style = (line.col, round(line.size), line.bold_italic)
+        # Consecutive lines of tightly-leaded print overlap: a reported line box
+        # includes ascender and descender room the next line starts inside, so
+        # the gap between them is routinely negative (-4pt on 11pt leading).
+        # Requiring a non-negative gap therefore refused to group any wrapped
+        # line — which is why questions and headings arrived in fragments. Lines
+        # are sorted top-down, so an overlap can never exceed one line height.
+        height = max(line.y1 - line.y, 4)
+        gap = line.y - cur["y1"] if cur is not None else 0
         adjacent = (
             cur is not None
             and cur["style"] == style
-            and 0 <= line.y - cur["y1"] < max(line.y1 - line.y, 4) * 1.9
+            and -height <= gap < height * 1.9
         )
         if adjacent:
             cur["text"].append(line.text)
@@ -218,8 +258,37 @@ def looks_like_heading(text):
     return True
 
 
+def split_question(text):
+    """Split a Sage Advice bold-italic run into its question and the opening
+    words of its answer. The compendium sets each question in bold italic and
+    then keeps that style running into the start of the answer ("...for the
+    extra damage? The Great Weapon Fighting feature..."), so the question mark,
+    not the style, is where one ends and the other begins.
+
+    Deliberately not gated on looks_like_heading: a Sage Advice question is a
+    whole sentence, and the word cap that keeps letterspaced body text out of
+    the heading stream is exactly what used to reject these — leaving only the
+    accidental short tails of wrapped questions ("in 4 hours?") as headings.
+
+    A run carrying no question yields ("", ""), and the caller treats it as
+    ordinary prose.
+    """
+    text = text.strip().lstrip("\t ").strip()
+    i = text.find("?")
+    if i < 0:
+        return "", ""
+    return text[: i + 1].strip(), text[i + 1 :].strip()
+
+
 def heal_hyphens(text):
-    """Join print-layout line wraps: 'ref-\\nerences' -> 'references'."""
+    """Join print-layout line wraps: 'ref-\\nerences' -> 'references'.
+
+    A soft hyphen (U+00AD) is the same wrap marker in invisible form, and books
+    typeset from a word processor are full of them. Left in, they split words
+    no query will ever spell that way ('Hand\\xadbook', 'Di\\xadvine'), so they
+    are removed along with the whitespace the wrap left behind.
+    """
+    text = re.sub(r"­[ \t]*\n?[ \t]*", "", text)
     text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
     return re.sub(r"[ \t]*\n[ \t]*", " ", text)
 
@@ -233,7 +302,7 @@ def collect_heading_sizes(doc, body, max_pages=300):
     counts = Counter()
     for pno in range(0, min(len(doc), max_pages)):
         for run in runs(page_lines(doc[pno], frozenset())):
-            if run["size"] > body + 1.2 and looks_like_heading(heal_hyphens(" ".join(run["text"]))):
+            if run["size"] > body + 1.2 and looks_like_heading(heal_hyphens("\n".join(run["text"]))):
                 counts[round(run["size"])] += 1
     real = {s: n for s, n in counts.items() if n >= 3}
     if not real:
@@ -263,7 +332,7 @@ def extract_pdf(path, out_dir, force_sage=False):
     ordered = sorted(collect_heading_sizes(doc, body), reverse=True)[:5]
     levels = [(i + 2, s) for i, s in enumerate(ordered)]
 
-    md = [f"# {title_from_filename(path)}", ""]
+    md = [f"# {title_from_filename(path, sage)}", ""]
     sections = 0
     pages = len(doc)
     # The previous md entry is prose that an unfinished sentence can continue —
@@ -279,15 +348,24 @@ def extract_pdf(path, out_dir, force_sage=False):
         )
 
     for pno in range(pages):
-        for run in runs(page_lines(doc[pno], drop)):
-            text = heal_hyphens(" ".join(run["text"])).strip()
+        for run in runs(page_lines(doc[pno], drop, sage)):
+            # Joined with newlines, not spaces: heal_hyphens needs to see where
+            # each printed line ended to tell a wrap ("mod-\nifiers") from a
+            # real compound ("hand-crossbow"). It collapses them to spaces
+            # itself once the wraps are healed.
+            text = heal_hyphens("\n".join(run["text"])).strip()
             if not text:
                 continue
-            if sage and run["bold_italic"] and looks_like_heading(text):
-                md.append("")
-                md.append(f"#### {text}")
-                sections += 1
-                continue
+            if sage and run["bold_italic"]:
+                question, answer = split_question(text)
+                if question:
+                    md.append("")
+                    md.append(f"#### {question}")
+                    sections += 1
+                    if answer:
+                        md.append("")
+                        md.append(answer)
+                    continue
             lvl = heading_level(run["size"], body, levels)
             if lvl and looks_like_heading(text):
                 md.append("")
@@ -390,9 +468,21 @@ def _merge_up(md):
     return out
 
 
-def title_from_filename(path):
-    name = path.stem
-    return name.replace("_", " ").replace("-", " ").strip().title()
+def title_from_filename(path, sage=False):
+    """The book's display name, written as the document's H1. Grimoire reads it
+    back as the citation source, so it is the name a reader sees under an
+    answer. Book file names are already properly cased ("Xanathar's Guide to
+    Everything"); title-casing them only produced "Xanathar'S Guide To
+    Everything", so the stem is kept as-is apart from separator cleanup."""
+    if sage:
+        # The prompt tells the model to treat these excerpts as official
+        # precedent by name, so the source has to read as the real document
+        # rather than as whatever the PDF happened to be called.
+        return "Sage Advice Compendium"
+    name = path.stem.replace("_", " ").strip()
+    if name.islower():  # a genuinely lowercase file name still deserves a cap
+        name = name.title()
+    return name
 
 
 def slugify(name):

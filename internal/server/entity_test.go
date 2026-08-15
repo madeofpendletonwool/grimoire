@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -55,8 +56,10 @@ func TestAskDNDEntityGrounding(t *testing.T) {
 	// prompt, while still returning a normal answer.
 	var capturedRequest string
 	anthropic := func(w http.ResponseWriter, r *http.Request) {
-		buf := make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(buf)
+		// Read the whole body: a single Read fills at most one chunk, so a
+		// prompt that grows past it would silently capture a prefix and fail
+		// assertions about anything near the end.
+		buf, _ := io.ReadAll(r.Body)
 		capturedRequest = string(buf)
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"Fireball is a 3rd-level evocation spell dealing 8d6 fire damage."}]}`))
@@ -75,7 +78,7 @@ func TestAskDNDEntityGrounding(t *testing.T) {
 	}
 	up := httptest.NewServer(http.HandlerFunc(anthropic))
 	t.Cleanup(up.Close)
-	s, err := New(store, llm.New(llm.Config{BaseURL: up.URL, APIKey: "test-key", Model: "test-model"}), nil, nil, nil, nil, answers, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{BaseURL: up.URL, APIKey: "test-key", Model: "test-model"}), nil, nil, nil, nil, answers, nil, Auth{}, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}

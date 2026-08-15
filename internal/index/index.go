@@ -441,6 +441,24 @@ func (s *Store) CorpusMeta(ctx context.Context) (map[data.Corpus]data.CorpusMeta
 	return out, rows.Err()
 }
 
+// SetMeta stores a key/value marker in index_meta (alongside built_at). Used
+// for change detection between boots, e.g. the local-books fingerprint.
+func (s *Store) SetMeta(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO index_meta(key, value) VALUES(?, ?)`, key, value)
+	return err
+}
+
+// GetMeta reads a marker written by SetMeta. An absent key yields "" with no
+// error.
+func (s *Store) GetMeta(ctx context.Context, key string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM index_meta WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
 // Indexed reports whether the store has any documents.
 func (s *Store) Indexed(ctx context.Context) (bool, error) {
 	var n int
@@ -518,6 +536,15 @@ const maxGroupDocs = 60
 
 // maxExpandGroups bounds how many whole rule groups one question pulls in.
 const maxExpandGroups = 2
+
+// maxChildDocs is the largest subsection tree one seed pulls in. A focused
+// section ("Equipment — Weapons", 9 records) and a whole class (29) both fit;
+// anything chapter-sized does not, and falls back to the seed's own section.
+const maxChildDocs = 40
+
+// maxExpandChildren bounds how many seeds pull their subsection tree, so one
+// broad hit cannot spend the whole grounding budget on its descendants.
+const maxExpandChildren = 3
 
 // Expand grows a set of search hits into the grounding context handed to the
 // Q&A model.
@@ -618,6 +645,45 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 			return nil, err
 		}
 		for _, d := range sec {
+			if !push(d) {
+				return out, nil
+			}
+		}
+	}
+
+	// Last tier: a seed's own subsection tree. A hit routinely lands on a
+	// parent section whose substance lives underneath it — the SRD's weapons
+	// table is a child of "Equipment — Weapons", not a sibling of it — and the
+	// two tiers above cannot reach it. Sibling chunks stop at the heading, and
+	// the enclosing chapter (144 records for equipment) is far past the budget,
+	// so the section a question actually needs sits one hop away, structurally
+	// unreachable. Numbered MTG rules never had this gap: Section expands 205
+	// into 205.1a by number prefix, and D&D path numbers nest the same way.
+	//
+	// It runs last so the focused tiers claim the budget first, and it is
+	// bounded twice — a tree larger than maxChildDocs is refused outright, and
+	// only the first maxExpandChildren seeds pull one at all.
+	trees := 0
+	for _, r := range seeds {
+		if trees >= maxExpandChildren {
+			break
+		}
+		if expanded[ruleGroup(r.Number)] || expanded[data.DNDGroupKey(r.Number)] {
+			continue // the whole group is already in; its children came with it
+		}
+		key := data.DNDSectionKey(r.Number)
+		if key == "" {
+			continue // MTG rules get subrule expansion from Section
+		}
+		kids, err := s.dndSubtreeDocs(ctx, corpus, key)
+		if err != nil {
+			return nil, err
+		}
+		if len(kids) == 0 || len(kids) > maxChildDocs {
+			continue
+		}
+		trees++
+		for _, d := range kids {
 			if !push(d) {
 				return out, nil
 			}
@@ -749,13 +815,23 @@ func isBareChapter(chapter string) bool {
 // Used by study mode to build decks over a document's entries. A slug without
 // a "/" yields no docs.
 func (s *Store) DNDChildren(ctx context.Context, corpus data.Corpus, slug string) ([]Result, error) {
-	slug = strings.Trim(slug, "/")
-	if slug == "" || strings.Contains(slug, "/") {
+	if strings.Contains(strings.Trim(slug, "/"), "/") {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, ftsSectionSQL, fmt.Sprintf("number:%q*", slug), corpus)
+	return s.dndSubtreeDocs(ctx, corpus, slug)
+}
+
+// dndSubtreeDocs returns every D&D record nested under a path prefix — the
+// records whose number begins with prefix + "/" — in number order. A file slug
+// yields the whole document; a section key yields that heading's subsections.
+func (s *Store) dndSubtreeDocs(ctx context.Context, corpus data.Corpus, prefix string) ([]Result, error) {
+	prefix = strings.Trim(prefix, "/")
+	if prefix == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, ftsSectionSQL, fmt.Sprintf("number:%q*", prefix), corpus)
 	if err != nil {
-		return nil, fmt.Errorf("dnd children: %w", err)
+		return nil, fmt.Errorf("dnd subtree: %w", err)
 	}
 	defer rows.Close()
 	var out []Result
@@ -764,7 +840,9 @@ func (s *Store) DNDChildren(ctx context.Context, corpus data.Corpus, slug string
 		if err := rows.Scan(&r.Number, &r.Title, &r.Body, &r.Source); err != nil {
 			return nil, err
 		}
-		if !strings.HasPrefix(r.Number, slug+"/") {
+		// The MATCH is a prefix match on the tokenized number column; keep only
+		// records actually nested under the prefix.
+		if !strings.HasPrefix(r.Number, prefix+"/") {
 			continue
 		}
 		out = append(out, r)

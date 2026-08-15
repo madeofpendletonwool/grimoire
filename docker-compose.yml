@@ -22,6 +22,13 @@ services:
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.z.ai/api/anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-glm-4.6}
+      # Standby provider, used when the primary is out of quota, rate limited,
+      # rejecting its key, or unreachable. Unset by default; the key alone is
+      # enough (base URL defaults to Anthropic's, model to ANTHROPIC_MODEL).
+      # Further rungs: ANTHROPIC_FALLBACK_2_*, _3_, ...
+      ANTHROPIC_FALLBACK_BASE_URL: ${ANTHROPIC_FALLBACK_BASE_URL:-}
+      ANTHROPIC_FALLBACK_API_KEY: ${ANTHROPIC_FALLBACK_API_KEY:-}
+      ANTHROPIC_FALLBACK_MODEL: ${ANTHROPIC_FALLBACK_MODEL:-}
       GRIMOIRE_ADDR: ${GRIMOIRE_ADDR:-:8080}
       # Index + chat history + accounts, on the named volume mounted above.
       GRIMOIRE_DB: ${GRIMOIRE_DB:-/data/grimoire.db}

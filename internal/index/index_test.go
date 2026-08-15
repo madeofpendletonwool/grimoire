@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/madeofpendletonwool/grimoire/internal/data"
@@ -390,6 +391,115 @@ func TestExpand_DNDPullsWholeGroupAndSection(t *testing.T) {
 	}
 	if got[0].Number != "spells/0003/0042.0" {
 		t.Errorf("seed should lead the expansion, got %s", got[0].Number)
+	}
+}
+
+// equipmentDataset mirrors the shape that defeated expansion in the real SRD:
+// a chapter far too large to pull whole, a seed landing on a parent section
+// whose own heading has no sibling chunks, and the substance the question
+// actually needs (the weapons table) sitting in a child section under it.
+func equipmentDataset(children int) *data.Dataset {
+	recs := []data.Record{
+		{Corpus: data.CorpusDND, Number: "equipment/0001/0003.0", Title: "Equipment — Weapons", Body: "Weapons fall into categories: Simple or Martial, Melee or Ranged.", Source: "SRD equipment"},
+	}
+	for i := 0; i < children; i++ {
+		recs = append(recs, data.Record{
+			Corpus: data.CorpusDND,
+			Number: fmt.Sprintf("equipment/0001/0003/0006.%d", i),
+			Title:  fmt.Sprintf("Equipment — Weapons — Mastery Properties (part %d)", i+1),
+			Body:   fmt.Sprintf("Greatclub — 1d8 Bludgeoning — Two-Handed — Push — 10 lb. — 2 SP (part %d)", i+1),
+			Source: "SRD equipment",
+		})
+	}
+	// Chapter filler: enough to put whole-group expansion out of budget, the
+	// way the real 144-record equipment chapter does.
+	for i := 0; i < maxGroupDocs+5; i++ {
+		recs = append(recs, data.Record{
+			Corpus: data.CorpusDND,
+			Number: fmt.Sprintf("equipment/0001/%04d.0", 100+i),
+			Title:  fmt.Sprintf("Equipment — Gear %d", i),
+			Body:   "Adventuring gear entry.",
+			Source: "SRD equipment",
+		})
+	}
+	return &data.Dataset{
+		Records: recs,
+		Meta:    map[data.Corpus]data.CorpusMeta{data.CorpusDND: {Name: "D&D 5e SRD", Version: "master", SourceURL: "y", RecordCount: len(recs)}},
+	}
+}
+
+func TestExpand_DNDPullsChildSections(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.Index(ctx, equipmentDataset(3)); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	seed := Result{Number: "equipment/0001/0003.0", Title: "Equipment — Weapons"}
+	got, err := s.Expand(ctx, data.CorpusDND, []Result{seed})
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	have := map[string]bool{}
+	for _, r := range got {
+		have[r.Number] = true
+	}
+	// The seed's own section has no siblings and its chapter is oversized, so
+	// without the child tier the expansion is the seed alone.
+	for i := 0; i < 3; i++ {
+		want := fmt.Sprintf("equipment/0001/0003/0006.%d", i)
+		if !have[want] {
+			t.Errorf("child section %s missing: %v", want, numbersOf(got))
+		}
+	}
+	if have["equipment/0001/0100.0"] {
+		t.Errorf("oversized chapter leaked in: %v", numbersOf(got))
+	}
+	if got[0].Number != seed.Number {
+		t.Errorf("seed should lead the expansion, got %s", got[0].Number)
+	}
+}
+
+func TestExpand_DNDSkipsOversizedChildTree(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.Index(ctx, equipmentDataset(maxChildDocs+1)); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	got, err := s.Expand(ctx, data.CorpusDND, []Result{{Number: "equipment/0001/0003.0", Title: "Equipment — Weapons"}})
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	// A subtree past the cap is refused whole rather than half-pulled: a
+	// truncated tree would read as a complete one to the model.
+	for _, r := range got {
+		if strings.HasPrefix(r.Number, "equipment/0001/0003/") {
+			t.Fatalf("oversized child tree pulled in: %v", numbersOf(got))
+		}
+	}
+}
+
+// MTG rules already expand into their subrules through Section; the child tier
+// must not double-handle them.
+func TestExpand_ChildTierIgnoresNumberedRules(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.Index(ctx, layerDataset()); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	got, err := s.Expand(ctx, data.CorpusMTG, []Result{{Number: "613.6"}})
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if len(got) == 0 || got[0].Number != "613.6" {
+		t.Errorf("MTG expansion changed shape: %v", numbersOf(got))
+	}
+	// The group still comes along the way it always did.
+	have := map[string]bool{}
+	for _, r := range got {
+		have[r.Number] = true
+	}
+	if !have["613.1"] {
+		t.Errorf("MTG group expansion regressed: %v", numbersOf(got))
 	}
 }
 

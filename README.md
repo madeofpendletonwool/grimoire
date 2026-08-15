@@ -41,7 +41,7 @@ docker compose up --build
 
 Open <http://localhost:8080>. The first visit asks you to create the keeper account — pick a name and passphrase and you are in. Search works immediately; the Q&A chat is enabled once `ANTHROPIC_API_KEY` is set.
 
-The search index is built on first run (it fetches the MTG Comprehensive Rules and the D&D 5e SRD) and cached in a volume, so subsequent starts are instant. To rebuild it:
+The search index is built on first run (it fetches the MTG Comprehensive Rules and the D&D 5e SRD) and cached in a volume, so subsequent starts are instant. Rebuilds happen on their own: local D&D books are fingerprinted at every boot and a change triggers a reindex, and the admin has a **Rebuild the index now** button in Settings. The command remains as an escape hatch:
 
 ```bash
 docker compose run --rm grimoire index
@@ -58,6 +58,16 @@ The chat speaks the **Anthropic Messages API** and is fully configurable, so it 
 | `ANTHROPIC_MODEL`   | `glm-4.6`                        | Any model the endpoint serves (e.g. `claude-3-5-sonnet-20241022`). |
 
 The key is read from the environment only — it is never baked into the image, the compose file, source, or logs. Without a key, search works fully and the chat shows a "configure a key" notice.
+
+### Fallback provider (optional)
+
+| Variable                      | Default                     | Notes                                                       |
+| ----------------------------- | --------------------------- | ----------------------------------------------------------- |
+| `ANTHROPIC_FALLBACK_API_KEY`  | _(empty)_                   | Secret. Enables the standby when set — the only required var. |
+| `ANTHROPIC_FALLBACK_BASE_URL` | `https://api.anthropic.com` | Any Anthropic-compatible endpoint.                           |
+| `ANTHROPIC_FALLBACK_MODEL`    | `ANTHROPIC_MODEL`           | Defaults to the primary's model.                             |
+
+The chat hands off to the standby when the primary fails for a reason a second account wouldn't share — out of quota or credit, rate limited, key rejected, endpoint overloaded or unreachable — so running dry mid-session degrades to a second account instead of to a broken chat. A malformed request is not retried elsewhere, and the handoff only happens before any of the answer has streamed. Chain more with `ANTHROPIC_FALLBACK_2_*`, `_3_`, …
 
 ### Semantic retrieval (optional)
 
@@ -201,6 +211,8 @@ stable rule numbers).
 | `POST` | `/api/invites`   | `{note?}` (admin)                            | `{invite:{id,code,url,status,note,created_at,expires_at?}}` — `code`/`url` shown once, at creation |
 | `GET`  | `/api/invites`   | — (admin)                                    | `{invites:[{id,status,note,created_at,expires_at?,used_at?}]}` — never the raw `code` |
 | `DELETE`| `/api/invites/{id}` | — (admin)                                 | `204`; revokes a pending link (or trims a spent one) |
+| `POST` | `/api/admin/reindex` | — (admin)                                | `202 {running,…}` — rebuild the index in the background; `409` if one is already running |
+| `GET`  | `/api/admin/reindex` | — (admin)                                | `{running,started_at,finished_at,error}` — how the rebuild is doing |
 | `GET`  | `/healthz`     | —                                               | `{status, indexed}`                  |
 
 Every `/api/*` endpoint requires a session except the auth handshake routes
@@ -283,6 +295,8 @@ docker compose run --rm -e DND_DOCS_DIR=/path/to/docs grimoire index
 ```
 
 The extractor reads two-column pages column-by-column, turns font-size structure into headings, drops running heads, and special-cases the Sage Advice compendium (each bold-italic question becomes its own record, so the sage can cite official rulings as precedent). Scanned PDFs with no text layer are reported and skipped — OCR them first. The extracted books are for your personal reference; don't commit them.
+
+You do not reindex by hand. A boot fingerprints the books directory and rebuilds automatically when it changed, and the admin has a **Library → Rebuild the index now** control in Settings for anything else (a rules refresh, a forced rebuild). Both paths run the full rebuild in the background — the app keeps serving the old index until the new one lands.
 
 ## Architecture
 

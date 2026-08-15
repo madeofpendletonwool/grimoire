@@ -31,7 +31,7 @@ func newStudyServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("new study store: %v", err)
 	}
-	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, studies, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, studies, Auth{}, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestHandleStudy_WhenStoreNil(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, nil, Auth{})
+	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, nil, Auth{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestHandleStudyGrade_PersistsAcrossServerInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s1, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, studies, Auth{})
+	s1, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, studies, Auth{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestHandleStudyGrade_PersistsAcrossServerInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, studies2, Auth{})
+	s2, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, studies2, Auth{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

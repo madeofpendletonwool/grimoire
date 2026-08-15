@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -182,11 +183,11 @@ func chunkMarkdown(f mdFile, _ string) []Record {
 	}
 
 	type section struct {
-		level  int
-		title  string
-		parent string
+		level   int
+		title   string
+		parent  string
 		ordPath []int // own ordinal plus every ancestor's, root first
-		body   *strings.Builder
+		body    *strings.Builder
 	}
 	var secs []*section
 	var cur *section
@@ -396,12 +397,68 @@ var tableRowRe = regexp.MustCompile(`^\s*\|(.+)\|\s*$`)
 // tableSeparatorRe matches a table's alignment row: |---|:---:|---
 var tableSeparatorRe = regexp.MustCompile(`^\s*\|[\s:|-]+\|\s*$`)
 
+// htmlTableRe matches a whole HTML table, tags and all.
+var htmlTableRe = regexp.MustCompile(`(?is)<table[^>]*>.*?</table>`)
+
+// htmlRowRe matches one HTML table row.
+var htmlRowRe = regexp.MustCompile(`(?is)<tr[^>]*>(.*?)</tr>`)
+
+// htmlCellRe matches one HTML table cell, header or data.
+var htmlCellRe = regexp.MustCompile(`(?is)<t[dh][^>]*>(.*?)</t[dh]>`)
+
+// htmlTagRe matches any remaining tag, so stray markup never reaches the model.
+// A tag name must start with a letter, which keeps prose comparisons ("a DC
+// < 10 > the modifier") from being eaten as markup.
+var htmlTagRe = regexp.MustCompile(`(?is)</?[a-z][^>]*>`)
+
+// wsRe matches a run of whitespace.
+var wsRe = regexp.MustCompile(`\s+`)
+
+// flattenHTMLTables renders HTML tables as text rows, the same shape markdown
+// pipe tables get. The SRD's markdown carries its most valuable tables as raw
+// HTML — class progression, monster stats, equipment, starting gear — and left
+// alone they reach FTS and the model as a wall of <tr>/<td>, which matches no
+// query and spends context on markup. Rows of one table stay in one block so
+// the chunker keeps the table together.
+func flattenHTMLTables(s string) string {
+	if !strings.Contains(s, "<") {
+		return s
+	}
+	flattenRows := func(table string) string {
+		var rows []string
+		for _, m := range htmlRowRe.FindAllStringSubmatch(table, -1) {
+			var cells []string
+			for _, c := range htmlCellRe.FindAllStringSubmatch(m[1], -1) {
+				cell := strings.TrimSpace(wsRe.ReplaceAllString(htmlTagRe.ReplaceAllString(c[1], ""), " "))
+				if cell != "" {
+					cells = append(cells, cell)
+				}
+			}
+			if len(cells) > 0 {
+				rows = append(rows, strings.Join(cells, " — "))
+			}
+		}
+		if len(rows) == 0 {
+			return ""
+		}
+		return "\n" + strings.Join(rows, "\n") + "\n"
+	}
+	s = htmlTableRe.ReplaceAllStringFunc(s, flattenRows)
+	// Rows outside a <table> (a table the source never closed) still flatten.
+	s = htmlRowRe.ReplaceAllStringFunc(s, func(row string) string {
+		return flattenRows("<table>" + row + "</table>")
+	})
+	return htmlTagRe.ReplaceAllString(s, "")
+}
+
 // cleanMarkdown normalizes a markdown section body into plain text for FTS.
 // Tables are flattened rather than dropped — each row becomes "cell — cell"
 // on its own line — so tabulated rules (equipment, class tables, spell lists)
 // stay searchable. A table with a header row keeps it, which is enough for the
-// row text to carry its own context.
+// row text to carry its own context. Both table dialects the sources use are
+// handled: markdown pipe rows below, and HTML tables first.
 func cleanMarkdown(s string) string {
+	s = flattenHTMLTables(s)
 	var b strings.Builder
 	for _, line := range strings.Split(s, "\n") {
 		t := strings.TrimSpace(line)
@@ -501,13 +558,60 @@ func ParseDNDDocs(dir string) ([]Record, error) {
 	}
 	var records []Record
 	for _, f := range files {
-		base := strings.TrimSuffix(f.Path, filepath.Ext(f.Path))
+		label := docTitle(f)
 		for _, r := range chunkMarkdown(f, "") {
-			r.Source = "D&D books — " + titleize(base)
+			r.Source = "D&D books — " + label
 			records = append(records, r)
 		}
 	}
 	return records, nil
+}
+
+// docTitle names a local document for citation. A document's own H1 wins — the
+// PDF extractor writes the book's real title there ("Xanathar's Guide to
+// Everything", "Sage Advice Compendium"), which is what a reader should see
+// under an answer and what the prompt's Sage Advice rule matches on. A file
+// without an H1 falls back to its name.
+func docTitle(f mdFile) string {
+	for _, line := range strings.Split(f.Content, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		if m := headingRe.FindStringSubmatch(t); m != nil && len(m[1]) == 1 {
+			if title := strings.TrimSpace(m[2]); title != "" {
+				return title
+			}
+		}
+		break // content before any H1 means the file has no title line
+	}
+	return titleize(strings.TrimSuffix(f.Path, filepath.Ext(f.Path)))
+}
+
+// DNDDocsFingerprint summarizes a local-docs directory's contents — file
+// names, sizes, modification times — so a boot can detect that the books
+// changed since the index was built and rebuild without anyone running a
+// command. Content is not hashed: these are multi-megabyte books, and
+// name+size+mtime catches every edit a person makes. A missing or empty
+// directory yields a stable empty fingerprint.
+func DNDDocsFingerprint(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var parts []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s:%d:%d", e.Name(), info.Size(), info.ModTime().UnixNano()))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|")
 }
 
 func pathBase(p string) string {

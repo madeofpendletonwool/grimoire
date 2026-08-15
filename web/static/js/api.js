@@ -87,6 +87,11 @@ export const api = {
 		fetch(`/api/study/queue?corpus=${encodeURIComponent(corpus)}&limit=${limit}` +
 			(topic ? `&topic=${encodeURIComponent(topic)}` : ""), { signal }).then(json),
 
+	// Index rebuild — admin only. Start returns 202 and the rebuild continues
+	// in the background; poll status until running turns false.
+	reindexStart: () => fetch("/api/admin/reindex", { method: "POST" }).then(json),
+	reindexStatus: () => fetch("/api/admin/reindex").then(json),
+
 	studyGrade: (key, corpus, topic, grade) =>
 		fetch("/api/study/grade", {
 			method: "POST",

@@ -1521,6 +1521,8 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	font-size: var(--fs-xs);
 	opacity: 0.5;
 }
+/* A failed rebuild is the one hint worth full attention. */
+.set-hint.warn { opacity: 0.9; color: var(--ember); }
 .invite-new-row { margin: 0 0 var(--sp-1); }
 .invite-new {
 	justify-content: center;

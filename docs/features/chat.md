@@ -41,6 +41,12 @@ The chat speaks the **Anthropic Messages API** and is fully configurable, so it 
 
 The key is read from the environment only — it is never baked into the image, the compose file, source, or logs. Without a key, search works fully and the chat shows a "configure a key" notice. All configuration variables are covered in [Configuration](../deployment/configuration.md).
 
+### When the provider runs dry
+
+Set `ANTHROPIC_FALLBACK_API_KEY` (plus `ANTHROPIC_FALLBACK_BASE_URL` / `ANTHROPIC_FALLBACK_MODEL` if the standby differs from the primary) and the chat hands off to that provider whenever the first one fails for a reason a second account wouldn't share: quota or credit exhausted, a rate limit, an expired key, an overloaded or unreachable endpoint. Running out of usage mid-session then degrades to a second account instead of to a broken chat — the asker sees an answer, not an error.
+
+The handoff only happens *before* any of the answer has streamed, so a reader never sees two half-answers spliced together, and a request the endpoint rejects as malformed is not retried elsewhere. More standbys can be chained as `ANTHROPIC_FALLBACK_2_*`, `_3_`, … — see [Configuration](../deployment/configuration.md#fallback-providers-optional).
+
 ## Semantic retrieval (optional)
 
 Keyword retrieval misses questions whose words don't overlap the rule they need — *"does my hexproof guy die to a board wipe?"* shares no terms with the destroy/damage rules. Set an **OpenAI-compatible embeddings** endpoint and retrieval adds a vector pass alongside FTS5, merging in semantically close rules.

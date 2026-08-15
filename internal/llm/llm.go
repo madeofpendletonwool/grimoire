@@ -2,6 +2,12 @@
 // feature. The base URL, key, and model are configurable so it can target
 // Anthropic directly or an Anthropic-compatible endpoint such as
 // z.ai (https://api.z.ai/api/anthropic) running a GLM model.
+//
+// A client can hold more than one provider: the primary plus an ordered chain
+// of fallbacks. When a call fails for a reason another provider might not share
+// — exhausted quota, an expired key, an overloaded or unreachable endpoint —
+// the next provider in the chain answers instead, so running out of credit on
+// one account degrades to a second account rather than to a broken chat.
 package llm
 
 import (
@@ -9,8 +15,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -31,31 +39,68 @@ const DefaultBaseURL = "https://api.anthropic.com"
 // runs long, and a truncated answer is worse than a verbose one.
 const maxAnswerTokens = 4096
 
-// Client is an Anthropic Messages API client.
+// Client is an Anthropic Messages API client over one or more providers.
 type Client struct {
-	cfg  Config
-	http *http.Client
+	providers []Config // primary first, then fallbacks in order
+	http      *http.Client
 }
 
-// New builds a client. A nil/empty key yields a client that reports
-// Configured()==false; calls then return ErrNotConfigured.
-func New(cfg Config) *Client {
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = DefaultBaseURL
+// New builds a client from a primary provider and any number of fallbacks,
+// tried in order when the one before it fails. A nil/empty key on every
+// provider yields a client that reports Configured()==false; calls then return
+// ErrNotConfigured. Providers without a key are skipped, so a fallback alone is
+// enough to run the chat.
+func New(cfg Config, fallbacks ...Config) *Client {
+	providers := make([]Config, 0, 1+len(fallbacks))
+	for _, p := range append([]Config{cfg}, fallbacks...) {
+		if p.BaseURL == "" {
+			p.BaseURL = DefaultBaseURL
+		}
+		providers = append(providers, p)
 	}
 	return &Client{
-		cfg: cfg,
+		providers: providers,
 		// Generous ceiling only: a streamed answer is alive for as long as
 		// tokens keep arriving, so the real deadline is the caller's context.
 		http: &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
-// Configured reports whether an API key is set.
-func (c *Client) Configured() bool { return strings.TrimSpace(c.cfg.APIKey) != "" }
+// active returns the providers that carry a key, in preference order.
+func (c *Client) active() []Config {
+	out := make([]Config, 0, len(c.providers))
+	for _, p := range c.providers {
+		if strings.TrimSpace(p.APIKey) != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
-// Model returns the configured model name.
-func (c *Client) Model() string { return c.cfg.Model }
+// Configured reports whether any provider has an API key.
+func (c *Client) Configured() bool { return len(c.active()) > 0 }
+
+// Model returns the model name of the provider that answers first.
+func (c *Client) Model() string {
+	if a := c.active(); len(a) > 0 {
+		return a[0].Model
+	}
+	return ""
+}
+
+// FallbackModels returns the model names standing behind the primary, so the
+// status endpoint can show what the chat falls back to.
+func (c *Client) FallbackModels() []string {
+	a := c.active()
+	if len(a) < 2 {
+		return nil
+	}
+	models := make([]string, 0, len(a)-1)
+	for _, p := range a[1:] {
+		models = append(models, p.Model)
+	}
+	return models
+}
 
 // ErrNotConfigured is returned when no API key is set.
 type errNotConfigured struct{}
@@ -70,6 +115,12 @@ type ContextDoc struct {
 	Number string
 	Title  string
 	Body   string
+	// Source names the book or corpus the excerpt came from ("D&D books —
+	// Player's Handbook", "D&D 5e SRD — classes"). The prompt asks the model to
+	// name the book behind a ruling and to flag 2014/2024 edition conflicts
+	// between excerpts; neither is possible unless the excerpt says where it
+	// came from.
+	Source string
 }
 
 // CardDoc is a real card's oracle text fed to the model so it answers card
@@ -163,15 +214,61 @@ func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error)
 		buildMessages(r), streaming, onDelta)
 }
 
-// callMessages performs the HTTP call for one exchange. With onDelta nil it
-// reads a single JSON body; otherwise it asks for SSE and decodes the event
-// stream.
+// callMessages performs one exchange, walking the provider chain until one
+// answers. A provider that fails for a reason the next one might not share
+// (exhausted quota, bad key, overload, unreachable host) hands off; a failure
+// that would repeat everywhere — a malformed request, a cancelled caller —
+// stops the walk and surfaces as-is.
+//
+// Streaming complicates handoff: once the reader has seen text, restarting on
+// another provider would splice two half-answers together. So a stream that
+// already emitted a delta never fails over, and neither does one whose reader
+// went away (a browser closing the connection is not a provider fault).
 func (c *Client) callMessages(ctx context.Context, system string, msgs []message, streaming bool, onDelta func(string) error) (string, error) {
-	if !c.Configured() {
+	providers := c.active()
+	if len(providers) == 0 {
 		return "", ErrNotConfigured
 	}
+
+	var lastOut string
+	var lastErr error
+	for i, p := range providers {
+		emitted, readerGone := false, false
+		delta := onDelta
+		if onDelta != nil {
+			delta = func(s string) error {
+				emitted = true
+				if err := onDelta(s); err != nil {
+					readerGone = true
+					return err
+				}
+				return nil
+			}
+		}
+
+		out, err := c.callProvider(ctx, p, system, msgs, streaming, delta)
+		if err == nil {
+			return out, nil
+		}
+		lastOut, lastErr = out, err
+
+		last := i == len(providers)-1
+		if last || emitted || readerGone || ctx.Err() != nil || !shouldFailOver(err) {
+			break
+		}
+		next := providers[i+1]
+		log.Printf("llm: provider %s (%s) failed, falling back to %s (%s): %v",
+			hostOf(p.BaseURL), p.Model, hostOf(next.BaseURL), next.Model, err)
+	}
+	return lastOut, lastErr
+}
+
+// callProvider runs one exchange against a single provider. With onDelta nil it
+// reads a single JSON body; otherwise it asks for SSE and decodes the event
+// stream.
+func (c *Client) callProvider(ctx context.Context, cfg Config, system string, msgs []message, streaming bool, onDelta func(string) error) (string, error) {
 	reqBody := messagesRequest{
-		Model:     c.cfg.Model,
+		Model:     cfg.Model,
 		MaxTokens: maxAnswerTokens,
 		System:    system,
 		Messages:  msgs,
@@ -182,7 +279,7 @@ func (c *Client) callMessages(ctx context.Context, system string, msgs []message
 		return "", err
 	}
 
-	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/v1/messages"
+	url := strings.TrimRight(cfg.BaseURL, "/") + "/v1/messages"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", err
@@ -191,8 +288,8 @@ func (c *Client) callMessages(ctx context.Context, system string, msgs []message
 	req.Header.Set("anthropic-version", "2023-06-01")
 	// Send the key via both headers for max provider compatibility
 	// (Anthropic uses x-api-key; some compatible gateways expect Bearer).
-	req.Header.Set("x-api-key", c.cfg.APIKey)
-	req.Header.Set("authorization", "Bearer "+c.cfg.APIKey)
+	req.Header.Set("x-api-key", cfg.APIKey)
+	req.Header.Set("authorization", "Bearer "+cfg.APIKey)
 	if streaming {
 		req.Header.Set("accept", "text/event-stream")
 	}
@@ -205,7 +302,7 @@ func (c *Client) callMessages(ctx context.Context, system string, msgs []message
 
 	if resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("llm request failed: %s: %s", resp.Status, truncate(string(raw), 300))
+		return "", &apiError{status: resp.StatusCode, statusText: resp.Status, body: string(raw)}
 	}
 	if streaming {
 		return readStream(resp.Body, onDelta)
@@ -230,6 +327,69 @@ func (c *Client) callMessages(ctx context.Context, system string, msgs []message
 		return "", fmt.Errorf("llm returned no text")
 	}
 	return out, nil
+}
+
+// apiError is a non-2xx response from a provider, kept structured so the
+// failover decision can read the status and the body.
+type apiError struct {
+	status     int
+	statusText string
+	body       string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("llm request failed: %s: %s", e.statusText, truncate(e.body, 300))
+}
+
+// quotaHints are the phrases providers use when the account, not the request,
+// is the problem. Anthropic answers an exhausted balance with HTTP 400, which
+// would otherwise read as "your request is malformed" and stop the walk — the
+// exact case a fallback provider exists for.
+var quotaHints = []string{
+	"credit balance", "insufficient", "quota", "billing", "payment",
+	"exceeded", "rate limit", "rate_limit", "overloaded", "capacity",
+	"too many requests", "out of credit", "run out", "no credit",
+	"subscription", "suspended",
+}
+
+// shouldFailOver reports whether another provider is worth trying. Transport
+// and stream failures always are; HTTP statuses are worth it when they describe
+// the account or the endpoint (quota, auth, missing model, overload, server
+// error) rather than the request itself.
+func shouldFailOver(err error) bool {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return true // transport error, truncated stream, empty answer
+	}
+	switch ae.status {
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooManyRequests,
+		http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden,
+		http.StatusNotFound:
+		return true
+	}
+	if ae.status >= 500 {
+		return true
+	}
+	lower := strings.ToLower(ae.body)
+	for _, hint := range quotaHints {
+		if strings.Contains(lower, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostOf reduces a base URL to its host for logging, so a failover line names
+// the provider without ever printing a key or a path.
+func hostOf(base string) string {
+	s := strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
+	if i := strings.IndexAny(s, "/?"); i >= 0 {
+		s = s[:i]
+	}
+	if s == "" {
+		return base
+	}
+	return s
 }
 
 // buildMessages lays out the Messages API exchange: prior turns verbatim, then
@@ -381,8 +541,8 @@ GROUNDING RULES — follow these strictly:
 - Bonus-action spellcasting: if you cast any spell with a bonus action, the only other spell you can cast that turn is a cantrip with a casting time of one action.
 - Concentration: a creature can concentrate on only one spell at a time — casting another concentration spell ends the first. Taking damage while concentrating forces a Constitution saving throw. Check concentration before stacking buffs.
 - Attack rolls vs. saving throws: an attack roll hits or misses (AC); a save is made by the target (DC). Read which one the text calls for before answering "does it hit" questions.
-- Edition drift: the provided excerpts may mix the 2024 revision with 2014-era books. When texts differ, ground in the excerpt at hand, name which book it came from, and note the discrepancy rather than silently blending editions.
-- Official rulings: excerpts titled "Sage Advice —" are official Q&A rulings from the Sage Advice Compendium. Treat them as authoritative interpretation that clarifies the rule text — cite them as precedent when they decide the question, alongside (not instead of) the rules they interpret.`)
+- Edition drift: the provided excerpts may mix the 2024 revision with 2014-era books. Each excerpt's header ends with its book in brackets — e.g. "[D&D 5e SRD — classes]" (2024 revision) or "[D&D books — Player's Handbook]" (2014). When two excerpts disagree, ground in the one at hand, name its book, and say plainly that the editions differ rather than blending them.
+- Official rulings: excerpts sourced from the Sage Advice Compendium are official Q&A rulings, and their titles are the question asked. Treat them as authoritative interpretation that clarifies the rule text — cite them as precedent when they decide the question, alongside (not instead of) the rules they interpret.`)
 	}
 
 	b.WriteString("\n\nKeep answers concise and practical for a player or judge at the table.")
@@ -397,6 +557,11 @@ func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, ent
 	}
 	for _, d := range docs {
 		header := d.Title
+		// Each excerpt's header ends with the book it came from, in brackets:
+		// the D&D corpus mixes the 2024 SRD with 2014-era books, and the
+		// prompt's edition-drift and Sage Advice rules both depend on the model
+		// being able to tell one excerpt's provenance from another's.
+		//
 		// Only MTG-style rule numbers lead the header; D&D path-style record
 		// ids are internal anchors, not reader-facing citations.
 		if ruleNumRe.MatchString(d.Number) {
@@ -404,6 +569,13 @@ func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, ent
 				header = d.Number + " — " + header
 			} else {
 				header = d.Number
+			}
+		}
+		if d.Source != "" {
+			if header != "" {
+				header += " [" + d.Source + "]"
+			} else {
+				header = "[" + d.Source + "]"
 			}
 		}
 		fmt.Fprintf(&b, "### %s\n%s\n\n", header, truncate(d.Body, 1500))

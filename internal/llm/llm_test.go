@@ -190,6 +190,32 @@ func TestBuildUserMessage_PathNumbersStayOutOfHeaders(t *testing.T) {
 	}
 }
 
+// The D&D corpus mixes the 2024 SRD with 2014-era books, and the prompt asks
+// the model to name an excerpt's book and to flag edition conflicts. Neither is
+// possible unless every excerpt says where it came from.
+func TestBuildUserMessage_HeadersCarryTheSource(t *testing.T) {
+	docs := []ContextDoc{
+		{Number: "classes/0001/0002.0", Title: "Classes — Barbarian", Body: "Rage.", Source: "D&D 5e SRD — classes"},
+		{Number: "player-s-handbook/0007.0", Title: "Player's Handbook — COMBAT", Body: "Attacks.", Source: "D&D books — Player's Handbook"},
+	}
+	got := buildUserMessage("D&D 5e SRD", docs, nil, nil, nil, nil, "How does rage work?")
+	if !strings.Contains(got, "### Classes — Barbarian [D&D 5e SRD — classes]") {
+		t.Errorf("SRD source missing from header: %q", got)
+	}
+	if !strings.Contains(got, "### Player's Handbook — COMBAT [D&D books — Player's Handbook]") {
+		t.Errorf("book source missing from header: %q", got)
+	}
+}
+
+// A corpus whose records carry no source still gets a clean header.
+func TestBuildUserMessage_SourcelessHeaderUnchanged(t *testing.T) {
+	docs := []ContextDoc{{Number: "205.1a", Title: "Types", Body: "Text."}}
+	got := buildUserMessage("Magic: The Gathering", docs, nil, nil, nil, nil, "q")
+	if !strings.Contains(got, "### 205.1a — Types\n") {
+		t.Errorf("header changed for a sourceless record: %q", got)
+	}
+}
+
 func TestBuildUserMessage_Entities(t *testing.T) {
 	entities := []EntityDoc{{
 		Name: "Fireball", Kind: "spell",

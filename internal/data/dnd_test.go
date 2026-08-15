@@ -70,7 +70,7 @@ func TestChunkMarkdown(t *testing.T) {
 
 func TestChunkMarkdownNumbersSections(t *testing.T) {
 	in := mdFile{
-		Path: "rules.md",
+		Path:    "rules.md",
 		Content: "# Rules\n\nA.\n\n## One\n\nB.\n\n## Two\n\nC.\n\n### Two-Bit\n\nD.\n",
 	}
 	recs := chunkMarkdown(in, "")
@@ -150,13 +150,59 @@ func TestCleanMarkdown_KeepsTablesAsText(t *testing.T) {
 	}
 }
 
+// The SRD carries its most valuable tables — class progression, monster stats,
+// equipment — as raw HTML rather than markdown pipes. Left alone they reach FTS
+// and the model as a wall of <tr>/<td> that matches no query.
+func TestCleanMarkdown_FlattensHTMLTables(t *testing.T) {
+	in := `Core Barbarian Traits
+
+<table>
+  <tbody>
+    <tr>
+      <td>Primary Ability</td>
+      <td>Strength</td>
+    </tr>
+    <tr>
+      <th>Hit Point Die</th>
+      <td>D12 per <em>Barbarian</em> level</td>
+    </tr>
+  </tbody>
+</table>`
+	out := cleanMarkdown(in)
+	for _, tag := range []string{"<table", "<tr", "<td", "<th", "<tbody", "<em"} {
+		if strings.Contains(out, tag) {
+			t.Errorf("markup %q survived: %q", tag, out)
+		}
+	}
+	if !strings.Contains(out, "Primary Ability — Strength") {
+		t.Errorf("row not flattened: %q", out)
+	}
+	// A header cell is a cell: the row carries its own context either way.
+	if !strings.Contains(out, "Hit Point Die — D12 per Barbarian level") {
+		t.Errorf("header row or nested markup mishandled: %q", out)
+	}
+	if !strings.Contains(out, "Core Barbarian Traits") {
+		t.Errorf("surrounding prose lost: %q", out)
+	}
+}
+
+// Tag stripping must not eat prose that merely contains angle brackets.
+func TestCleanMarkdown_KeepsComparisonsInProse(t *testing.T) {
+	out := cleanMarkdown("A result of < 10 > the DC fails.")
+	if !strings.Contains(out, "< 10 >") {
+		t.Errorf("comparison eaten as markup: %q", out)
+	}
+}
+
 func TestParseDNDDocs(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"phb.md":        "# Chapter\n\nSome rule text about ability checks.\n",
+		// The extractor writes the book's real title as the document's H1, and
+		// that is what a citation should name — not the slugified file name.
+		"phb.md":          "# Player's Handbook\n\nSome rule text about ability checks.\n",
 		"sage-advice.txt": "Sage Advice — Equipment\n\nQ. Does cover stack?\nA. No.\n",
-		"ignored.pdf":   "not a text doc",
-		".hidden.md":    "skipped",
+		"ignored.pdf":     "not a text doc",
+		".hidden.md":      "skipped",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
@@ -178,9 +224,11 @@ func TestParseDNDDocs(t *testing.T) {
 		sources = append(sources, r.Source)
 	}
 	joined := strings.Join(sources, "\n")
-	if !strings.Contains(joined, "D&D books — Phb") {
+	// The H1 names the document...
+	if !strings.Contains(joined, "D&D books — Player's Handbook") {
 		t.Errorf("sources = %v", sources)
 	}
+	// ...and a file without one falls back to its name.
 	if !strings.Contains(joined, "D&D books — Sage-advice") {
 		t.Errorf("sources = %v", sources)
 	}

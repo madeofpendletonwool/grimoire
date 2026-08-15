@@ -52,18 +52,23 @@ type Server struct {
 	openRegistration bool
 	tmpl             *template.Template
 	static           fs.FS
+	// rebuild, when wired, rebuilds the rules index from its sources. It backs
+	// the admin's reindex control in Settings; nil disables those endpoints.
+	rebuild func(ctx context.Context) error
+	reindex reindexState
 }
 
 // New builds a Server from an open index store, an LLM client, a card lookup
 // service, a rulings lookup service, an optional card-name dictionary (powers
 // lowercase/unquoted card detection in the chat), a chat store, an answer cache,
-// a study store, and the authentication wiring. A nil card service disables
-// card features gracefully; a nil rulings service disables the rulings layer the
-// same way; a nil dictionary leaves detection on the text heuristics alone; a
-// nil chat store disables saved conversations; a nil answer cache disables
-// response caching; a nil study store disables the study mode; a zero Auth
-// leaves the API unauthenticated.
-func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulingsSvc *rulings.Service, cardDict *cards.Dictionary, chats *chat.Store, answers *cache.Store, studyStore *study.Store, ac Auth) (*Server, error) {
+// a study store, the authentication wiring, and an optional index-rebuild
+// function (powers the admin's Settings → Rebuild index control; nil disables
+// it). A nil card service disables card features gracefully; a nil rulings
+// service disables the rulings layer the same way; a nil dictionary leaves
+// detection on the text heuristics alone; a nil chat store disables saved
+// conversations; a nil answer cache disables response caching; a nil study
+// store disables the study mode; a zero Auth leaves the API unauthenticated.
+func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulingsSvc *rulings.Service, cardDict *cards.Dictionary, chats *chat.Store, answers *cache.Store, studyStore *study.Store, ac Auth, rebuild func(ctx context.Context) error) (*Server, error) {
 	tmpl, err := template.New("").ParseFS(web.Templates, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -77,7 +82,7 @@ func New(store *index.Store, client *llm.Client, cardSvc *cards.Service, rulings
 		answers: answers,
 		study:   studyStore,
 		users:   ac.Users, openRegistration: ac.OpenRegistration,
-		tmpl: tmpl, static: static,
+		tmpl: tmpl, static: static, rebuild: rebuild,
 	}, nil
 }
 
@@ -93,6 +98,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/invites", s.handleCreateInvite)
 	mux.HandleFunc("GET /api/invites", s.handleListInvites)
 	mux.HandleFunc("DELETE /api/invites/{id}", s.handleRevokeInvite)
+	mux.HandleFunc("POST /api/admin/reindex", s.handleReindexStart)
+	mux.HandleFunc("GET /api/admin/reindex", s.handleReindexStatus)
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("GET /api/section", s.handleSection)
@@ -162,6 +169,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"corpora":         views,
 		"chat_configured": s.llm.Configured(),
 		"chat_model":      s.llm.Model(),
+		"chat_fallbacks":  s.llm.FallbackModels(),
 	})
 }
 
@@ -381,7 +389,7 @@ func (s *Server) ground(ctx context.Context, corpus data.Corpus, question string
 	}
 	g.docs = make([]llm.ContextDoc, 0, len(expanded))
 	for _, res := range expanded {
-		g.docs = append(g.docs, llm.ContextDoc{Number: res.Number, Title: res.Title, Body: res.Body})
+		g.docs = append(g.docs, llm.ContextDoc{Number: res.Number, Title: res.Title, Body: res.Body, Source: res.Source})
 	}
 	g.sources = toSources(results)
 	g.cardDocs, g.cards, g.unresolved = s.lookupQuestionCards(ctx, corpus, question)

@@ -10,6 +10,7 @@ import { initResolve } from "./resolve.js";
 import { initVoice } from "./voice.js";
 import { initStudy } from "./study.js";
 import { initAdmin } from "./admin.js";
+import { initLibrary } from "./library.js";
 import { hydrate } from "./icons.js";
 import { initScene, initSettings } from "./scene.js";
 
@@ -74,7 +75,10 @@ async function loadMeta() {
 	if (meta.chat_configured === false) {
 		setFoot("The sage is asleep — set ANTHROPIC_API_KEY on the server to enable chat. Rule search still works.", true);
 	} else if (meta.chat_model) {
-		setFoot(`Sage: ${meta.chat_model}`);
+		// Standbys are named too, so it is obvious which voice answers if the
+		// first one runs out of usage mid-session.
+		const standby = (meta.chat_fallbacks || []).join(", then ");
+		setFoot(standby ? `Sage: ${meta.chat_model} (standby: ${standby})` : `Sage: ${meta.chat_model}`);
 	}
 }
 
@@ -95,6 +99,7 @@ function start() {
 	syncChrome();
 	initAccount();
 	initAdmin();
+	initLibrary();
 	loadMeta();
 	refreshHistory();
 	if (!isNarrow()) $("composer-input").focus();

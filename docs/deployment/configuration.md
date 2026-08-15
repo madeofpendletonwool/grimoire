@@ -24,6 +24,27 @@ The chat speaks the Anthropic Messages API and is fully configurable, so it work
 
 Without a key, search works fully and the chat shows a "configure a key" notice.
 
+### Fallback providers (optional)
+
+A standby the chat switches to when the primary fails for a reason a second account wouldn't share — quota or credit exhausted, a rate limit, an expired key, an overloaded or unreachable endpoint. Unset by default.
+
+| Variable                      | Default                    | Notes                                                     |
+| ----------------------------- | -------------------------- | --------------------------------------------------------- |
+| `ANTHROPIC_FALLBACK_API_KEY`  | _(empty)_                  | Secret. Enables the fallback when set — the only required var. |
+| `ANTHROPIC_FALLBACK_BASE_URL` | `https://api.anthropic.com`| Any Anthropic-compatible endpoint.                         |
+| `ANTHROPIC_FALLBACK_MODEL`    | `ANTHROPIC_MODEL`          | Defaults to the primary's model, right when the same model is served from a second account. |
+
+Add more rungs by numbering them — `ANTHROPIC_FALLBACK_2_*`, `ANTHROPIC_FALLBACK_3_*`, … — tried in order. The chain stops at the first missing key, so leave no gaps.
+
+Details worth knowing:
+
+- **A malformed request is not retried elsewhere.** Only failures that another provider might survive trigger a handoff; a request the endpoint rejects as invalid would be rejected identically down the chain.
+- **Failover happens before any text reaches the reader.** Once a streamed answer has started, an interruption ends it rather than splicing on a second provider's half-answer.
+- **The handoff is logged** with the host and model only — never a key.
+- **A keyed fallback is enough on its own.** If the primary has no key, the first keyed provider becomes the one that answers, and `/api/status` reports its model as `chat_model`.
+
+
+
 ## Semantic retrieval (optional, OpenAI-compatible embeddings)
 
 Adds a vector pass alongside FTS5 keyword retrieval — see [Q&A Chat](../features/chat.md#semantic-retrieval-optional) for what it does and when you'd want it. Anthropic has no embeddings API, so this targets the OpenAI `/embeddings` contract that compatible gateways also serve. Off by default; retrieval is unchanged when unset.
@@ -64,9 +85,18 @@ The rules corpora are fetched and indexed at first run; the live lookups run at 
 | `MTGJSON_URL`         | `https://mtgjson.com/api/v5/AtomicCards.json.gz` | Card-name dictionary used for mention detection.      |
 | `DND_REPO`            | the community 5e SRD repo                      | GitHub repo (`owner/name`) the SRD markdown is fetched from. |
 | `DND_REF`             | the repo's default branch                      | Branch/tag to fetch the SRD from.                       |
-| `DND_DOCS_DIR`        | _(empty)_                                      | Local directory of markdown/text D&D documents (your books, the Sage Advice compendium) indexed alongside the SRD. Convert PDFs with `scripts/extract-dnd-pdfs.py`. Changing it needs a reindex. |
+| `DND_DOCS_DIR`        | _(empty)_                                      | Local directory of markdown/text D&D documents (your books, the Sage Advice compendium) indexed alongside the SRD. Convert PDFs with `scripts/extract-dnd-pdfs.py`. The books are gitignored and never leave your machine. |
 | `SCRYFALL_BASE_URL`   | `https://api.scryfall.com`                     | Card oracle text + rulings; no key required.            |
 | `OPEN5E_BASE_URL`     | `https://api.open5e.com`                       | SRD entities + entity-name dictionary for D&D grounding; no key required. |
+
+### Reindexing
+
+Nobody rebuilds the index by hand:
+
+- **A changed library rebuilds itself.** Every boot fingerprints the `DND_DOCS_DIR` directory (names, sizes, mtimes) and rebuilds automatically when it differs from the fingerprint the index was built against — drop a new book in, restart, done. The app serves the existing index while the rebuild runs.
+- **The keeper has a button.** Settings → Library → *Rebuild the index now* (admin only, `POST /api/admin/reindex`) runs the same rebuild in the background and shows its status; useful after a rules release or to force a clean rebuild. `GET /api/admin/reindex` polls it.
+
+`docker compose run --rm grimoire index` still exists, but it is the escape hatch, not the workflow.
 
 ## A worked `.env`
 

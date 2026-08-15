@@ -13,9 +13,11 @@ Open <http://localhost:8080>. The first visit asks you to create the **keeper ac
 
 ## The index builds itself
 
-On first start Grimoire fetches and indexes the corpora — the MTG Comprehensive Rules and the D&D 5e SRD — plus MTGJSON's card-name dictionary. The index is cached in the `/data` volume, so subsequent starts are instant.
+On first start Grimoire fetches and indexes the corpora — the MTG Comprehensive Rules and the D&D 5e SRD — plus MTGJSON's card-name dictionary and Open5e's SRD entity names. The index is cached in the `/data` volume, so subsequent starts are instant.
 
-To rebuild it:
+Rebuilds are automatic too. If you index local D&D books (`DND_DOCS_DIR`, see [Configuration](configuration.md)), every boot fingerprints that directory and rebuilds on its own when the books changed — add a PDF's extraction, restart the container, done. For anything else (a rules refresh, a forced rebuild) the admin has **Settings → Library → Rebuild the index now**, which runs in the background while the app keeps serving.
+
+The command form still exists as an escape hatch:
 
 ```bash
 docker compose run --rm grimoire index
