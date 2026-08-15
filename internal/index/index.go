@@ -93,11 +93,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(
 CREATE TABLE IF NOT EXISTS card_names (
 	name TEXT PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS entity_names (
+	name TEXT PRIMARY KEY
+);
 `
 
 // Reset drops and rebuilds the docs tables (used on reindex).
 func (s *Store) Reset() error {
-	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names; DELETE FROM doc_vectors;`)
+	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names; DELETE FROM entity_names; DELETE FROM doc_vectors;`)
 	return err
 }
 
@@ -183,6 +186,56 @@ func (s *Store) LoadCardNames(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT name FROM card_names`)
 	if err != nil {
 		return nil, fmt.Errorf("load card_names: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// IndexEntityNames replaces the D&D entity-name dictionary, populated from
+// Open5e's SRD listings during an index build. The D&D chat uses it to spot
+// spell/creature/item/feat mentions the text heuristics miss (lowercase,
+// unquoted) — the counterpart of the MTG card-name dictionary. Safe to call
+// with an empty slice, which clears the table.
+func (s *Store) IndexEntityNames(ctx context.Context, names []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM entity_names`); err != nil {
+		return fmt.Errorf("clear entity_names: %w", err)
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO entity_names(name) VALUES(?)`)
+	if err != nil {
+		return fmt.Errorf("prepare entity_names: %w", err)
+	}
+	defer stmt.Close()
+	for _, n := range names {
+		if strings.TrimSpace(n) == "" {
+			continue
+		}
+		if _, err := stmt.ExecContext(ctx, n); err != nil {
+			return fmt.Errorf("insert entity name: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// LoadEntityNames returns every stored D&D entity name, used at server startup
+// to build the in-memory detection dictionary.
+func (s *Store) LoadEntityNames(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM entity_names`)
+	if err != nil {
+		return nil, fmt.Errorf("load entity_names: %w", err)
 	}
 	defer rows.Close()
 	var out []string
@@ -476,6 +529,11 @@ const maxExpandGroups = 2
 // the hits cluster in (all of 613), and each remaining hit's own section
 // (702.21 plus its sub-rules). Seeds stay first and in rank order; expansion
 // follows in rule order.
+//
+// D&D records carry path-style numbers ("spells/0003/0042.1") and get the
+// same treatment through their path keys: whole top-level sections (the group
+// key, the analogue of a chapter) for the clusters the search kept hitting,
+// then each seed's own section (all chunks of the same heading section).
 func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) ([]Result, error) {
 	if len(seeds) == 0 {
 		return nil, nil
@@ -486,7 +544,7 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 	push := func(r Result) bool {
 		key := r.Number
 		if key == "" {
-			key = r.Title + "\x00" + r.Body // unnumbered corpora (D&D)
+			key = r.Title + "\x00" + r.Body // unnumbered corpora fallback
 		}
 		if seen[key] {
 			return true
@@ -505,11 +563,15 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 	}
 
 	// Rank groups by how many seeds landed in them: the mechanic a question is
-	// really about is the one the search kept hitting.
+	// really about is the one the search kept hitting. MTG rules group by
+	// chapter token; D&D records by their path-style group key.
 	counts := map[string]int{}
 	var order []string
 	for _, r := range seeds {
 		g := ruleGroup(r.Number)
+		if g == "" {
+			g = data.DNDGroupKey(r.Number)
+		}
 		if g == "" {
 			continue
 		}
@@ -542,10 +604,16 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 
 	// Seeds in groups too large to pull whole still get their own section.
 	for _, r := range seeds {
-		if expanded[ruleGroup(r.Number)] {
+		if expanded[ruleGroup(r.Number)] || expanded[data.DNDGroupKey(r.Number)] {
 			continue
 		}
-		sec, err := s.Section(ctx, corpus, r.Number)
+		var sec []Result
+		var err error
+		if data.DNDSectionKey(r.Number) != "" {
+			sec, err = s.dndSectionDocs(ctx, corpus, data.DNDSectionKey(r.Number))
+		} else {
+			sec, err = s.Section(ctx, corpus, r.Number)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -568,12 +636,24 @@ func ruleGroup(number string) string {
 	return strings.SplitN(m[1], ".", 2)[0]
 }
 
-// groupDocs returns every rule in a chapter, in rule order.
+// groupDocs returns every rule in a group, in rule order. A group is either an
+// MTG chapter token (bare digits, matched by number-prefix) or a D&D path
+// group key ("spells/0003", matched by leading number phrase and filtered to
+// the exact group in Go).
 func (s *Store) groupDocs(ctx context.Context, corpus data.Corpus, group string) ([]Result, error) {
 	if group == "" {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, ftsSectionSQL, fmt.Sprintf("number:%s*", group), corpus)
+	var match string
+	dnd := strings.Contains(group, "/")
+	if isBareChapter(group) {
+		match = fmt.Sprintf("number:%s*", group)
+	} else if dnd {
+		match = fmt.Sprintf("number:%q*", group)
+	} else {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, ftsSectionSQL, match, corpus)
 	if err != nil {
 		return nil, fmt.Errorf("group: %w", err)
 	}
@@ -584,9 +664,13 @@ func (s *Store) groupDocs(ctx context.Context, corpus data.Corpus, group string)
 		if err := rows.Scan(&r.Number, &r.Title, &r.Body, &r.Source); err != nil {
 			return nil, err
 		}
-		// The MATCH is a prefix match on the number column; keep only exact
-		// chapter members.
-		if ruleGroup(r.Number) != group {
+		// The MATCH is a prefix/phrase match on the number column; keep only
+		// exact group members.
+		if dnd {
+			if data.DNDGroupKey(r.Number) != group {
+				continue
+			}
+		} else if ruleGroup(r.Number) != group {
 			continue
 		}
 		out = append(out, r)
@@ -594,7 +678,43 @@ func (s *Store) groupDocs(ctx context.Context, corpus data.Corpus, group string)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	sort.SliceStable(out, func(i, j int) bool { return lessRuleNumber(out[i].Number, out[j].Number) })
+	if dnd {
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	} else {
+		sort.SliceStable(out, func(i, j int) bool { return lessRuleNumber(out[i].Number, out[j].Number) })
+	}
+	return out, nil
+}
+
+// dndSectionDocs returns every chunk of one D&D heading section, in chunk
+// order — the path-numbered analogue of Section. A key without "/" yields no
+// docs.
+func (s *Store) dndSectionDocs(ctx context.Context, corpus data.Corpus, key string) ([]Result, error) {
+	if !strings.Contains(key, "/") {
+		return nil, nil
+	}
+	// "spells/0003/0042" tokenizes to consecutive words in the number column;
+	// match the leading phrase, then filter to the exact section in Go.
+	rows, err := s.db.QueryContext(ctx, ftsSectionSQL, fmt.Sprintf("number:%q*", key), corpus)
+	if err != nil {
+		return nil, fmt.Errorf("dnd section: %w", err)
+	}
+	defer rows.Close()
+	var out []Result
+	for rows.Next() {
+		var r Result
+		if err := rows.Scan(&r.Number, &r.Title, &r.Body, &r.Source); err != nil {
+			return nil, err
+		}
+		if data.DNDSectionKey(r.Number) != key {
+			continue
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Number < out[j].Number })
 	return out, nil
 }
 
@@ -622,6 +742,38 @@ func isBareChapter(chapter string) bool {
 		}
 	}
 	return true
+}
+
+// DNDChildren returns every D&D record whose path number starts with the
+// given file slug ("spells/" → all records from spells.md), in number order.
+// Used by study mode to build decks over a document's entries. A slug without
+// a "/" yields no docs.
+func (s *Store) DNDChildren(ctx context.Context, corpus data.Corpus, slug string) ([]Result, error) {
+	slug = strings.Trim(slug, "/")
+	if slug == "" || strings.Contains(slug, "/") {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, ftsSectionSQL, fmt.Sprintf("number:%q*", slug), corpus)
+	if err != nil {
+		return nil, fmt.Errorf("dnd children: %w", err)
+	}
+	defer rows.Close()
+	var out []Result
+	for rows.Next() {
+		var r Result
+		if err := rows.Scan(&r.Number, &r.Title, &r.Body, &r.Source); err != nil {
+			return nil, err
+		}
+		if !strings.HasPrefix(r.Number, slug+"/") {
+			continue
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out, nil
 }
 
 // Retrieve runs a lenient OR search used to gather grounding context for the

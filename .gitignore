@@ -27,3 +27,9 @@
 # upstream art packs — see scripts/build-assets.py. What ships is the derived
 # output in web/static/assets, not the packs themselves.
 /icon-packs/
+
+# python bytecode from the asset scripts
+__pycache__/
+
+# local D&D books (extracted from PDFs) — personal reference, never commit
+dnd-books/

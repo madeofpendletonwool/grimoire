@@ -32,6 +32,12 @@ The D&D side works the same way through [Open5e](https://open5e.com)'s free API:
 
 - **SRD only** — search hits are filtered to the SRD documents (2024 edition preferred, then older), so community homebrew never grounds an answer.
 - **Real-world naming** — the 2024 SRD renamed creator-prefixed spells ("Tenser's Floating Disk" → "Floating Disk"), so a leading word is dropped and the search retried; a pure typo falls back to the strongest credible near-match, gated by the same fuzzy check the MTG card lookup uses so a near-miss can never attach the wrong entity.
+- **Complete statblocks** — a creature grounds in its full statblock: ability scores, saving throws, skills, senses, languages, damage resistances/vulnerabilities/immunities, condition immunities, traits, and every action category in statblock order — actions, bonus actions, reactions, and legendary actions with their costs. Spells carry the concentration tag alongside casting time, range and duration.
+- **The name dictionary** — like the MTG card dictionary, an SRD entity-name dictionary (spells, creatures, magic items, feats, conditions, weapons — built at index time from Open5e's listings) catches lowercase, unquoted mentions the Title-Case heuristics miss: "does hunter's mark stack" grounds in the real spell.
+
+### Local books & Sage Advice
+
+Beyond the SRD, `DND_DOCS_DIR` imports your own documents — a PHB, a monster book, the Sage Advice compendium — into the searchable corpus, cited by book. The Sage Advice compendium's official Q&A rulings are chunked one question per record, so retrieval surfaces them as precedent the way MTG answers cite Gatherer rulings; the model is told to treat them as authoritative interpretation alongside the rules they clarify. Convert PDFs with `scripts/extract-dnd-pdfs.py`; see [Configuration](../deployment/configuration.md).
 
 ## Where the lookups live
 

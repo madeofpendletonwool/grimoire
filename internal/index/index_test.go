@@ -345,6 +345,72 @@ func TestExpand_UnnumberedCorpusPassesThrough(t *testing.T) {
 	}
 }
 
+// dndPathDataset mirrors path-numbered D&D records: a top-level section
+// ("spells/0003", the spells chapter) holding several spell sections, one of
+// which is chunked, plus a second top-level section that must not leak in.
+func dndPathDataset() *data.Dataset {
+	recs := []data.Record{
+		{Corpus: data.CorpusDND, Number: "spells/0003.0", Title: "Spells", Body: "This chapter covers the spells of the SRD.", Source: "SRD spells"},
+		{Corpus: data.CorpusDND, Number: "spells/0003/0042.0", Title: "Spells — Fireball", Body: "A bright streak flashes and blossoms into fire, 8d6 damage on a failed Dexterity save.", Source: "SRD spells"},
+		{Corpus: data.CorpusDND, Number: "spells/0003/0042.1", Title: "Spells — Fireball (part 2)", Body: "The damage increases by 1d6 per slot level above 3rd.", Source: "SRD spells"},
+		{Corpus: data.CorpusDND, Number: "spells/0003/0043.0", Title: "Spells — Healing Word", Body: "A creature of your choice regains hit points.", Source: "SRD spells"},
+		{Corpus: data.CorpusDND, Number: "spells/0009/0001.0", Title: "Magic Items — Bag of Holding", Body: "This bag has an interior space considerably larger than its outside dimensions.", Source: "SRD items"},
+	}
+	return &data.Dataset{
+		Records: recs,
+		Meta: map[data.Corpus]data.CorpusMeta{
+			data.CorpusDND: {Name: "D&D 5e SRD", Version: "master", SourceURL: "y", RecordCount: len(recs)},
+		},
+	}
+}
+
+func TestExpand_DNDPullsWholeGroupAndSection(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.Index(ctx, dndPathDataset()); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	// One seed inside the spells chapter: its whole top-level group fits the
+	// budget, so the chapter intro and sibling spell come along.
+	got, err := s.Expand(ctx, data.CorpusDND, []Result{{Number: "spells/0003/0042.0", Title: "Spells — Fireball"}})
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	have := map[string]bool{}
+	for _, r := range got {
+		have[r.Number] = true
+	}
+	for _, want := range []string{"spells/0003.0", "spells/0003/0042.1", "spells/0003/0043.0"} {
+		if !have[want] {
+			t.Errorf("expanded set missing %s: %v", want, numbersOf(got))
+		}
+	}
+	if have["spells/0009/0001.0"] {
+		t.Errorf("unrelated top-level section leaked in: %v", numbersOf(got))
+	}
+	if got[0].Number != "spells/0003/0042.0" {
+		t.Errorf("seed should lead the expansion, got %s", got[0].Number)
+	}
+}
+
+func TestDNDSectionDocs(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.Index(ctx, dndPathDataset()); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	got, err := s.dndSectionDocs(ctx, data.CorpusDND, "spells/0003/0042")
+	if err != nil {
+		t.Fatalf("dndSectionDocs: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want both chunks of the Fireball section, got %v", numbersOf(got))
+	}
+	if got[0].Number != "spells/0003/0042.0" || got[1].Number != "spells/0003/0042.1" {
+		t.Errorf("chunks out of order: %v", numbersOf(got))
+	}
+}
+
 func TestExpand_Empty(t *testing.T) {
 	got, err := newTestStore(t).Expand(context.Background(), data.CorpusMTG, nil)
 	if err != nil || got != nil {

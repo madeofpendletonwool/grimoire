@@ -10,6 +10,11 @@ services:
       # Keep this volume or every conversation and login is lost when the
       # container is recreated.
       - grimoire-data:/data
+      # Local D&D books (markdown/text), extracted from your PDFs with
+      # scripts/extract-dnd-pdfs.py. Mounted read-only at /books; indexed
+      # alongside the SRD when DND_DOCS_DIR=/books. Gitignored — the books
+      # are copyrighted and never leave this machine.
+      - ${DND_BOOKS_DIR:-./dnd-books}:/books:ro
     environment:
       # Q&A chat targets z.ai's Anthropic-compatible endpoint by default.
       # Search works with no key; chat is enabled once ANTHROPIC_API_KEY is set
@@ -24,6 +29,9 @@ services:
       # creation is closed after that unless this is turned on.
       GRIMOIRE_SESSION_TTL: ${GRIMOIRE_SESSION_TTL:-720h}
       GRIMOIRE_OPEN_REGISTRATION: ${GRIMOIRE_OPEN_REGISTRATION:-false}
+      # Local D&D books at the read-only mount above. Reindex after changing
+      # the directory: docker compose run --rm grimoire index
+      DND_DOCS_DIR: ${DND_DOCS_DIR:-/books}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]

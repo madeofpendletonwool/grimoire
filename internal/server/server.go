@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -171,6 +172,20 @@ type searchHit struct {
 	Source string `json:"source"`
 }
 
+// displayRuleNumRe matches an MTG-style rule number ("205.1a").
+var displayRuleNumRe = regexp.MustCompile(`^\d{1,3}(?:\.\d+)+[a-z]?$`)
+
+// displayNumber blanks numbers that are not reader-facing citations. MTG rule
+// numbers ("702.2a") are; D&D path-style record ids ("spells/0003/0042.1")
+// are internal anchors for grounding, dedup, and cache keys — the UI's chips
+// and section drawer show the title for those instead.
+func displayNumber(n string) string {
+	if displayRuleNumRe.MatchString(n) {
+		return n
+	}
+	return ""
+}
+
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	corpus := parseCorpus(r.URL.Query().Get("corpus"))
@@ -188,7 +203,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	hits := make([]searchHit, 0, len(results))
 	for _, res := range results {
 		hits = append(hits, searchHit{
-			Number: res.Number, Title: res.Title, Body: res.Body, Source: res.Source,
+			Number: displayNumber(res.Number), Title: res.Title, Body: res.Body, Source: res.Source,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": hits})
@@ -481,7 +496,7 @@ func (s *Server) lookupCardRulings(ctx context.Context, corpus data.Corpus, hits
 func toSources(results []index.Result) []searchHit {
 	out := make([]searchHit, 0, len(results))
 	for _, r := range results {
-		out = append(out, searchHit{Number: r.Number, Title: r.Title, Body: r.Body, Source: r.Source})
+		out = append(out, searchHit{Number: displayNumber(r.Number), Title: r.Title, Body: r.Body, Source: r.Source})
 	}
 	return out
 }

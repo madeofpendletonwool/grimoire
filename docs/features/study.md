@@ -8,8 +8,9 @@ The corpus is already a question bank:
 
 - **MTG keyword abilities** — chapter 702, one card per keyword: Deathtouch, Ward, …
 - **D&D SRD conditions** — Blinded, Charmed, Exhaustion, …
+- **D&D SRD spells** — Fireball, Hunter's Mark, Misty Step, … one card per spell entry, the front asking what it does
 
-so the cards are generated from the existing FTS5 index rather than authored by hand. No LLM is required.
+so the cards are generated from the existing FTS5 index rather than authored by hand. No LLM is required. Where a corpus offers more than one deck (D&D today), tabs above the cards switch between them; each deck keeps its own schedule.
 
 ## A session
 
@@ -22,4 +23,4 @@ Grade each card **Again / Hard / Good / Easy** and an **SM-2** scheduler resched
 
 ## Where progress lives
 
-Schedules live in a per-user `reviews` table in the same SQLite file as the rest of the app, so progress survives reloads and reindexes — the concept keys are stable rule numbers. Study progress is per account; see [Accounts](../deployment/accounts.md).
+Schedules live in a per-user `reviews` table in the same SQLite file as the rest of the app, so progress survives reloads and reindexes — the concept keys are stable rule numbers (MTG) or stable section ids (D&D). Study progress is per account; see [Accounts](../deployment/accounts.md).

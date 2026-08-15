@@ -64,8 +64,9 @@ The rules corpora are fetched and indexed at first run; the live lookups run at 
 | `MTGJSON_URL`         | `https://mtgjson.com/api/v5/AtomicCards.json.gz` | Card-name dictionary used for mention detection.      |
 | `DND_REPO`            | the community 5e SRD repo                      | GitHub repo (`owner/name`) the SRD markdown is fetched from. |
 | `DND_REF`             | the repo's default branch                      | Branch/tag to fetch the SRD from.                       |
+| `DND_DOCS_DIR`        | _(empty)_                                      | Local directory of markdown/text D&D documents (your books, the Sage Advice compendium) indexed alongside the SRD. Convert PDFs with `scripts/extract-dnd-pdfs.py`. Changing it needs a reindex. |
 | `SCRYFALL_BASE_URL`   | `https://api.scryfall.com`                     | Card oracle text + rulings; no key required.            |
-| `OPEN5E_BASE_URL`     | `https://api.open5e.com`                       | SRD entities for D&D grounding; no key required.        |
+| `OPEN5E_BASE_URL`     | `https://api.open5e.com`                       | SRD entities + entity-name dictionary for D&D grounding; no key required. |
 
 ## A worked `.env`
 

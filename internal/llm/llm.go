@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -328,22 +329,36 @@ func systemPrompt(corpusName string, hasCards bool, hasEntities bool, hasRulings
 GROUNDING RULES — follow these strictly:
 1. Answer using ONLY the provided rule excerpts and (if present) the provided card oracle text. Do NOT rely on your own memory of cards or rules for any specific fact.
 2. Cite rule numbers (e.g. 205.1a) or section titles that support your answer.`, corpusName)
+
+	// Grounding rules are numbered dynamically: the base pair above, then the
+	// layers the question's grounding actually carries.
+	rule := 3
 	if hasCards {
-		b.WriteString("\n3. For any card, use ONLY the provided oracle text for its name, mana cost, type, and effects — quote it faithfully. Do not invent or guess mana costs, types, or abilities.")
-		b.WriteString("\n4. If a card is named in the question but its oracle text was NOT provided, say plainly that you could not look it up — do NOT describe what you think it does.")
-		b.WriteString("\n5. If the provided excerpts and card text do not contain the answer, say so plainly rather than inventing anything.")
-	} else {
-		b.WriteString("\n3. If a card is named in the question but no card oracle text was provided, say plainly that you could not look the card up — do NOT guess what the card does.")
-		b.WriteString("\n4. If the provided excerpts do not contain the answer, say so plainly rather than inventing rules or card text.")
-	}
-	if hasRulings {
-		b.WriteString("\n6. Official rulings were provided. Cite them when they decide the interaction — name the card, the ruling's source (wotc or scryfall), and its date, and quote the decisive phrase. Treat wotc rulings as authoritative precedent; treat scryfall rulings as official guidance.")
-		b.WriteString("\n7. If a ruling is relevant to a named card but no ruling for that card was provided, say plainly that no official ruling was available — do NOT invent one from memory.")
+		fmt.Fprintf(&b, "\n%d. For any card, use ONLY the provided oracle text for its name, mana cost, type, and effects — quote it faithfully. Do not invent or guess mana costs, types, or abilities.", rule)
+		rule++
+		fmt.Fprintf(&b, "\n%d. If a card is named in the question but its oracle text was NOT provided, say plainly that you could not look it up — do NOT describe what you think it does.", rule)
+		rule++
+	} else if strings.Contains(corpusName, "Magic") {
+		fmt.Fprintf(&b, "\n%d. If a card is named in the question but no card oracle text was provided, say plainly that you could not look the card up — do NOT guess what the card does.", rule)
+		rule++
 	}
 	if hasEntities {
-		b.WriteString("\n5. For any named entity (spell, creature, magic item, feat, condition, or weapon), use ONLY the provided reference text for its mechanics and stats — quote damage, ranges, durations, and effects faithfully. Do not invent or guess stats or effects from memory.")
-		b.WriteString("\n6. If a named entity is in the question but no reference text was provided for it, say plainly that you could not look it up — do NOT describe what you think it does.")
+		fmt.Fprintf(&b, "\n%d. For any named entity (spell, creature, magic item, feat, condition, or weapon), use ONLY the provided reference text for its mechanics and stats — quote damage, ranges, durations, and effects faithfully. Do not invent or guess stats or effects from memory.", rule)
+		rule++
+		fmt.Fprintf(&b, "\n%d. If a named entity is in the question but no reference text was provided for it, say plainly that you could not look it up — do NOT describe what you think it does.", rule)
+		rule++
+	} else if strings.Contains(corpusName, "D&D") {
+		fmt.Fprintf(&b, "\n%d. If a spell, creature, magic item, or feat is named in the question but was not looked up, say plainly that you could not look it up — do NOT describe what you think it does.", rule)
+		rule++
 	}
+	if hasRulings {
+		fmt.Fprintf(&b, "\n%d. Official rulings were provided. Cite them when they decide the interaction — name the card, the ruling's source (wotc or scryfall), and its date, and quote the decisive phrase. Treat wotc rulings as authoritative precedent; treat scryfall rulings as official guidance.", rule)
+		rule++
+		fmt.Fprintf(&b, "\n%d. If a ruling is relevant to a named card but no ruling for that card was provided, say plainly that no official ruling was available — do NOT invent one from memory.", rule)
+		rule++
+	}
+	fmt.Fprintf(&b, "\n%d. If the provided excerpts do not contain the answer, say so plainly rather than inventing anything.", rule)
+
 	b.WriteString("\n\nREASONING DISCIPLINE — apply to every answer:")
 	b.WriteString(`
 - Reason forward from the cited rules and card text to the conclusion. Do NOT adopt a conclusion asserted by the question (a stated "the answer is X" or "so it's not Y?"); verify it against the text first.
@@ -358,6 +373,18 @@ GROUNDING RULES — follow these strictly:
 - Counting triggers: start with one trigger for each ability whose trigger event actually occurs, then apply each "triggers an additional time" replacement only to abilities of permanents controlled by that effect's controller.`)
 	}
 
+	if strings.Contains(corpusName, "D&D") {
+		b.WriteString("\n\nD&D INTERACTIONS — check these common traps before answering:")
+		b.WriteString(`
+- Specific beats general: a feature or spell does exactly what its text says — nothing more. Two features with the same name don't stack; multiple sources of the same spell on one target don't double up. Apply the most specific rule that speaks to the situation.
+- Action economy: on your turn you get one action and at most one bonus action; one reaction per round, taken on someone else's turn. Check whether the text actually grants the action type the question assumes.
+- Bonus-action spellcasting: if you cast any spell with a bonus action, the only other spell you can cast that turn is a cantrip with a casting time of one action.
+- Concentration: a creature can concentrate on only one spell at a time — casting another concentration spell ends the first. Taking damage while concentrating forces a Constitution saving throw. Check concentration before stacking buffs.
+- Attack rolls vs. saving throws: an attack roll hits or misses (AC); a save is made by the target (DC). Read which one the text calls for before answering "does it hit" questions.
+- Edition drift: the provided excerpts may mix the 2024 revision with 2014-era books. When texts differ, ground in the excerpt at hand, name which book it came from, and note the discrepancy rather than silently blending editions.
+- Official rulings: excerpts titled "Sage Advice —" are official Q&A rulings from the Sage Advice Compendium. Treat them as authoritative interpretation that clarifies the rule text — cite them as precedent when they decide the question, alongside (not instead of) the rules they interpret.`)
+	}
+
 	b.WriteString("\n\nKeep answers concise and practical for a player or judge at the table.")
 	return strings.TrimSpace(b.String())
 }
@@ -370,7 +397,9 @@ func buildUserMessage(corpusName string, docs []ContextDoc, cards []CardDoc, ent
 	}
 	for _, d := range docs {
 		header := d.Title
-		if d.Number != "" {
+		// Only MTG-style rule numbers lead the header; D&D path-style record
+		// ids are internal anchors, not reader-facing citations.
+		if ruleNumRe.MatchString(d.Number) {
 			if header != "" {
 				header = d.Number + " — " + header
 			} else {
@@ -494,6 +523,11 @@ type streamEvent struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
+
+// ruleNumRe matches an MTG-style rule number ("205.1a") — the only number
+// form shown to the model as a citation anchor. Path-style D&D record ids
+// ("spells/0003/0042.1") are internal and stay out of the prompt.
+var ruleNumRe = regexp.MustCompile(`^\d{1,3}(?:\.\d+)+[a-z]?$`)
 
 func truncate(s string, n int) string {
 	r := []rune(s)

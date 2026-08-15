@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +72,7 @@ var ErrNotFound = errors.New("entity not found")
 // implements data.EntityResolver.
 type Open5e struct {
 	baseURL string
+	dict    *cards.Dictionary
 	http    *http.Client
 
 	mu      sync.Mutex
@@ -99,15 +101,27 @@ func NewWithBase(baseURL string) *Open5e {
 	}
 }
 
-// Resolve extracts candidate names from the question using the same Title-Case
-// heuristics the MTG side uses (D&D spells, monsters, and feats are Title-Case
-// too), looks each up against the Open5e SRD, and returns the resolved entity
+// SetDictionary attaches the SRD entity-name dictionary (built at index time
+// from Open5e's name listings). It catches the mentions the Title-Case
+// heuristics cannot — lowercase, unquoted ("does hunter's mark stack") — the
+// same tier the MTG side gets from MTGJSON's card names. Without it, Resolve
+// degrades to the heuristics.
+func (r *Open5e) SetDictionary(d *cards.Dictionary) {
+	if r == nil {
+		return
+	}
+	r.dict = d
+}
+
+// Resolve extracts candidate names from the question — using the SRD name
+// dictionary when available, plus the same Title-Case heuristics the MTG side
+// uses — looks each up against the Open5e SRD, and returns the resolved entity
 // text plus the names it could not resolve.
 func (r *Open5e) Resolve(ctx context.Context, question string) ([]data.Entity, []string, error) {
 	if r == nil {
 		return nil, nil, nil
 	}
-	candidates := cards.ExtractCandidates(question)
+	candidates := cards.ExtractCandidatesWithDict(question, r.dict)
 	if len(candidates) == 0 {
 		return nil, nil, nil
 	}
@@ -332,7 +346,11 @@ func (r *Open5e) buildEntity(ctx context.Context, hit searchHit, budget *int) (*
 	}
 	var obj open5eObject
 	path := "/" + strings.Trim(hit.Route, "/") + "/" + url.PathEscape(hit.ObjectPK) + "/"
-	if err := r.getJSON(ctx, path, url.Values{"fields": {"name,document,level,school,desc,higher_level,range_text,casting_time,duration,classes,type,size,hit_points,armor_class,challenge_rating,speed,actions,rarity,category"}}, &obj); err != nil {
+	fields := "name,document,level,school,desc,higher_level,range_text,casting_time,duration,concentration,classes," +
+		"type,size,hit_points,armor_class,challenge_rating,speed,actions,rarity,category," +
+		"ability_scores,saving_throws,skill_bonuses,passive_perception,blindsight_range,darkvision_range,tremorsense_range,truesight_range," +
+		"languages,resistances_and_immunities,traits"
+	if err := r.getJSON(ctx, path, url.Values{"fields": {fields}}, &obj); err != nil {
 		return nil, err
 	}
 	name := obj.Name
@@ -390,25 +408,39 @@ func kindFromModel(model string) string {
 // open5eObject models the union of fields the formatted kinds need. Fields the
 // fetched object does not carry stay zero-valued and are omitted from the body.
 type open5eObject struct {
-	Name            string           `json:"name"`
-	Document        documentRef      `json:"document"`
-	Level           *float64         `json:"level"`
-	School          *namedRef        `json:"school"`
-	Desc            string           `json:"desc"`
-	HigherLevel     string           `json:"higher_level"`
-	RangeText       string           `json:"range_text"`
-	CastingTime     string           `json:"casting_time"`
-	Duration        string           `json:"duration"`
-	Classes         []namedRef       `json:"classes"`
-	Type            *namedRef        `json:"type"`
-	Size            *namedRef        `json:"size"`
-	HitPoints       *float64         `json:"hit_points"`
-	ArmorClass      *float64         `json:"armor_class"`
-	ChallengeRating *float64         `json:"challenge_rating"`
-	Speed           *creatureSpeed   `json:"speed"`
-	Actions         []creatureAction `json:"actions"`
-	Rarity          string           `json:"rarity"`
-	Category        string           `json:"category"`
+	Name            string                `json:"name"`
+	Document        documentRef           `json:"document"`
+	Level           *float64              `json:"level"`
+	School          *namedRef             `json:"school"`
+	Desc            string                `json:"desc"`
+	HigherLevel     string                `json:"higher_level"`
+	RangeText       string                `json:"range_text"`
+	CastingTime     string                `json:"casting_time"`
+	Duration        string                `json:"duration"`
+	Concentration   *bool                 `json:"concentration"`
+	Classes         []namedRef            `json:"classes"`
+	Type            *namedRef             `json:"type"`
+	Size            *namedRef             `json:"size"`
+	HitPoints       *float64              `json:"hit_points"`
+	ArmorClass      *float64              `json:"armor_class"`
+	ChallengeRating *float64              `json:"challenge_rating"`
+	Speed           *creatureSpeed        `json:"speed"`
+	Actions         []creatureAction      `json:"actions"`
+	Rarity          string                `json:"rarity"`
+	Category        string                `json:"category"`
+
+	// Full statblock fields (creatures).
+	AbilityScores      map[string]int           `json:"ability_scores"`
+	SavingThrows       map[string]int           `json:"saving_throws"`
+	SkillBonuses       map[string]int           `json:"skill_bonuses"`
+	PassivePerception  *float64                 `json:"passive_perception"`
+	BlindsightRange    *float64                 `json:"blindsight_range"`
+	DarkvisionRange    *float64                 `json:"darkvision_range"`
+	TremorsenseRange   *float64                 `json:"tremorsense_range"`
+	TruesightRange     *float64                 `json:"truesight_range"`
+	Languages          creatureLanguages        `json:"languages"`
+	Resistances        resistancesAndImmunities `json:"resistances_and_immunities"`
+	Traits             []creatureAction         `json:"traits"`
 }
 
 type documentRef struct {
@@ -430,9 +462,25 @@ type creatureSpeed struct {
 	Unit   string   `json:"unit"`
 }
 
+// creatureAction is a named statblock entry. Action-type and legendary cost
+// only apply to actions; traits reuse the shape.
 type creatureAction struct {
-	Name string `json:"name"`
-	Desc string `json:"desc"`
+	Name                string `json:"name"`
+	Desc                string `json:"desc"`
+	ActionType          string `json:"action_type"`
+	LegendaryActionCost *int   `json:"legendary_action_cost"`
+}
+
+type creatureLanguages struct {
+	AsString string `json:"as_string"`
+}
+
+// resistancesAndImmunities carries the display strings the API pre-formats.
+type resistancesAndImmunities struct {
+	DamageVulnerabilities  string `json:"damage_vulnerabilities_display"`
+	DamageResistances      string `json:"damage_resistances_display"`
+	DamageImmunities       string `json:"damage_immunities_display"`
+	ConditionImmunities    string `json:"condition_immunities_display"`
 }
 
 // formatObject renders an SRD object as grounding prose, per kind. Only
@@ -458,6 +506,9 @@ func formatSpell(o *open5eObject) string {
 	writeField(&b, "Casting Time", o.CastingTime)
 	writeField(&b, "Range", o.RangeText)
 	writeField(&b, "Duration", o.Duration)
+	if o.Concentration != nil && *o.Concentration {
+		writeField(&b, "Concentration", "yes")
+	}
 	if len(o.Classes) > 0 {
 		writeField(&b, "Classes", joinNames(o.Classes))
 	}
@@ -471,6 +522,30 @@ func formatSpell(o *open5eObject) string {
 	return strings.TrimSpace(fixFirstLabel(b.String()))
 }
 
+// abilityOrder is the display order of the six ability scores.
+var abilityOrder = []string{"strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"}
+
+// abilityShort abbreviates an ability key for statblock lines: "Str", "Dex", ….
+func abilityShort(key string) string {
+	if len(key) < 3 {
+		return key
+	}
+	return strings.ToUpper(key[:1]) + key[1:3]
+}
+
+// signed renders a bonus with an explicit sign, the way statblocks do.
+func signed(n int) string {
+	if n >= 0 {
+		return fmt.Sprintf("+%d", n)
+	}
+	return fmt.Sprint(n)
+}
+
+// formatCreature renders a complete statblock: ability scores, saving throws,
+// skills, senses, languages, resistances/immunities, traits, and every action
+// category in statblock order (actions, bonus actions, reactions, legendary
+// actions). A question about saves, senses, or legendary options grounds in
+// the whole block, not just the attack list.
 func formatCreature(o *open5eObject) string {
 	var b strings.Builder
 	if o.Size != nil && o.Size.Name != "" || o.Type != nil && o.Type.Name != "" {
@@ -490,13 +565,128 @@ func formatCreature(o *open5eObject) string {
 			fmt.Fprintf(&b, " Speed %s.", s)
 		}
 	}
-	for _, a := range o.Actions {
-		if a.Name == "" && a.Desc == "" {
+	if len(o.AbilityScores) > 0 {
+		var parts []string
+		for _, k := range abilityOrder {
+			if v, ok := o.AbilityScores[k]; ok {
+				parts = append(parts, fmt.Sprintf("%s %d (%s)", abilityShort(k), v, signed((v-10)/2)))
+			}
+		}
+		if len(parts) > 0 {
+			fmt.Fprintf(&b, "\nAbilities: %s.", strings.Join(parts, ", "))
+		}
+	}
+	if len(o.SavingThrows) > 0 {
+		var parts []string
+		for _, k := range abilityOrder {
+			if v, ok := o.SavingThrows[k]; ok {
+				parts = append(parts, fmt.Sprintf("%s %s", abilityShort(k), signed(v)))
+			}
+		}
+		if len(parts) > 0 {
+			fmt.Fprintf(&b, "\nSaving Throws: %s.", strings.Join(parts, ", "))
+		}
+	}
+	if len(o.SkillBonuses) > 0 {
+		var parts []string
+		// skills have their own names; sort for stable output
+		keys := make([]string, 0, len(o.SkillBonuses))
+		for k := range o.SkillBonuses {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s %s", skillLabel(k), signed(o.SkillBonuses[k])))
+		}
+		fmt.Fprintf(&b, "\nSkills: %s.", strings.Join(parts, ", "))
+	}
+	if senses := sensesLabel(o); senses != "" {
+		fmt.Fprintf(&b, "\nSenses: %s.", senses)
+	}
+	if o.Languages.AsString != "" {
+		fmt.Fprintf(&b, "\nLanguages: %s.", o.Languages.AsString)
+	}
+	if r := o.Resistances; r.DamageVulnerabilities != "" || r.DamageResistances != "" || r.DamageImmunities != "" || r.ConditionImmunities != "" {
+		if r.DamageVulnerabilities != "" {
+			fmt.Fprintf(&b, "\nDamage Vulnerabilities: %s.", r.DamageVulnerabilities)
+		}
+		if r.DamageResistances != "" {
+			fmt.Fprintf(&b, "\nDamage Resistances: %s.", r.DamageResistances)
+		}
+		if r.DamageImmunities != "" {
+			fmt.Fprintf(&b, "\nDamage Immunities: %s.", r.DamageImmunities)
+		}
+		if r.ConditionImmunities != "" {
+			fmt.Fprintf(&b, "\nCondition Immunities: %s.", r.ConditionImmunities)
+		}
+	}
+	for _, tr := range o.Traits {
+		if tr.Name == "" && tr.Desc == "" {
 			continue
 		}
-		fmt.Fprintf(&b, "\n\n%s. %s", strings.TrimSpace(a.Name), strings.TrimSpace(a.Desc))
+		fmt.Fprintf(&b, "\n\n%s. %s", strings.TrimSpace(tr.Name), strings.TrimSpace(tr.Desc))
+	}
+	// Actions grouped by category in statblock order. An action with no
+	// action_type (older payloads) is treated as a plain action.
+	for _, group := range []struct{ typ, label string }{
+		{"ACTION", "Actions"},
+		{"BONUS_ACTION", "Bonus Actions"},
+		{"REACTION", "Reactions"},
+		{"LEGENDARY_ACTION", "Legendary Actions"},
+	} {
+		var lines []string
+		for _, a := range o.Actions {
+			typ := a.ActionType
+			if typ == "" {
+				typ = "ACTION"
+			}
+			if typ != group.typ || a.Name == "" && a.Desc == "" {
+				continue
+			}
+			entry := fmt.Sprintf("%s. %s", strings.TrimSpace(a.Name), strings.TrimSpace(a.Desc))
+			if group.typ == "LEGENDARY_ACTION" && a.LegendaryActionCost != nil && *a.LegendaryActionCost > 1 {
+				entry = fmt.Sprintf("%s (costs %d actions). %s", strings.TrimSpace(a.Name), *a.LegendaryActionCost, strings.TrimSpace(a.Desc))
+			}
+			lines = append(lines, entry)
+		}
+		if len(lines) > 0 {
+			fmt.Fprintf(&b, "\n\n%s:\n%s", group.label, strings.Join(lines, "\n"))
+		}
 	}
 	return strings.TrimSpace(fixFirstLabel(b.String()))
+}
+
+// skillLabel prettifies a skill key: "animal_handling" -> "Animal Handling".
+func skillLabel(key string) string {
+	var b strings.Builder
+	for _, part := range strings.Split(key, "_") {
+		if part == "" {
+			continue
+		}
+		b.WriteString(strings.ToUpper(part[:1]) + part[1:])
+		b.WriteByte(' ')
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// sensesLabel assembles the senses line: passive perception plus any special
+// senses with their ranges.
+func sensesLabel(o *open5eObject) string {
+	var parts []string
+	add := func(name string, v *float64) {
+		if v == nil || *v == 0 {
+			return
+		}
+		parts = append(parts, fmt.Sprintf("%s %d ft.", name, int(*v)))
+	}
+	add("blindsight", o.BlindsightRange)
+	add("darkvision", o.DarkvisionRange)
+	add("tremorsense", o.TremorsenseRange)
+	add("truesight", o.TruesightRange)
+	if o.PassivePerception != nil {
+		parts = append(parts, fmt.Sprintf("passive Perception %d", int(*o.PassivePerception)))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // formatGeneric covers magic items, feats, conditions, weapons, and anything

@@ -29,6 +29,7 @@
 //	OPEN5E_BASE_URL     D&D entity lookup endpoint (default https://api.open5e.com; no key needed)
 //	DND_REPO            override D&D SRD repo "owner/name"
 //	DND_REF             override D&D SRD git ref
+//	DND_DOCS_DIR        local D&D documents (markdown/text) imported alongside the SRD
 package main
 
 import (
@@ -95,7 +96,7 @@ Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
   GRIMOIRE_INVITE_TTL, GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
   EMBEDDINGS_BASE_URL, EMBEDDINGS_API_KEY, EMBEDDINGS_MODEL,
-  SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, OPEN5E_BASE_URL, DND_REPO, DND_REF`)
+  SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, OPEN5E_BASE_URL, DND_REPO, DND_REF, DND_DOCS_DIR`)
 }
 
 func env(key, def string) string {
@@ -202,13 +203,6 @@ func cardsService() *cards.Service {
 	return cards.NewWithBase(env("SCRYFALL_BASE_URL", cards.DefaultBaseURL))
 }
 
-// open5eService builds the D&D entity resolver against the Open5e API. A single
-// OPEN5E_BASE_URL override retargets it (tests / a mirror), otherwise it points
-// at the public endpoint, which needs no key.
-func open5eService() *entities.Open5e {
-	return entities.NewWithBase(env("OPEN5E_BASE_URL", entities.DefaultBaseURL))
-}
-
 // rulingsService shares the Scryfall endpoint with cardsService: the rulings
 // layer resolves card names to ids via the same Scryfall API, so a single
 // SCRYFALL_BASE_URL override retargets both.
@@ -220,11 +214,17 @@ func rulingsService() *rulings.Service {
 // dictionary.
 func mtgjsonURL() string { return env("MTGJSON_URL", data.DefaultMTGJSONURL) }
 
+// open5eBaseURL returns the Open5e endpoint used for both the D&D entity
+// resolver and the entity-name dictionary build, so one override retargets
+// both.
+func open5eBaseURL() string { return env("OPEN5E_BASE_URL", entities.DefaultBaseURL) }
+
 func fetchOpts() data.FetchOptions {
 	return data.FetchOptions{
-		MTGURL:  os.Getenv("MTG_RULES_URL"),
-		DNDRepo: os.Getenv("DND_REPO"),
-		DNDRef:  os.Getenv("DND_REF"),
+		MTGURL:     os.Getenv("MTG_RULES_URL"),
+		DNDRepo:    os.Getenv("DND_REPO"),
+		DNDRef:     os.Getenv("DND_REF"),
+		DNDDocsDir: os.Getenv("DND_DOCS_DIR"),
 	}
 }
 
@@ -280,6 +280,12 @@ func buildIndex(ctx context.Context, store *index.Store) error {
 	if err := buildCardDictionary(ctx, store); err != nil {
 		log.Printf("card dictionary skipped: %v (chat will detect cards by text heuristics only)", err)
 	}
+
+	// The D&D entity-name dictionary is equally best-effort: without it the
+	// D&D chat detects entity mentions by text heuristics only.
+	if err := buildDNDNameDictionary(ctx, store); err != nil {
+		log.Printf("d&d name dictionary skipped: %v (chat will detect entities by text heuristics only)", err)
+	}
 	return nil
 }
 
@@ -294,6 +300,22 @@ func buildCardDictionary(ctx context.Context, store *index.Store) error {
 		return fmt.Errorf("index card names: %w", err)
 	}
 	log.Printf("indexed %d card names from MTGJSON", len(names))
+	return nil
+}
+
+// buildDNDNameDictionary lists the SRD entity names from Open5e (spells,
+// creatures, magic items, feats, conditions, weapons) and stores them so the
+// D&D chat can detect entity mentions the text heuristics miss — the
+// counterpart of the MTG card-name dictionary.
+func buildDNDNameDictionary(ctx context.Context, store *index.Store) error {
+	names, err := data.FetchDNDNames(ctx, open5eBaseURL())
+	if err != nil {
+		return fmt.Errorf("fetch open5e names: %w", err)
+	}
+	if err := store.IndexEntityNames(ctx, names); err != nil {
+		return fmt.Errorf("index entity names: %w", err)
+	}
+	log.Printf("indexed %d D&D entity names from Open5e", len(names))
 	return nil
 }
 
@@ -324,6 +346,35 @@ func loadCardDictionary(ctx context.Context, store *index.Store) *cards.Dictiona
 	}
 	d := cards.NewDictionary(names)
 	log.Printf("loaded card dictionary: %d names", d.Size())
+	return d
+}
+
+// loadDNDNameDictionary builds the in-memory D&D entity dictionary from the
+// store, fetching Open5e's name listings once if the table is empty (a fresh
+// serve without a full index build). A nil dictionary degrades detection to
+// text heuristics.
+func loadDNDNameDictionary(ctx context.Context, store *index.Store) *cards.Dictionary {
+	names, err := store.LoadEntityNames(ctx)
+	if err != nil {
+		log.Printf("load entity names: %v", err)
+		return nil
+	}
+	if len(names) == 0 {
+		if err := buildDNDNameDictionary(ctx, store); err != nil {
+			log.Printf("d&d name dictionary unavailable: %v", err)
+			return nil
+		}
+		names, err = store.LoadEntityNames(ctx)
+		if err != nil {
+			log.Printf("load entity names: %v", err)
+			return nil
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	d := cards.NewDictionary(names)
+	log.Printf("loaded D&D name dictionary: %d names", d.Size())
 	return d
 }
 
@@ -378,14 +429,19 @@ func runServe() error {
 	}
 
 	cardDict := loadCardDictionary(ctx, store)
+	dndDict := loadDNDNameDictionary(ctx, store)
 
 	// Wire each corpus's entity resolver onto its registered definition. MTG's
 	// Scryfall resolver shares the card service + dictionary the chat already
 	// uses; D&D's Open5e resolver grounds spells/creatures/items/feats from the
-	// SRD. Done after the dictionary loads so a best-effort dictionary miss
-	// (text-heuristics-only detection) still leaves MTG with a working resolver.
+	// SRD, with its own name dictionary for the mentions the heuristics miss.
+	// Done after the dictionaries load so a best-effort dictionary miss
+	// (text-heuristics-only detection) still leaves each corpus a working
+	// resolver.
 	data.SetResolver(data.CorpusMTG, entities.NewScryfall(cardsService(), cardDict))
-	data.SetResolver(data.CorpusDND, open5eService())
+	open5e := entities.NewWithBase(open5eBaseURL())
+	open5e.SetDictionary(dndDict)
+	data.SetResolver(data.CorpusDND, open5e)
 
 	// Chat history shares the index's SQLite file and connection pool.
 	// Rebuilding the rules index does not touch these tables.

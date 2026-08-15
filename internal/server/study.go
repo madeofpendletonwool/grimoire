@@ -38,6 +38,8 @@ func (g deckGenerator) Concepts(ctx context.Context, corpus, topic string) ([]st
 		return g.mtgKeywords(ctx)
 	case strings.EqualFold(corpus, string(data.CorpusDND)) && topic == study.TopicConditions:
 		return g.dndConditions(ctx)
+	case strings.EqualFold(corpus, string(data.CorpusDND)) && topic == study.TopicSpells:
+		return g.dndSpells(ctx)
 	}
 	return nil, nil
 }
@@ -166,6 +168,48 @@ func (g deckGenerator) dndConditions(ctx context.Context) ([]study.Concept, erro
 			Front:  fmt.Sprintf("%s — condition. Recall its effect.", name),
 			Back:   strings.TrimSpace(h.Body),
 			Source: h.Source,
+		})
+	}
+	return out, nil
+}
+
+// dndSpells builds a deck over the SRD's spell entries. The spells chapter
+// lists each spell as a depth-4 heading directly under its depth-2 chapter,
+// skipping depth 3 — so an entry's path number carries the skip as a literal
+// 0000 segment (spells/NNNN/0000/NNNN) while structural subsections nest
+// without one (spells/NNNN/NNNN). That shape is the entry filter.
+func (g deckGenerator) dndSpells(ctx context.Context) ([]study.Concept, error) {
+	docs, err := g.store.DNDChildren(ctx, data.CorpusDND, "spells")
+	if err != nil {
+		return nil, fmt.Errorf("load spells: %w", err)
+	}
+	seen := map[string]bool{}
+	var out []study.Concept
+	for _, d := range docs {
+		key := data.DNDSectionKey(d.Number)
+		parts := strings.Split(key, "/")
+		// Entry shape: spells/<chapter>/0000/<ordinal>, first chunk only.
+		if len(parts) != 4 || parts[2] != "0000" || !strings.HasSuffix(d.Number, ".0") {
+			continue
+		}
+		name := conditionName(d.Title)
+		if name == "" || len(name) > 60 || seen[key] {
+			continue
+		}
+		// Skip structural strays that share the shape but carry sentence-like
+		// titles (e.g. table-of-contents fragments from book imports).
+		if strings.ContainsAny(name, ".,;:") {
+			continue
+		}
+		seen[key] = true
+		out = append(out, study.Concept{
+			Key:    key,
+			Corpus: string(data.CorpusDND),
+			Topic:  study.TopicSpells,
+			Title:  name,
+			Front:  fmt.Sprintf("%s — spell. Recall what it does.", name),
+			Back:   strings.TrimSpace(d.Body),
+			Source: d.Source,
 		})
 	}
 	return out, nil

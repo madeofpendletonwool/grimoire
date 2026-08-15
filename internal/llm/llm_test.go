@@ -85,6 +85,35 @@ func TestSystemPrompt_NoMTGTrapsForDND(t *testing.T) {
 	}
 }
 
+func TestSystemPrompt_DNDInteractionTraps(t *testing.T) {
+	got := systemPrompt("D&D 5e SRD", false, true, false)
+	for _, want := range []string{
+		"D&D INTERACTIONS",
+		"Specific beats general",
+		"one action and at most one bonus action",
+		"the only other spell you can cast that turn is a cantrip",
+		"concentrate on only one spell",
+		"Attack rolls vs. saving throws",
+		"Sage Advice",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("D&D prompt missing %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "MTG INTERACTIONS") {
+		t.Errorf("D&D prompt must not carry MTG traps: %q", got)
+	}
+}
+
+func TestSystemPrompt_GroundingRulesNumberedSequentially(t *testing.T) {
+	// Entities + rulings together once produced colliding rule numbers (both
+	// layers claimed 5-6/6-7). The dynamic numbering must stay sequential.
+	got := systemPrompt("D&D 5e SRD", false, true, false)
+	if strings.Contains(got, "\n6. ") && strings.Count(got, "\n6. ") > 1 {
+		t.Errorf("grounding rule numbers collide: %q", got)
+	}
+}
+
 func TestSystemPrompt_WithEntities(t *testing.T) {
 	got := systemPrompt("D&D 5e SRD", false, true, false)
 	if !strings.Contains(got, "use ONLY the provided reference text for its mechanics and stats") {
@@ -143,6 +172,21 @@ func TestBuildUserMessage_NoCards(t *testing.T) {
 	}
 	if !strings.Contains(got, "(no directly matching rules found)") {
 		t.Errorf("empty rules should be noted: %q", got)
+	}
+}
+
+func TestBuildUserMessage_PathNumbersStayOutOfHeaders(t *testing.T) {
+	// D&D records carry internal path-style ids; the model sees the title
+	// alone, the way unnumbered records always did.
+	docs := []ContextDoc{
+		{Number: "spells/0003/0042.0", Title: "Spells — Fireball", Body: "A bright streak flashes."},
+	}
+	got := buildUserMessage("D&D 5e SRD", docs, nil, nil, nil, nil, "What does fireball do?")
+	if strings.Contains(got, "spells/0003/0042.0") {
+		t.Errorf("internal path id leaked into the prompt: %q", got)
+	}
+	if !strings.Contains(got, "### Spells — Fireball") {
+		t.Errorf("title-only header missing: %q", got)
 	}
 }
 

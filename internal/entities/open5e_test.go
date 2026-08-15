@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/madeofpendletonwool/grimoire/internal/cards"
 )
 
 // open5eServer stubs the Open5e cross-endpoint search and the per-object fetch
@@ -164,7 +166,17 @@ func TestOpen5e_CreatureFormatting(t *testing.T) {
 	  "size":{"name":"Large","key":"large"},"type":{"name":"Monstrosity","key":"monstrosity"},
 	  "hit_points":59,"armor_class":13,"challenge_rating":3.0,
 	  "speed":{"walk":40,"climb":40,"unit":"feet"},
-	  "actions":[{"name":"Rend","desc":"Melee Attack Roll: +7, reach 5 ft. 14 (2d8 + 5) Slashing damage."}]
+	  "ability_scores":{"strength":20,"dexterity":12,"constitution":17,"intelligence":8,"wisdom":12,"charisma":10},
+	  "saving_throws":{"wisdom":3},
+	  "skill_bonuses":{"perception":5},
+	  "passive_perception":15,"darkvision_range":60,
+	  "languages":{"as_string":"None (understands Common and Elvish but can't speak)"},
+	  "resistances_and_immunities":{"damage_immunities_display":"","damage_resistances_display":"","damage_vulnerabilities_display":"","condition_immunities_display":""},
+	  "traits":[{"name":"Keen Sight and Smell","desc":"The owlbear has Advantage on Wisdom (Perception) checks that rely on sight or hearing."}],
+	  "actions":[
+	    {"name":"Rend","desc":"Melee Attack Roll: +7, reach 5 ft. 14 (2d8 + 5) Slashing damage.","action_type":"ACTION"},
+	    {"name":"Redirect Attack","desc":"When a creature the owlbear can see attacks a target other than it, the owlbear makes a Rend attack against the attacker.","action_type":"REACTION"}
+	  ]
 	}`
 	srv := open5eServer(t,
 		map[string]string{"Owlbear": search},
@@ -183,9 +195,64 @@ func TestOpen5e_CreatureFormatting(t *testing.T) {
 	if e.Kind != "creature" {
 		t.Errorf("kind = %q, want creature", e.Kind)
 	}
-	for _, want := range []string{"Large Monstrosity", "CR 3", "HP 59", "AC 13", "Rend", "Slashing damage"} {
+	for _, want := range []string{
+		"Large Monstrosity", "CR 3", "HP 59", "AC 13",
+		"Abilities: Str 20 (+5)",
+		"Saving Throws: Wis +3",
+		"Skills: Perception +5",
+		"Senses: darkvision 60 ft., passive Perception 15",
+		"Languages: None (understands Common and Elvish",
+		"Keen Sight and Smell",
+		"Actions:", "Rend", "Slashing damage",
+		"Reactions:", "Redirect Attack",
+	} {
 		if !strings.Contains(e.Body, want) {
 			t.Errorf("creature body missing %q: %q", want, e.Body)
+		}
+	}
+}
+
+// TestOpen5e_LegendaryActions confirms legendary actions render under their
+// own header with their action cost, so legendary-action questions ground in
+// the full option list.
+func TestOpen5e_LegendaryActions(t *testing.T) {
+	search := `{"count":1,"results":[
+	  {"document":{"key":"srd-2024","name":"SRD"},"object_pk":"srd-2024_adult-black-dragon","object_name":"Adult Black Dragon","object_model":"Creature","route":"v2/creatures/","text":"Adult Black Dragon","match_type":"exact","match_score":1.0}
+	]}`
+	obj := `{
+	  "name":"Adult Black Dragon","document":{"key":"srd-2024","name":"SRD"},
+	  "size":{"name":"Large","key":"large"},"type":{"name":"Dragon","key":"dragon"},
+	  "hit_points":195,"armor_class":19,"challenge_rating":14.0,
+	  "resistances_and_immunities":{"damage_immunities_display":"acid","damage_resistances_display":"","damage_vulnerabilities_display":"","condition_immunities_display":""},
+	  "traits":[{"name":"Legendary Resistance (3/Day)","desc":"If the dragon fails a saving throw, it can choose to succeed instead."}],
+	  "actions":[
+	    {"name":"Rend","desc":"Melee Attack Roll: +11. 13 (2d6 + 6) Slashing damage plus 4 (1d8) Acid damage.","action_type":"ACTION"},
+	    {"name":"Cloud of Insects","desc":"Dexterity Saving Throw: DC 17, one creature. Failure: 22 (4d10) Poison damage.","action_type":"LEGENDARY_ACTION","legendary_action_cost":1},
+	    {"name":"Pounce","desc":"The dragon moves up to half its Speed and makes one Rend attack.","action_type":"LEGENDARY_ACTION","legendary_action_cost":2}
+	  ]
+	}`
+	srv := open5eServer(t,
+		map[string]string{"Adult Black Dragon": search},
+		map[string]string{"v2/creatures/srd-2024_adult-black-dragon": obj},
+	)
+	r := NewWithBase(srv.URL)
+	entities, _, err := r.Resolve(context.Background(), `Tell me about the Adult Black Dragon.`)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(entities) != 1 {
+		t.Fatalf("resolved %d, want 1", len(entities))
+	}
+	body := entities[0].Body
+	for _, want := range []string{
+		"Damage Immunities: acid.",
+		"Legendary Actions:",
+		"Cloud of Insects",
+		"Pounce (costs 2 actions)",
+		"Legendary Resistance (3/Day)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("legendary body missing %q: %q", want, body)
 		}
 	}
 }
@@ -218,6 +285,53 @@ func TestOpen5e_CachesAfterFirstResolve(t *testing.T) {
 	if hits != firstHits {
 		t.Errorf("second resolve hit the search endpoint %d times, want 0 (cached)", hits-firstHits)
 	}
+}
+
+// TestOpen5e_DictionaryDetectsLowercaseMentions confirms the SRD name
+// dictionary tier: "hunter's mark" in lowercase, unquoted prose is detected
+// only through the dictionary, the counterpart of MTG's MTGJSON tier.
+func TestOpen5e_DictionaryDetectsLowercaseMentions(t *testing.T) {
+	search := `{"count":1,"results":[
+	  {"document":{"key":"srd-2024","name":"SRD"},"object_pk":"srd-2024_hunters-mark","object_name":"Hunter's Mark","object_model":"Spell","route":"v2/spells/","text":"Hunter's Mark","match_type":"exact","match_score":1.0}
+	]}`
+	obj := `{
+	  "name":"Hunter's Mark","document":{"key":"srd-2024","name":"SRD"},
+	  "level":1,"school":{"name":"Divination","key":"divination"},
+	  "desc":"You mark a creature as your quarry.",
+	  "concentration":true,
+	  "range_text":"90 feet","casting_time":"bonus action","duration":"1 hour",
+	  "classes":[{"name":"Ranger","key":"srd-2024_ranger"}]
+	}`
+	srv := open5eServer(t,
+		map[string]string{"Hunter's Mark": search},
+		map[string]string{"v2/spells/srd-2024_hunters-mark": obj},
+	)
+
+	t.Run("without dictionary", func(t *testing.T) {
+		r := NewWithBase(srv.URL)
+		entities, _, err := r.Resolve(context.Background(), `does hunter's mark stack with itself?`)
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if len(entities) != 0 {
+			t.Errorf("lowercase mention resolved without a dictionary: %+v", entities)
+		}
+	})
+
+	t.Run("with dictionary", func(t *testing.T) {
+		r := NewWithBase(srv.URL)
+		r.SetDictionary(cards.NewDictionary([]string{"Hunter's Mark", "Fireball"}))
+		entities, _, err := r.Resolve(context.Background(), `does hunter's mark stack with itself?`)
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if len(entities) != 1 || entities[0].Name != "Hunter's Mark" {
+			t.Fatalf("dictionary tier should resolve the lowercase mention, got %+v", entities)
+		}
+		if !strings.Contains(entities[0].Body, "Concentration: yes") {
+			t.Errorf("concentration tag missing: %q", entities[0].Body)
+		}
+	})
 }
 
 func TestOpen5e_NilSafe(t *testing.T) {

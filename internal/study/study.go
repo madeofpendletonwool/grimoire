@@ -305,4 +305,5 @@ func TopicFor(corpus, topic string) string {
 const (
 	TopicKeywordAbilities = "keyword-abilities" // MTG chapter 702
 	TopicConditions       = "conditions"        // D&D SRD conditions
+	TopicSpells           = "spells"            // D&D SRD spell entries
 )

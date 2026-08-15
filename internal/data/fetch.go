@@ -13,6 +13,10 @@ type FetchOptions struct {
 	MTGURL  string // override MTG comp rules URL
 	DNDRepo string // override D&D SRD repo "owner/name"
 	DNDRef  string // override D&D SRD git ref
+	// DNDDocsDir imports local D&D documents (markdown/text, e.g. PDFs run
+	// through scripts/extract-dnd-pdfs.py) alongside the fetched SRD. Empty
+	// means SRD only.
+	DNDDocsDir string
 	// Include restricts the build to a subset of registered corpora. A nil/empty
 	// map means "all registered corpora", so adding a corpus by registering it
 	// is enough for it to be indexed — no literal to update.
@@ -61,8 +65,25 @@ func fetchMTGDataset(ctx context.Context, opts FetchOptions) (*Dataset, error) {
 }
 
 // fetchDNDDataset adapts the D&D parser to the registry Fetcher signature.
+// When a local docs directory is configured, those documents are parsed with
+// the same chunker and ride alongside the SRD.
 func fetchDNDDataset(ctx context.Context, opts FetchOptions) (*Dataset, error) {
-	return fetchDND(ctx, opts.DNDRepo, opts.DNDRef)
+	ds, err := fetchDND(ctx, opts.DNDRepo, opts.DNDRef)
+	if err != nil {
+		return nil, err
+	}
+	if opts.DNDDocsDir != "" {
+		records, err := ParseDNDDocs(opts.DNDDocsDir)
+		if err != nil {
+			return nil, err
+		}
+		ds.Records = append(ds.Records, records...)
+		if m, ok := ds.Meta[CorpusDND]; ok {
+			m.RecordCount = len(ds.Records)
+			ds.Meta[CorpusDND] = m
+		}
+	}
+	return ds, nil
 }
 
 func fetchMTG(ctx context.Context, url string) (*Dataset, error) {

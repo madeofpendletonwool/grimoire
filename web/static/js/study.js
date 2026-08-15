@@ -21,9 +21,20 @@ const GRADES = [
 	{ slug: "easy", label: "Easy", hint: "Instant recall" },
 ];
 
+// Decks each corpus offers, in order. The first is the corpus default; its
+// slug matches the server's TopicFor fallback when no topic is sent.
+const DECKS = {
+	mtg: [{ slug: "", label: "Keywords" }],
+	dnd: [
+		{ slug: "", label: "Conditions" },
+		{ slug: "spells", label: "Spells" },
+	],
+};
+
 let queue = [];
 let cursor = 0;
 let abortLoad = null;
+let topic = ""; // "" = corpus default deck
 
 export function initStudy() {
 	$("rail-study").addEventListener("click", () => openStudy());
@@ -35,8 +46,20 @@ export function initStudy() {
 	// study is open, so MTG <-> D&D swaps without leaving the surface.
 	document.querySelectorAll(".corpus-opt").forEach((btn) => {
 		btn.addEventListener("click", () => {
-			if (state.studyOpen) loadSession(btn.dataset.corpus);
+			if (state.studyOpen) {
+				topic = ""; // each corpus lands on its default deck
+				loadSession(btn.dataset.corpus);
+			}
 		});
+	});
+	// Deck tabs are delegated with the cards: a re-render keeps them working.
+	$("study-decks").addEventListener("click", (e) => {
+		const tab = e.target.closest("[data-deck]");
+		if (!tab) return;
+		const slug = tab.dataset.deck;
+		if (slug === topic) return;
+		topic = slug;
+		loadSession(activeCorpus());
 	});
 }
 
@@ -68,11 +91,12 @@ export function closeStudy() {
 async function loadSession(corpus) {
 	const body = clear($("study-body"));
 	body.append(el("p", { class: "study-status", text: "Dealing cards…" }));
+	renderDecks(corpus);
 	if (abortLoad) abortLoad.abort();
 	const controller = new AbortController();
 	abortLoad = controller;
 	try {
-		const data = await api.studyQueue(corpus, 20, controller.signal);
+		const data = await api.studyQueue(corpus, 20, controller.signal, topic);
 		queue = data.cards || [];
 		cursor = 0;
 		renderMeta(corpus, data.stats);
@@ -107,8 +131,35 @@ function onStudyBodyClick(e) {
 
 /* ---------- Rendering ---------- */
 
+/** The deck tabs for a corpus: one button per offered deck, the active one
+ * pressed. A corpus with a single deck renders nothing — a lone tab is noise. */
+function renderDecks(corpus) {
+	const wrap = clear($("study-decks"));
+	const decks = DECKS[corpus] || [];
+	if (decks.length < 2) {
+		wrap.hidden = true;
+		return;
+	}
+	wrap.hidden = false;
+	for (const d of decks) {
+		wrap.append(el("button", {
+			class: "study-deck" + (d.slug === topic ? " is-active" : ""),
+			text: d.label,
+			attrs: {
+				type: "button",
+				"data-deck": d.slug,
+				role: "tab",
+				"aria-selected": d.slug === topic ? "true" : "false",
+				title: d.slug ? `Switch to the ${d.label} deck` : "Switch to the default deck",
+			},
+		}));
+	}
+}
+
 function renderMeta(corpus, stats) {
-	$("study-title").textContent = `${corpusLabel(corpus)} — study`;
+	const deck = (DECKS[corpus] || []).find((d) => d.slug === topic);
+	const deckLabel = deck && topic ? ` · ${deck.label}` : "";
+	$("study-title").textContent = `${corpusLabel(corpus)} — study${deckLabel}`;
 	const s = stats || {};
 	const parts = [];
 	if (s.total) {

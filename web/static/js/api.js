@@ -83,8 +83,9 @@ export const api = {
 	deleteChat: (id) =>
 		fetch(`/api/chats/${encodeURIComponent(id)}`, { method: "DELETE" }).then(json),
 
-	studyQueue: (corpus, limit = 20, signal) =>
-		fetch(`/api/study/queue?corpus=${encodeURIComponent(corpus)}&limit=${limit}`, { signal }).then(json),
+	studyQueue: (corpus, limit = 20, signal, topic = "") =>
+		fetch(`/api/study/queue?corpus=${encodeURIComponent(corpus)}&limit=${limit}` +
+			(topic ? `&topic=${encodeURIComponent(topic)}` : ""), { signal }).then(json),
 
 	studyGrade: (key, corpus, topic, grade) =>
 		fetch("/api/study/grade", {

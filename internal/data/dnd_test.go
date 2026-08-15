@@ -1,6 +1,9 @@
 package data
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,8 +29,10 @@ func TestChunkMarkdown(t *testing.T) {
 
 	// Titles carry their full ancestor chain for context.
 	have := map[string]string{}
+	numbers := map[string]string{}
 	for _, r := range recs {
 		have[r.Title] = r.Body
+		numbers[r.Title] = r.Number
 	}
 	if _, ok := have["Spells"]; !ok {
 		t.Errorf("missing file-level section 'Spells'; titles: %v", keys(have))
@@ -52,16 +57,132 @@ func TestChunkMarkdown(t *testing.T) {
 			t.Errorf("body still has markdown bold: %q", r.Body)
 		}
 	}
+	// Records carry stable, file-scoped numbers: slug/ordinal.chunk.
+	for title, num := range numbers {
+		if !strings.HasPrefix(num, "spells/") {
+			t.Errorf("record %q number = %q, want spells/ prefix", title, num)
+		}
+		if !strings.Contains(num, ".") {
+			t.Errorf("record %q number = %q, want a chunk suffix", title, num)
+		}
+	}
 }
 
-func TestCleanMarkdown_StripsTables(t *testing.T) {
-	in := "line one\n| col1 | col2 |\n|---|---|\n| a | b |\nline two"
+func TestChunkMarkdownNumbersSections(t *testing.T) {
+	in := mdFile{
+		Path: "rules.md",
+		Content: "# Rules\n\nA.\n\n## One\n\nB.\n\n## Two\n\nC.\n\n### Two-Bit\n\nD.\n",
+	}
+	recs := chunkMarkdown(in, "")
+	byTitle := map[string]Record{}
+	for _, r := range recs {
+		byTitle[r.Title] = r
+	}
+	// Section ordinals are document order of the heading walk, so sibling
+	// chunks share a section prefix and sections are distinguishable.
+	one, two := byTitle["Rules — One"].Number, byTitle["Rules — Two"].Number
+	if one == two {
+		t.Errorf("sections One and Two share number %q", one)
+	}
+	// A nested heading lands in its own section, but its ordinal path keeps
+	// the parent, so group expansion can still pull the whole subsection.
+	twoBit := byTitle["Rules — Two — Two-Bit"].Number
+	if DNDSectionKey(twoBit) == DNDSectionKey(two) {
+		t.Errorf("child section %q and parent %q share a section key", twoBit, two)
+	}
+	if DNDGroupKey(twoBit) != DNDGroupKey(two) {
+		t.Errorf("child section %q (group %q) left its parent's group %q", twoBit, DNDGroupKey(twoBit), DNDGroupKey(two))
+	}
+}
+
+func TestSplitBodyChunksLongSections(t *testing.T) {
+	para := strings.Repeat("word ", 60) // ~300 chars
+	var body []string
+	for i := 0; i < 12; i++ { // ~3600 chars total, must split
+		body = append(body, para)
+	}
+	in := mdFile{Path: "long.md", Content: "# Long\n\n" + strings.Join(body, "\n\n")}
+	recs := chunkMarkdown(in, "")
+	if len(recs) < 3 {
+		t.Fatalf("long section produced %d records, want >= 3 chunks", len(recs))
+	}
+	for i, r := range recs {
+		if len(r.Body) > dndMaxChunkChars+2 {
+			t.Errorf("chunk %d too long: %d chars", i, len(r.Body))
+		}
+		if want := fmt.Sprintf("(part %d)", i+1); !strings.Contains(r.Title, want) {
+			t.Errorf("chunk %d title %q missing %q", i, r.Title, want)
+		}
+	}
+	// The section prefix is shared so expansion can pull siblings.
+	keys := map[string]bool{}
+	for _, r := range recs {
+		keys[DNDSectionKey(r.Number)] = true
+	}
+	if len(keys) != 1 {
+		t.Errorf("chunks map to %d section keys, want 1: %v", len(keys), keys)
+	}
+}
+
+func TestSplitSentencesRunaway(t *testing.T) {
+	long := strings.Repeat("The rule applies here and there. ", 100) // no newline breaks
+	for _, chunk := range splitSentences(long, 200) {
+		if len(chunk) > 220 { // hard-split slack
+			t.Errorf("sentence chunk too long: %d", len(chunk))
+		}
+	}
+}
+
+func TestCleanMarkdown_KeepsTablesAsText(t *testing.T) {
+	in := "line one\n| Name | Cost |\n|---|---|\n| Longsword | 15 gp |\n| Battleaxe | 10 gp |\nline two"
 	out := cleanMarkdown(in)
 	if strings.Contains(out, "|") {
-		t.Errorf("table not stripped: %q", out)
+		t.Errorf("table pipes survived: %q", out)
+	}
+	if !strings.Contains(out, "Longsword — 15 gp") {
+		t.Errorf("table row not flattened: %q", out)
+	}
+	if !strings.Contains(out, "Battleaxe — 10 gp") {
+		t.Errorf("second table row lost: %q", out)
 	}
 	if !strings.Contains(out, "line one") || !strings.Contains(out, "line two") {
 		t.Errorf("non-table content lost: %q", out)
+	}
+}
+
+func TestParseDNDDocs(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"phb.md":        "# Chapter\n\nSome rule text about ability checks.\n",
+		"sage-advice.txt": "Sage Advice — Equipment\n\nQ. Does cover stack?\nA. No.\n",
+		"ignored.pdf":   "not a text doc",
+		".hidden.md":    "skipped",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recs, err := ParseDNDDocs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2 (md + txt only): %+v", len(recs), recs)
+	}
+	var sources []string
+	for _, r := range recs {
+		if r.Corpus != CorpusDND {
+			t.Errorf("record corpus = %q", r.Corpus)
+		}
+		sources = append(sources, r.Source)
+	}
+	joined := strings.Join(sources, "\n")
+	if !strings.Contains(joined, "D&D books — Phb") {
+		t.Errorf("sources = %v", sources)
+	}
+	if !strings.Contains(joined, "D&D books — Sage-advice") {
+		t.Errorf("sources = %v", sources)
 	}
 }
 

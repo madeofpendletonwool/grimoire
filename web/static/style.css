@@ -139,7 +139,9 @@ kbd {
 	flex-direction: column;
 	min-width: 0;
 	overflow: hidden;
-	background: rgba(27, 22, 16, 0.9);
+	/* the stone at 90% via its token, so a theme swap retints the panel —
+	   a literal rgba here would stay the default brown in every scene */
+	background: color-mix(in srgb, var(--stone-800) 90%, transparent);
 	backdrop-filter: blur(6px);
 	border-right: 1px solid var(--stone-line);
 }
@@ -354,7 +356,7 @@ kbd {
 	flex: none;
 	padding: var(--sp-2) var(--sp-4);
 	border-bottom: 1px solid var(--stone-line);
-	background: rgba(20, 16, 10, 0.7);
+	background: color-mix(in srgb, var(--stone-900) 70%, transparent);
 	backdrop-filter: blur(8px);
 }
 .rail-open { display: none; }
@@ -671,7 +673,10 @@ kbd {
 .composer-dock {
 	flex: none;
 	padding: 0 var(--sp-4) var(--sp-3);
-	background: linear-gradient(180deg, transparent, var(--stone-900) 35%);
+	/* transparent: the chamber runs to the bottom of the page and the
+	   composer sits on top of it. Nothing scrolls under the dock (the
+	   transcript is its own scroll container), so there is nothing to
+	   fade out. */
 }
 /* Framed by .f-field in pixel.css, which also swaps to the gold-edged sprite
    on focus — hence no border or background here. */
@@ -950,6 +955,31 @@ kbd {
 	letter-spacing: 0.02em;
 }
 .study-head .icon-btn { flex: none; align-self: center; }
+/* Deck tabs: quiet pixel-label buttons; the active deck carries the accent so
+   the switcher reads at a glance which deck is loaded. */
+.study-decks {
+	display: flex;
+	gap: var(--sp-2);
+	align-items: baseline;
+}
+.study-deck {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.03em;
+	padding: var(--sp-1) var(--sp-2);
+	background: none;
+	border: none;
+	border-bottom: 2px solid transparent;
+	color: var(--parchment);
+	opacity: 0.55;
+	cursor: pointer;
+}
+.study-deck:hover { opacity: 0.85; }
+.study-deck.is-active {
+	opacity: 1;
+	border-bottom-color: var(--accent);
+	color: var(--accent);
+}
 .study-body {
 	max-width: var(--measure);
 	margin: 0 auto;
@@ -1685,6 +1715,7 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.study { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
 	.study-grades { grid-template-columns: repeat(2, 1fr); }
 	.study-meta { margin-left: 0; flex-basis: 100%; }
+	.study-decks { flex-basis: 100%; }
 
 	.gate {
 		padding:
