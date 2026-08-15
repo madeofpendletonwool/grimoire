@@ -39,7 +39,11 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	db.SetMaxOpenConns(1) // SQLite serial writes
+	// One connection serializes all SQLite access — no cross-connection
+	// locking to worry about — which is exactly why rebuilds must write in
+	// short chunked transactions: whatever holds this connection holds up
+	// every store sharing it (chat, sessions, cache, study).
+	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)
@@ -100,29 +104,87 @@ CREATE TABLE IF NOT EXISTS entity_names (
 
 // Reset drops and rebuilds the docs tables (used on reindex).
 func (s *Store) Reset() error {
-	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names; DELETE FROM entity_names; DELETE FROM doc_vectors;`)
+	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names; DELETE FROM entity_names; DELETE FROM doc_vectors; DROP TABLE IF EXISTS docs_build; DROP TABLE IF EXISTS doc_vectors_build;`)
 	return err
 }
 
+// docsChunkSize is how many records one staging transaction inserts. Every
+// store shares a single SQLite connection (see Open), and requests queue
+// behind whatever transaction holds it, so a rebuild must never write its
+// whole dataset in one transaction. The new docs are staged in chunks of this
+// size and swapped in atomically at the end.
+var docsChunkSize = 1000
+
+// afterDocsChunk, when non-nil, fires after each staging chunk commits. A test
+// seam for proving the shared connection is free between chunks; never set in
+// production.
+var afterDocsChunk func()
+
+// docsBuildDDL is the staging twin of the docs FTS5 table.
+const docsBuildDDL = `
+CREATE VIRTUAL TABLE IF NOT EXISTS docs_build USING fts5(
+	corpus UNINDEXED,
+	number,
+	title,
+	body,
+	source UNINDEXED,
+	tokenize = 'porter unicode61 remove_diacritics 2'
+);
+`
+
 // Index loads a full dataset into the store, replacing prior contents.
+//
+// The rebuild never holds the shared connection for its whole run — chat,
+// sessions, and every other request queue behind it (see Open) — so the new
+// docs are staged into a shadow FTS5 table in short chunked transactions, then
+// swapped for the live table in one metadata-sized transaction. Readers see
+// the old index until the swap commits and the new one after, so the
+// replacement stays atomic even though the writes are chunked. The admin's
+// reindex button runs this while the server keeps serving; boot-time builds
+// run the same code.
 func (s *Store) Index(ctx context.Context, ds *data.Dataset) error {
+	if err := s.stageDocs(ctx, ds); err != nil {
+		// Drop the half-built staging table so a failed rebuild leaves no
+		// partial copy bloating the file; the live index is untouched.
+		_, _ = s.db.ExecContext(context.Background(), `DROP TABLE IF EXISTS docs_build`)
+		return err
+	}
+	return s.swapDocs(ctx, ds)
+}
+
+// stageDocs builds the shadow docs table chunk by chunk. Each chunk is its own
+// transaction, so the connection returns to the pool between chunks and a
+// concurrent request waits out one chunk, not the whole rebuild.
+func (s *Store) stageDocs(ctx context.Context, ds *data.Dataset) error {
+	// A leftover from a failed rebuild must go before CREATE IF NOT EXISTS
+	// keeps it (with its stale rows) in service.
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS docs_build; `+docsBuildDDL); err != nil {
+		return fmt.Errorf("stage docs: %w", err)
+	}
+	for start := 0; start < len(ds.Records); start += docsChunkSize {
+		end := min(start+docsChunkSize, len(ds.Records))
+		if err := s.insertDocsChunk(ctx, ds.Records[start:end]); err != nil {
+			return err
+		}
+		if afterDocsChunk != nil {
+			afterDocsChunk()
+		}
+	}
+	return nil
+}
+
+func (s *Store) insertDocsChunk(ctx context.Context, recs []data.Record) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM doc_vectors;`); err != nil {
-		return fmt.Errorf("clear docs: %w", err)
-	}
-
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO docs(corpus, number, title, body, source) VALUES(?, ?, ?, ?, ?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO docs_build(corpus, number, title, body, source) VALUES(?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("prepare insert: %w", err)
 	}
 	defer stmt.Close()
-
-	for _, r := range ds.Records {
+	for _, r := range recs {
 		if strings.TrimSpace(r.Body) == "" && strings.TrimSpace(r.Title) == "" {
 			continue
 		}
@@ -130,7 +192,30 @@ func (s *Store) Index(ctx context.Context, ds *data.Dataset) error {
 			return fmt.Errorf("insert doc: %w", err)
 		}
 	}
+	return tx.Commit()
+}
 
+// swapDocs replaces the live docs table with the staged one, refreshes corpus
+// metadata, and retires the old vectors (their docs are gone;
+// IndexEmbeddings, run after Index, repopulates). Every step is
+// metadata-sized: DROP frees pages wholesale and the staged table arrives with
+// its FTS5 index already built, so the swap holds the connection only briefly.
+func (s *Store) swapDocs(ctx context.Context, ds *data.Dataset) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `DROP TABLE docs; ALTER TABLE docs_build RENAME TO docs;`); err != nil {
+		return fmt.Errorf("swap docs: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE doc_vectors; `+vectorSchema); err != nil {
+		return fmt.Errorf("reset doc_vectors: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM corpus_meta`); err != nil {
+		return fmt.Errorf("clear corpus_meta: %w", err)
+	}
 	metaStmt, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO corpus_meta(corpus, name, version, source_url, record_count) VALUES(?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
@@ -145,7 +230,50 @@ func (s *Store) Index(ctx context.Context, ds *data.Dataset) error {
 	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO index_meta(key, value) VALUES('built_at', ?)`, nowRFC3339()); err != nil {
 		return err
 	}
+	return tx.Commit()
+}
 
+// namesChunkSize bounds one dictionary-write transaction, for the same reason
+// as docsChunkSize: a whole-dictionary transaction would hold the shared
+// connection (and every request behind it) for the full insert run.
+var namesChunkSize = 1000
+
+// replaceDictionary rewrites a name dictionary in chunked transactions. table
+// is one of this package's own dictionary tables, never caller input. The
+// dictionaries are only read at boot (into memory), so a mid-rebuild partial
+// table is never observed — chunking needs no staging swap here.
+func (s *Store) replaceDictionary(ctx context.Context, table string, names []string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table); err != nil {
+		return fmt.Errorf("clear %s: %w", table, err)
+	}
+	for start := 0; start < len(names); start += namesChunkSize {
+		end := min(start+namesChunkSize, len(names))
+		if err := s.insertNamesChunk(ctx, table, names[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) insertNamesChunk(ctx context.Context, table string, names []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO `+table+`(name) VALUES(?)`)
+	if err != nil {
+		return fmt.Errorf("prepare %s: %w", table, err)
+	}
+	defer stmt.Close()
+	for _, n := range names {
+		if strings.TrimSpace(n) == "" {
+			continue
+		}
+		if _, err := stmt.ExecContext(ctx, n); err != nil {
+			return fmt.Errorf("insert name: %w", err)
+		}
+	}
 	return tx.Commit()
 }
 
@@ -155,29 +283,7 @@ func (s *Store) Index(ctx context.Context, ds *data.Dataset) error {
 // slice, which clears the table. card_names lives alongside the rules tables
 // and is rebuilt by Reset, but is independent of the rules Dataset.
 func (s *Store) IndexCards(ctx context.Context, names []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM card_names`); err != nil {
-		return fmt.Errorf("clear card_names: %w", err)
-	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO card_names(name) VALUES(?)`)
-	if err != nil {
-		return fmt.Errorf("prepare card_names: %w", err)
-	}
-	defer stmt.Close()
-	for _, n := range names {
-		if strings.TrimSpace(n) == "" {
-			continue
-		}
-		if _, err := stmt.ExecContext(ctx, n); err != nil {
-			return fmt.Errorf("insert card name: %w", err)
-		}
-	}
-	return tx.Commit()
+	return s.replaceDictionary(ctx, `card_names`, names)
 }
 
 // LoadCardNames returns every stored card name, used at server startup to
@@ -205,29 +311,7 @@ func (s *Store) LoadCardNames(ctx context.Context) ([]string, error) {
 // unquoted) — the counterpart of the MTG card-name dictionary. Safe to call
 // with an empty slice, which clears the table.
 func (s *Store) IndexEntityNames(ctx context.Context, names []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM entity_names`); err != nil {
-		return fmt.Errorf("clear entity_names: %w", err)
-	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO entity_names(name) VALUES(?)`)
-	if err != nil {
-		return fmt.Errorf("prepare entity_names: %w", err)
-	}
-	defer stmt.Close()
-	for _, n := range names {
-		if strings.TrimSpace(n) == "" {
-			continue
-		}
-		if _, err := stmt.ExecContext(ctx, n); err != nil {
-			return fmt.Errorf("insert entity name: %w", err)
-		}
-	}
-	return tx.Commit()
+	return s.replaceDictionary(ctx, `entity_names`, names)
 }
 
 // LoadEntityNames returns every stored D&D entity name, used at server startup

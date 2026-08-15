@@ -28,6 +28,34 @@ CREATE TABLE IF NOT EXISTS doc_vectors (
 CREATE INDEX IF NOT EXISTS doc_vectors_corpus ON doc_vectors(corpus);
 `
 
+// vectorBuildSchema is the staging twin of doc_vectors. The corpus index is
+// created during the swap, not here, so staging stays pure row inserts.
+const vectorBuildSchema = `
+CREATE TABLE IF NOT EXISTS doc_vectors_build (
+	corpus    TEXT NOT NULL,
+	number    TEXT NOT NULL,
+	title     TEXT NOT NULL,
+	body      TEXT NOT NULL,
+	source    TEXT NOT NULL,
+	embedding BLOB NOT NULL
+);
+`
+
+// vectorsChunkSize bounds one vector-staging transaction; see docsChunkSize
+// for why no rebuild transaction may run long. Vector rows are fat (full doc
+// text plus the embedding blob), so the chunk is smaller than the docs one.
+var vectorsChunkSize = 500
+
+// afterVectorsChunk, when non-nil, fires after each vector chunk commits. A
+// test seam only; never set in production.
+var afterVectorsChunk func()
+
+// vectorDoc is one doc row read out of docs for embedding.
+type vectorDoc struct {
+	corpus                      data.Corpus
+	number, title, body, source string
+}
+
 // Embedder turns text into a vector. The concrete implementation lives in the
 // embeddings package; the store holds it as an interface so retrieval and
 // indexing can be exercised with a fake in tests without an HTTP mock. A nil
@@ -74,6 +102,12 @@ func isNilValue(e Embedder) bool {
 // configured. Reading from the already-indexed docs table (rather than the
 // source Dataset) means this also works from `grimoire serve` when a rules
 // index already exists but vectors do not.
+//
+// Like Index, the writes are staged into a shadow table in short chunked
+// transactions and swapped in atomically at the end: the embedding call
+// happens before any transaction opens, and the row inserts never hold the
+// shared connection for the whole run. Readers keep the old vectors until the
+// swap commits.
 func (s *Store) IndexEmbeddings(ctx context.Context) error {
 	if s.embedder == nil {
 		return nil
@@ -82,13 +116,9 @@ func (s *Store) IndexEmbeddings(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read docs for embeddings: %w", err)
 	}
-	type doc struct {
-		corpus                      data.Corpus
-		number, title, body, source string
-	}
-	var docs []doc
+	var docs []vectorDoc
 	for rows.Next() {
-		var d doc
+		var d vectorDoc
 		if err := rows.Scan(&d.corpus, &d.number, &d.title, &d.body, &d.source); err != nil {
 			rows.Close()
 			return err
@@ -117,16 +147,41 @@ func (s *Store) IndexEmbeddings(ctx context.Context) error {
 		return fmt.Errorf("embeddings returned %d vectors for %d docs", len(vecs), len(docs))
 	}
 
+	if err := s.stageVectors(ctx, docs, vecs); err != nil {
+		// Drop the half-built staging table; the live vectors are untouched.
+		_, _ = s.db.ExecContext(context.Background(), `DROP TABLE IF EXISTS doc_vectors_build`)
+		return err
+	}
+	return s.swapVectors(ctx)
+}
+
+// stageVectors writes the fresh vectors into the shadow table chunk by chunk,
+// each chunk its own transaction (see stageDocs).
+func (s *Store) stageVectors(ctx context.Context, docs []vectorDoc, vecs [][]float32) error {
+	// A leftover from a failed rebuild must go before CREATE IF NOT EXISTS
+	// keeps it (with its stale rows) in service.
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS doc_vectors_build; `+vectorBuildSchema); err != nil {
+		return fmt.Errorf("stage doc_vectors: %w", err)
+	}
+	for start := 0; start < len(docs); start += vectorsChunkSize {
+		end := min(start+vectorsChunkSize, len(docs))
+		if err := s.insertVectorsChunk(ctx, docs[start:end], vecs[start:end]); err != nil {
+			return err
+		}
+		if afterVectorsChunk != nil {
+			afterVectorsChunk()
+		}
+	}
+	return nil
+}
+
+func (s *Store) insertVectorsChunk(ctx context.Context, docs []vectorDoc, vecs [][]float32) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM doc_vectors`); err != nil {
-		return fmt.Errorf("clear doc_vectors: %w", err)
-	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO doc_vectors(corpus, number, title, body, source, embedding) VALUES(?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO doc_vectors_build(corpus, number, title, body, source, embedding) VALUES(?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("prepare vector insert: %w", err)
 	}
@@ -135,6 +190,25 @@ func (s *Store) IndexEmbeddings(ctx context.Context) error {
 		if _, err := stmt.ExecContext(ctx, string(d.corpus), d.number, d.title, d.body, d.source, encodeFloat32(vecs[i])); err != nil {
 			return fmt.Errorf("insert vector: %w", err)
 		}
+	}
+	return tx.Commit()
+}
+
+// swapVectors trades the staged table in for the live one and rebuilds the
+// corpus index. DROP frees the old table's pages wholesale; the index build on
+// the freshly staged rows is the only size-proportional step, and it stays
+// inside one short transaction.
+func (s *Store) swapVectors(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DROP TABLE doc_vectors; ALTER TABLE doc_vectors_build RENAME TO doc_vectors;`); err != nil {
+		return fmt.Errorf("swap doc_vectors: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX doc_vectors_corpus ON doc_vectors(corpus)`); err != nil {
+		return fmt.Errorf("index doc_vectors: %w", err)
 	}
 	return tx.Commit()
 }
