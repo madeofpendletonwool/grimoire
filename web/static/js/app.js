@@ -9,6 +9,7 @@ import { initChat, refreshHistory, syncChrome, setCorpus, setFoot } from "./chat
 import { initResolve } from "./resolve.js";
 import { initVoice } from "./voice.js";
 import { initStudy } from "./study.js";
+import { initEncounter } from "./encounter.js";
 import { initAdmin } from "./admin.js";
 import { initLibrary } from "./library.js";
 import { hydrate } from "./icons.js";
@@ -96,6 +97,7 @@ function start() {
 	initResolve();
 	initVoice();
 	initStudy();
+	initEncounter();
 	syncChrome();
 	initAccount();
 	initAdmin();
