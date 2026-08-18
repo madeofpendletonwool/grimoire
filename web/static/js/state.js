@@ -13,6 +13,7 @@ export const state = {
 	streaming: false,
 	studyOpen: false,  // whether the study surface is showing over the transcript
 	encounterOpen: false, // whether the encounter builder is showing over the transcript
+	deckOpen: false, // whether the deck builder is showing over the transcript
 };
 
 const KEY = "grimoire.corpus";

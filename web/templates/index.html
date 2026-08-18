@@ -44,7 +44,14 @@
 				<span data-ico="dice"></span> Encounter
 			</button>
 
-			<div class="corpus-picker" role="radiogroup" aria-label="Rules corpus">
+			<!-- The MTG deck builder: describe an idea, pick a commander, draft
+		     the 99 with the model, iterate, analyze a pasted list. A sibling
+		     destination to Study and Encounter. -->
+		<button type="button" class="rail-action rail-deck" id="rail-deck">
+			<span data-ico="chest"></span> Deck
+		</button>
+
+		<div class="corpus-picker" role="radiogroup" aria-label="Rules corpus">
 				<button type="button" class="corpus-opt is-active" data-corpus="mtg" role="radio" aria-checked="true">
 					<span data-ico="orbBlue"></span> Magic
 				</button>
@@ -177,7 +184,80 @@
 				</div>
 			</section>
 
-			<div class="composer-dock">
+			<!-- ---------- Deck builder surface ---------- -->
+		<section class="deckbuilder" id="deck-view" hidden aria-label="Deck builder">
+			<header class="study-head">
+				<h2 class="study-title" id="deck-title">Deck</h2>
+				<div class="deck-saved-wrap">
+					<select id="deck-saved" aria-label="Saved decks">
+						<option value="">Saved decks…</option>
+					</select>
+				</div>
+				<p class="study-meta" id="deck-meta"></p>
+				<button type="button" class="icon-btn" id="deck-close" aria-label="Leave the deck builder" title="Back to chat" data-gi="close"></button>
+			</header>
+			<div class="deck-body">
+				<div class="deck-col deck-col-idea">
+					<div class="deck-panel">
+						<h3 class="deck-heading">The idea</h3>
+						<form class="deck-idea-form" id="deck-idea-form" autocomplete="off">
+							<textarea id="deck-idea" class="deck-idea-input" rows="3"
+								placeholder="e.g. Kaalia, aggressive angels and dragons, mid budget"
+								aria-label="Describe the deck you want"></textarea>
+							<input id="deck-colors" class="deck-field deck-colors" type="text"
+								placeholder="Colors (optional) — e.g. Mardu, BRW"
+								aria-label="Color constraint">
+							<button type="submit" class="deck-btn" id="deck-propose-btn">Find commanders</button>
+						</form>
+						<div class="deck-results" id="deck-commanders" role="listbox" aria-label="Commander proposals"></div>
+					</div>
+					<div class="deck-panel">
+						<h3 class="deck-heading">Revise</h3>
+						<form class="deck-idea-form" id="deck-feedback-form" autocomplete="off">
+							<textarea id="deck-feedback" class="deck-idea-input" rows="2"
+								placeholder="e.g. more interaction, cheaper curve, cut the salt"
+								aria-label="Revision instruction"></textarea>
+							<button type="submit" class="deck-btn" id="deck-revise-btn" disabled>Revise draft</button>
+						</form>
+					</div>
+					<div class="deck-panel">
+						<h3 class="deck-heading">Analyze a list</h3>
+						<form class="deck-idea-form" id="deck-analyze-form" autocomplete="off">
+							<textarea id="deck-analyze-input" class="deck-idea-input" rows="4"
+								placeholder="Paste a decklist — one card per line&#10;2x Sol Ring&#10;36 Mountain"
+								aria-label="Decklist to analyze"></textarea>
+							<button type="submit" class="deck-btn">Analyze</button>
+						</form>
+					</div>
+				</div>
+				<div class="deck-col deck-col-draft">
+					<div class="deck-panel deck-draft-panel">
+						<h3 class="deck-heading">Draft</h3>
+						<div class="deck-draft-status" id="deck-draft-status"></div>
+						<div class="deck-commentary" id="deck-commentary" hidden></div>
+						<div class="deck-list" id="deck-list"></div>
+						<div class="deck-combos" id="deck-combos" hidden></div>
+					</div>
+					<div class="deck-panel deck-report-panel">
+						<h3 class="deck-heading">Report</h3>
+						<div class="deck-report" id="deck-report"></div>
+						<div class="deck-curve" id="deck-curve" hidden></div>
+					</div>
+					<div class="deck-panel deck-actions">
+						<form class="deck-save" id="deck-save" autocomplete="off">
+							<input id="deck-name" class="deck-field" type="text" placeholder="Deck name" aria-label="Deck name">
+							<button type="submit" class="deck-btn">Save</button>
+						</form>
+						<div class="deck-action-row">
+							<button type="button" class="deck-btn" id="deck-copy">Copy list</button>
+							<button type="button" class="deck-btn danger" id="deck-delete" hidden>Delete</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<div class="composer-dock">
 				<form class="composer" id="composer" autocomplete="off">
 					<textarea id="composer-input" class="composer-input" rows="1"
 						placeholder="Ask the sage…  (/card, /rule, Ctrl+K to search)"

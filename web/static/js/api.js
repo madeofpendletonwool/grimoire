@@ -126,6 +126,40 @@ export const api = {
 
 	deleteEncounter: (id) =>
 		fetch(`/api/encounters/${encodeURIComponent(id)}`, { method: "DELETE" }).then(json),
+
+	// Deck builder: commander proposals, the streamed draft, list analysis,
+	// Spellbook combos, and saved decks. Every card the draft returns was
+	// verified server-side against the card database.
+	deckPropose: (idea, colors) =>
+		fetch("/api/deck/propose", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ idea, colors }),
+		}).then(json),
+
+	deckAnalyze: (decklist, commander) =>
+		fetch("/api/deck/analyze", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ decklist, commander }),
+		}).then(json),
+
+	deckCombos: (card, signal) =>
+		fetch(`/api/deck/combos?card=${encodeURIComponent(card)}`, { signal }).then(json),
+
+	listDecks: () => fetch("/api/decks").then(json),
+
+	getDeck: (id) => fetch(`/api/decks/${encodeURIComponent(id)}`).then(json),
+
+	saveDeck: (id, name, commander, cards, notes) =>
+		fetch(id ? `/api/decks/${encodeURIComponent(id)}` : "/api/decks", {
+			method: id ? "PATCH" : "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name, commander, cards, notes }),
+		}).then(json),
+
+	deleteDeck: (id) =>
+		fetch(`/api/decks/${encodeURIComponent(id)}`, { method: "DELETE" }).then(json),
 };
 
 /**
@@ -181,6 +215,11 @@ export function streamAnswer(chatID, question, handlers, signal) {
 /** Post a board + sequence to the resolver and consume the trace as SSE. */
 export function streamResolve(board, sequence, note, handlers, signal) {
 	return postSSE("/api/resolve", { board, sequence, note }, handlers, signal);
+}
+
+/** Post a deck build request and consume the draft as server-sent events. */
+export function streamDeckBuild(idea, commander, feedback, current, handlers, signal) {
+	return postSSE("/api/deck/build", { idea, commander, feedback, current }, handlers, signal);
 }
 
 function dispatch(frame, handlers) {

@@ -17,9 +17,12 @@ import (
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/cache"
+	"github.com/madeofpendletonwool/grimoire/internal/carddb"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
+	"github.com/madeofpendletonwool/grimoire/internal/deck"
+	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
@@ -51,6 +54,9 @@ type Server struct {
 	study            *study.Store
 	encounters       *encounter.Store
 	bestiary         *encounter.Bestiary
+	carddb           *carddb.Store
+	decks            *deck.Store
+	edhrec           *edhrec.Client
 	users            *auth.Store
 	openRegistration bool
 	tmpl             *template.Template
@@ -120,6 +126,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/study/grade", s.handleStudyGrade)
 	mux.HandleFunc("GET /api/encounter/monsters", s.handleEncounterMonsters)
 	mux.HandleFunc("POST /api/encounters/evaluate", s.handleEvaluate)
+	mux.HandleFunc("POST /api/deck/propose", s.handleDeckPropose)
+	mux.HandleFunc("POST /api/deck/build", s.handleDeckBuild)
+	mux.HandleFunc("POST /api/deck/analyze", s.handleDeckAnalyze)
+	mux.HandleFunc("GET /api/deck/combos", s.handleDeckCombos)
+	mux.HandleFunc("GET /api/decks", s.handleListDecks)
+	mux.HandleFunc("POST /api/decks", s.handleCreateDeck)
+	mux.HandleFunc("GET /api/decks/{id}", s.handleGetDeck)
+	mux.HandleFunc("PATCH /api/decks/{id}", s.handleUpdateDeck)
+	mux.HandleFunc("DELETE /api/decks/{id}", s.handleDeleteDeck)
 	mux.HandleFunc("GET /api/encounters", s.handleListEncounters)
 	mux.HandleFunc("POST /api/encounters", s.handleCreateEncounter)
 	mux.HandleFunc("GET /api/encounters/{id}", s.handleGetEncounter)
