@@ -87,6 +87,21 @@ export const api = {
 		fetch(`/api/study/queue?corpus=${encodeURIComponent(corpus)}&limit=${limit}` +
 			(topic ? `&topic=${encodeURIComponent(topic)}` : ""), { signal }).then(json),
 
+	// Reading surface — the book-shaped view of the corpora.
+	readerGuides: (corpus, signal) =>
+		fetch(`/api/reader/guides?corpus=${encodeURIComponent(corpus)}`, { signal }).then(json),
+
+	readerTOC: (corpus, guide, signal) =>
+		fetch(`/api/reader/toc?corpus=${encodeURIComponent(corpus)}&guide=${encodeURIComponent(guide)}`, { signal }).then(json),
+
+	// Either guide+number for a known stop, or a bare number (a rule or record
+	// reference) that the server resolves onto its page.
+	readerPage: (corpus, guide, number, signal) => {
+		const params = new URLSearchParams({ corpus, number });
+		if (guide) params.set("guide", guide);
+		return fetch(`/api/reader/page?${params}`, { signal }).then(json);
+	},
+
 	// Index rebuild — admin only. Start returns 202 and the rebuild continues
 	// in the background; poll status until running turns false.
 	reindexStart: () => fetch("/api/admin/reindex", { method: "POST" }).then(json),

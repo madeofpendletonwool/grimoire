@@ -96,7 +96,9 @@
 .new-chat,
 .study-card,
 .study-answer,
-.study-grade {
+.study-grade,
+.reader-toc,
+.reader-page {
 	border-style: solid;
 	border-radius: 0;
 	background-color: transparent;
@@ -109,7 +111,8 @@
 .f-parchment,
 .msg-sage .bubble,
 .gate-page,
-.study-card {
+.study-card,
+.reader-page {
 	border-width: 10px;
 	border-image-source: url("/static/assets/ui/panel-parchment.png");
 	border-image-slice: 5 fill;
@@ -119,7 +122,8 @@
 .f-stone,
 .palette-box,
 .settings-popup,
-.study-answer {
+.study-answer,
+.reader-toc {
 	border-width: 6px;
 	border-image-source: var(--frame-stone);
 	border-image-slice: 3 fill;

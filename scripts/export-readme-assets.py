@@ -58,6 +58,7 @@ SPRITES = {
     "swords": (1,),          # the D&D corpus
     "mirror": (1,),          # the interaction resolver
     "hourglass": (1,),       # study mode
+    "scrollOpen": (1,),      # reading mode
     "orbBlue": (1,),         # the Magic corpus
     "bookGold": (1,),        # the tome
     "moon": (1,),            # themes

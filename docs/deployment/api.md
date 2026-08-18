@@ -26,6 +26,9 @@ Unauthenticated API calls get `401` with a JSON body; an unauthenticated browser
 | `POST` | `/api/chats/{id}/messages` | `{question}`, `?nocache` | SSE: `meta`, `delta`, `done`, `error` |
 | `GET` | `/api/study/queue` | `corpus`, `topic` (optional), `limit` | `{cards:[{key,front,back,…}], stats:{total,new,due,learned}}` |
 | `POST` | `/api/study/grade` | `{key, corpus, grade}` | `{card:{…, reps, interval_days, ease, due_at}}` |
+| `GET` | `/api/reader/guides` | `corpus` | `{guides:[{guide,title,kind,nodes}]}` — the readable books |
+| `GET` | `/api/reader/toc` | `corpus`, `guide` (or bare `number` to resolve) | `{guide, toc:[{number,title,level,has_body}]}` |
+| `GET` | `/api/reader/page` | `corpus`, `number`, `guide` (optional — a bare rule/record number resolves) | `{guide, number, title, body, crumbs, prev, next}` |
 | `GET` | `/api/meta` | — | `{corpora:[…], chat_configured, chat_model}` |
 | `GET` | `/api/auth/state` | — | `{authenticated, username, is_admin, setup_required, registration_open}` |
 | `POST` | `/api/auth/setup` | `{username, password}` | `{user:{username}}` + session cookie; `403` once closed; first caller becomes the admin |

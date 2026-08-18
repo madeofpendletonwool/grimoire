@@ -89,6 +89,7 @@ nav:
   - Features:
       - Q&A Chat: features/chat.md
       - Search & Command Palette: features/search.md
+      - Reading Mode: features/reader.md
       - Card & Entity Lookup: features/lookup.md
       - Interaction Resolver: features/resolver.md
       - Study Mode: features/study.md

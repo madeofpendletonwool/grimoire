@@ -12,6 +12,7 @@ export const state = {
 	meta: null,        // /api/meta payload
 	streaming: false,
 	studyOpen: false,  // whether the study surface is showing over the transcript
+	readerOpen: false, // whether the reading surface is showing over the transcript
 };
 
 const KEY = "grimoire.corpus";

@@ -457,6 +457,19 @@ func runServe() error {
 		return fmt.Errorf("ensure index: %w", err)
 	}
 
+	// An install whose index predates the reading surface has an FTS index but
+	// empty reader tables. Backfill it in the background (same rebuild the
+	// admin button runs) so the books appear without a terminal session; the
+	// app serves fine from the old index while it runs.
+	if ok, err := store.ReaderIndexed(ctx); err != nil {
+		log.Printf("reader check: %v", err)
+	} else if !ok {
+		log.Println("reading surface empty — rebuilding the index in the background to add the books...")
+		if err := buildIndex(ctx, store); err != nil {
+			log.Printf("reader backfill failed (search unaffected): %v", err)
+		}
+	}
+
 	// A changed local library reindexes on its own: fingerprint the books
 	// directory and compare against the one the index was built with. Nobody
 	// should need a terminal because a PDF was added.

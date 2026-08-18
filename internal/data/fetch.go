@@ -66,18 +66,20 @@ func fetchMTGDataset(ctx context.Context, opts FetchOptions) (*Dataset, error) {
 
 // fetchDNDDataset adapts the D&D parser to the registry Fetcher signature.
 // When a local docs directory is configured, those documents are parsed with
-// the same chunker and ride alongside the SRD.
+// the same chunker and ride alongside the SRD, each book also becoming its own
+// reader guide.
 func fetchDNDDataset(ctx context.Context, opts FetchOptions) (*Dataset, error) {
 	ds, err := fetchDND(ctx, opts.DNDRepo, opts.DNDRef)
 	if err != nil {
 		return nil, err
 	}
 	if opts.DNDDocsDir != "" {
-		records, err := ParseDNDDocs(opts.DNDDocsDir)
+		records, reader, err := ParseDNDDocs(opts.DNDDocsDir)
 		if err != nil {
 			return nil, err
 		}
 		ds.Records = append(ds.Records, records...)
+		ds.Reader = append(ds.Reader, reader...)
 		if m, ok := ds.Meta[CorpusDND]; ok {
 			m.RecordCount = len(ds.Records)
 			ds.Meta[CorpusDND] = m
@@ -123,6 +125,7 @@ func fetchDND(ctx context.Context, repo, ref string) (*Dataset, error) {
 
 func merge(dst, src *Dataset) {
 	dst.Records = append(dst.Records, src.Records...)
+	dst.Reader = append(dst.Reader, src.Reader...)
 	for k, v := range src.Meta {
 		dst.Meta[k] = v
 	}

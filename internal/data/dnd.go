@@ -97,13 +97,16 @@ func ExtractDNDMarkdown(gz []byte) ([]mdFile, error) {
 // into sections at markdown headings and over-long sections into
 // paragraph-bounded chunks (see chunkMarkdown). Each record carries a stable
 // path-style Number ("<file>/<section>.<chunk>") used for grounding dedup,
-// sibling expansion, and cache keys.
+// sibling expansion, and cache keys. The same files also yield the reader tree
+// — one guide per file, raw markdown bodies — under guide ids "srd:<slug>".
 func ParseDND(files []mdFile, ref string) *Dataset {
 	ds := &Dataset{Meta: map[Corpus]CorpusMeta{}}
 	var records []Record
 
 	for _, f := range files {
 		records = append(records, chunkMarkdown(f, ref)...)
+		ds.Reader = append(ds.Reader, buildReaderNodes(f, CorpusDND,
+			"srd:"+fileSlug(stripExt(pathBase(f.Path))), docTitle(f), "srd")...)
 	}
 
 	ds.Records = records
@@ -391,6 +394,154 @@ func joinAncestors(stack []string, level int) string {
 	return strings.Join(parts, " — ")
 }
 
+// readerSection is one heading's worth of a file during the reader scan: its
+// heading level (0 for the file root), its title, its ordinal path (mirroring
+// chunkMarkdown's numbering so reader nodes and search records share ids), and
+// its direct body — the raw markdown between this heading and the next.
+type readerSection struct {
+	level   int
+	title   string
+	ordPath []int
+	body    strings.Builder
+}
+
+// buildReaderNodes walks a file's headings and shapes it into reader nodes:
+// the guide root's children are the file's H2s (level 1), their subheadings
+// nest below (H3 → level 2, …), and each node's body is the RAW markdown
+// directly under its heading — tables and emphasis intact for reading, unlike
+// the flattened FTS bodies. Node numbers reuse the record path scheme
+// ("spells/0003/0042"), so a search citation can deep-link to its page.
+//
+// A heading with neither direct body nor descendants is dropped, so a stray
+// empty heading from a PDF extraction adds no noise to the table of contents.
+func buildReaderNodes(f mdFile, corpus Corpus, guide, guideTitle, guideKind string) []ReaderNode {
+	slug := fileSlug(stripExt(pathBase(f.Path)))
+	source := guideSourceLabel(guideKind) + " — " + guideTitle
+	content := stripBOM(f.Content)
+
+	lines := strings.Split(content, "\n")
+	var secs []*readerSection
+	var cur *readerSection
+	ordStack := make([]int, 0, 8)
+
+	push := func(level int, title string) {
+		if level <= len(ordStack) {
+			ordStack = ordStack[:level-1]
+		} else {
+			for len(ordStack) < level-1 {
+				ordStack = append(ordStack, -1)
+			}
+		}
+		ordStack = append(ordStack, len(secs))
+		secs = append(secs, &readerSection{
+			level:   level,
+			title:   title,
+			ordPath: append([]int(nil), ordStack...),
+		})
+		cur = secs[len(secs)-1]
+	}
+
+	// The file root catches leading content before any heading (an untitled
+	// H1's preamble, or a whole heading-less document).
+	root := &readerSection{level: 0, title: guideTitle, ordPath: []int{0}}
+	secs = append(secs, root)
+	cur = root
+
+	for _, line := range lines {
+		if m := headingRe.FindStringSubmatch(line); m != nil {
+			level := len(m[1])
+			title := strings.TrimSpace(m[2])
+			if i := strings.Index(title, " {#"); i >= 0 {
+				title = strings.TrimSpace(title[:i])
+			}
+			if level == 1 && len(secs) == 1 {
+				// The document's own H1 names the guide; its preamble stays
+				// with the root node rather than becoming a sibling chapter.
+				root.title = title
+				cur = root
+				continue
+			}
+			push(level, title)
+			continue
+		}
+		if cur != nil {
+			cur.body.WriteString(line)
+			cur.body.WriteByte('\n')
+		}
+	}
+
+	// hasKids[i]: does section i own any deeper section before a same-or-higher
+	// heading closes it? Descendants keep an otherwise childless heading in the
+	// tree as a group stop.
+	hasKids := make([]bool, len(secs))
+	for i := range secs {
+		for j := i + 1; j < len(secs); j++ {
+			if secs[j].level <= secs[i].level {
+				break
+			}
+			hasKids[i] = true
+		}
+	}
+
+	pos := 0
+	var nodes []ReaderNode
+	for i, s := range secs {
+		body := strings.TrimSpace(s.body.String())
+		isRoot := s.level == 0
+		if body == "" && (isRoot || !hasKids[i]) {
+			continue // nothing to read and nothing under it
+		}
+		// Markdown levels map down one: the document's H2s are the guide
+		// root's children (reader level 1), their H3s nest at 2, and so on.
+		// The H1 named the guide itself; the root node ("Introduction") is
+		// level 1 alongside the chapters.
+		level := s.level - 1
+		if level < 1 {
+			level = 1
+		}
+		title := s.title
+		number := readerPathNumber(slug, s.ordPath)
+		if isRoot {
+			title = "Introduction"
+		}
+		pos++
+		nodes = append(nodes, ReaderNode{
+			Corpus: corpus, Guide: guide, GuideTitle: guideTitle, GuideKind: guideKind,
+			Number: number, Title: title, Level: level, Position: pos, Body: body, Source: source,
+		})
+	}
+	return nodes
+}
+
+// readerPathNumber renders a section's ordinal path as its stable node id,
+// using the same shape chunkMarkdown gives records: zero-padded segments under
+// the file slug, with skipped heading levels as literal 0000. The root
+// section's path is just the slug itself.
+func readerPathNumber(slug string, ordPath []int) string {
+	path := ordPath
+	for len(path) > 0 && path[0] < 0 {
+		path = path[1:]
+	}
+	parts := make([]string, 0, len(path))
+	for _, o := range path {
+		if o >= 0 {
+			parts = append(parts, fmt.Sprintf("%04d", o))
+		} else {
+			parts = append(parts, "0000")
+		}
+	}
+	return slug + "/" + strings.Join(parts, "/")
+}
+
+// guideSourceLabel maps a guide kind to the citation label prefix its nodes
+// carry, matching the Source strings the record pipeline already produces.
+func guideSourceLabel(kind string) string {
+	if kind == "book" {
+		return "D&D books"
+	}
+	return "D&D 5e SRD"
+}
+
 // tableRowRe matches a markdown table row: | cell | cell | …
 var tableRowRe = regexp.MustCompile(`^\s*\|(.+)\|\s*$`)
 
@@ -529,11 +680,13 @@ func fileSlug(name string) string {
 // directory and returns their records. Local books — extracted PDFs, house
 // documents — ride alongside the fetched SRD: same chunker, same numbering,
 // distinct Source so citations can name the book. Files are read
-// deterministically by name; unknown extensions are skipped.
-func ParseDNDDocs(dir string) ([]Record, error) {
+// deterministically by name; unknown extensions are skipped. Each book also
+// becomes its own reader guide ("books:<slug>"), so it reads as the book it
+// came from rather than dissolving into the SRD.
+func ParseDNDDocs(dir string) ([]Record, []ReaderNode, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("read dnd docs dir: %w", err)
+		return nil, nil, fmt.Errorf("read dnd docs dir: %w", err)
 	}
 	var files []mdFile
 	for _, e := range entries {
@@ -549,22 +702,25 @@ func ParseDNDDocs(dir string) ([]Record, error) {
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
-			return nil, fmt.Errorf("read dnd doc %s: %w", e.Name(), err)
+			return nil, nil, fmt.Errorf("read dnd doc %s: %w", e.Name(), err)
 		}
 		files = append(files, mdFile{Path: e.Name(), Content: string(raw)})
 	}
 	if len(files) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var records []Record
+	var reader []ReaderNode
 	for _, f := range files {
 		label := docTitle(f)
+		slug := fileSlug(stripExt(pathBase(f.Path)))
 		for _, r := range chunkMarkdown(f, "") {
 			r.Source = "D&D books — " + label
 			records = append(records, r)
 		}
+		reader = append(reader, buildReaderNodes(f, CorpusDND, "books:"+slug, label, "book")...)
 	}
-	return records, nil
+	return records, reader, nil
 }
 
 // docTitle names a local document for citation. A document's own H1 wins — the
@@ -573,7 +729,7 @@ func ParseDNDDocs(dir string) ([]Record, error) {
 // under an answer and what the prompt's Sage Advice rule matches on. A file
 // without an H1 falls back to its name.
 func docTitle(f mdFile) string {
-	for _, line := range strings.Split(f.Content, "\n") {
+	for _, line := range strings.Split(stripBOM(f.Content), "\n") {
 		t := strings.TrimSpace(line)
 		if t == "" {
 			continue
@@ -586,6 +742,12 @@ func docTitle(f mdFile) string {
 		break // content before any H1 means the file has no title line
 	}
 	return titleize(strings.TrimSuffix(f.Path, filepath.Ext(f.Path)))
+}
+
+// stripBOM removes a leading UTF-8 byte-order mark. The SRD's markdown ships
+// with one, and it would otherwise hide the first heading from the title scan.
+func stripBOM(s string) string {
+	return strings.TrimPrefix(s, "\ufeff")
 }
 
 // DNDDocsFingerprint summarizes a local-docs directory's contents — file

@@ -209,7 +209,7 @@ func TestParseDNDDocs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	recs, err := ParseDNDDocs(dir)
+	recs, reader, err := ParseDNDDocs(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +232,29 @@ func TestParseDNDDocs(t *testing.T) {
 	if !strings.Contains(joined, "D&D books — Sage-advice") {
 		t.Errorf("sources = %v", sources)
 	}
+
+	// Each book also becomes its own reader guide, titled by the same label.
+	if len(reader) == 0 {
+		t.Fatal("no reader nodes for local books")
+	}
+	guides := map[string]bool{}
+	for _, n := range reader {
+		if n.Corpus != CorpusDND || n.GuideKind != "book" {
+			t.Errorf("reader node corpus/kind = %s/%s", n.Corpus, n.GuideKind)
+		}
+		guides[n.Guide] = true
+	}
+	if !guides["books:phb"] || !guides["books:sage-advice"] {
+		t.Errorf("reader guides = %v", keys2guides(reader))
+	}
+}
+
+func keys2guides(nodes []ReaderNode) []string {
+	var out []string
+	for _, n := range nodes {
+		out = append(out, n.Guide)
+	}
+	return out
 }
 
 func keys(m map[string]string) []string {
@@ -240,4 +263,100 @@ func keys(m map[string]string) []string {
 		k = append(k, key)
 	}
 	return k
+}
+
+func TestBuildReaderNodes(t *testing.T) {
+	f := mdFile{Path: "volo.md", Content: `# Volo's Guide
+
+Some front matter about the book.
+
+## Chapter One: Monsters
+
+An intro to the chapter.
+
+### Goblins
+
+They are small.
+
+**Alignment.** Typically chaotic.
+
+## Chapter Two: Tables
+
+<table>
+  <thead>
+    <tr><th>Name</th><th>CR</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Goblin</td><td>1/4</td></tr>
+  </tbody>
+</table>
+`}
+	nodes := buildReaderNodes(f, CorpusDND, "books:volo-s-guide", "Volo's Guide", "book")
+
+	// Expect: root (front matter), ch1, goblins, ch2 — plus the ch1 heading
+	// intro living on the chapter node itself.
+	var titles []string
+	for _, n := range nodes {
+		titles = append(titles, n.Title)
+	}
+	want := []string{"Introduction", "Chapter One: Monsters", "Goblins", "Chapter Two: Tables"}
+	if strings.Join(titles, "|") != strings.Join(want, "|") {
+		t.Fatalf("titles = %v, want %v", titles, want)
+	}
+
+	byTitle := map[string]ReaderNode{}
+	for _, n := range nodes {
+		byTitle[n.Title] = n
+	}
+
+	// The H1 names the guide and its preamble becomes the intro node.
+	if nodes[0].Level != 1 || !strings.Contains(nodes[0].Body, "front matter") {
+		t.Errorf("intro node = %+v", nodes[0])
+	}
+
+	// H2s are level 1 (the guide root's children); H3s nest at level 2.
+	if byTitle["Chapter One: Monsters"].Level != 1 {
+		t.Errorf("chapter level = %d", byTitle["Chapter One: Monsters"].Level)
+	}
+	if byTitle["Goblins"].Level != 2 {
+		t.Errorf("section level = %d", byTitle["Goblins"].Level)
+	}
+
+	// Bodies are RAW markdown: the HTML table survives for reading.
+	if !strings.Contains(byTitle["Chapter Two: Tables"].Body, "<table>") {
+		t.Errorf("raw table lost from reading body: %q", byTitle["Chapter Two: Tables"].Body)
+	}
+	if !strings.Contains(byTitle["Chapter Two: Tables"].Body, "<td>Goblin</td>") {
+		t.Errorf("table rows lost from reading body")
+	}
+	// A chapter with an intro keeps it as its direct body.
+	if !strings.Contains(byTitle["Chapter One: Monsters"].Body, "intro to the chapter") {
+		t.Errorf("chapter intro lost: %q", byTitle["Chapter One: Monsters"].Body)
+	}
+	// A leaf section's body stops at the next heading.
+	if !strings.Contains(byTitle["Goblins"].Body, "Alignment.") {
+		t.Errorf("leaf body lost bold run: %q", byTitle["Goblins"].Body)
+	}
+
+	// Node numbers use the record path scheme, so citations can deep-link.
+	num := byTitle["Goblins"].Number
+	if !strings.HasPrefix(num, "volo/") {
+		t.Errorf("goblins number = %q", num)
+	}
+}
+
+func TestBuildReaderNodes_BOMTitle(t *testing.T) {
+	// The SRD's markdown ships a UTF-8 BOM; the H1 behind it must still name
+	// the guide (regression: the BOM hid the heading and the guide fell back
+	// to its file path).
+	f := mdFile{Path: "spells.md", Content: "\ufeff# Spells\n\n## Casting Spells\n\nText.\n"}
+	nodes := buildReaderNodes(f, CorpusDND, "srd:spells", docTitle(f), "srd")
+	for _, n := range nodes {
+		if n.GuideTitle != "Spells" {
+			t.Errorf("guide title = %q, want Spells (BOM should not hide the H1)", n.GuideTitle)
+		}
+	}
+	if nodes[0].Title != "Casting Spells" || !strings.Contains(nodes[0].Body, "Text.") {
+		t.Errorf("first stop = %+v (no preamble means no Introduction stop)", nodes[0])
+	}
 }
