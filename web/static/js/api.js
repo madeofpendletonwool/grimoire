@@ -113,6 +113,34 @@ export const api = {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ key, corpus, topic, grade }),
 		}).then(json),
+
+	// Encounter builder: SRD monster search, difficulty preview, saved
+	// encounters. The server recomputes every verdict — the client never
+	// sends one.
+	encounterMonsters: (q, signal) =>
+		fetch(`/api/encounter/monsters?q=${encodeURIComponent(q)}`, { signal }).then(json),
+
+	encounterEvaluate: (party, monsters, signal) =>
+		fetch("/api/encounters/evaluate", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ party, monsters }),
+			signal,
+		}).then(json),
+
+	listEncounters: () => fetch("/api/encounters").then(json),
+
+	getEncounter: (id) => fetch(`/api/encounters/${encodeURIComponent(id)}`).then(json),
+
+	saveEncounter: (id, name, party, monsters) =>
+		fetch(id ? `/api/encounters/${encodeURIComponent(id)}` : "/api/encounters", {
+			method: id ? "PATCH" : "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name, party, monsters }),
+		}).then(json),
+
+	deleteEncounter: (id) =>
+		fetch(`/api/encounters/${encodeURIComponent(id)}`, { method: "DELETE" }).then(json),
 };
 
 /**

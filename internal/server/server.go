@@ -20,6 +20,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
+	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -48,6 +49,8 @@ type Server struct {
 	chats            *chat.Store
 	answers          *cache.Store
 	study            *study.Store
+	encounters       *encounter.Store
+	bestiary         *encounter.Bestiary
 	users            *auth.Store
 	openRegistration bool
 	tmpl             *template.Template
@@ -118,6 +121,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/reader/guides", s.handleReaderGuides)
 	mux.HandleFunc("GET /api/reader/toc", s.handleReaderTOC)
 	mux.HandleFunc("GET /api/reader/page", s.handleReaderPage)
+	mux.HandleFunc("GET /api/encounter/monsters", s.handleEncounterMonsters)
+	mux.HandleFunc("POST /api/encounters/evaluate", s.handleEvaluate)
+	mux.HandleFunc("GET /api/encounters", s.handleListEncounters)
+	mux.HandleFunc("POST /api/encounters", s.handleCreateEncounter)
+	mux.HandleFunc("GET /api/encounters/{id}", s.handleGetEncounter)
+	mux.HandleFunc("PATCH /api/encounters/{id}", s.handleUpdateEncounter)
+	mux.HandleFunc("DELETE /api/encounters/{id}", s.handleDeleteEncounter)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))

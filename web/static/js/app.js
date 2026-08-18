@@ -10,6 +10,7 @@ import { initResolve } from "./resolve.js";
 import { initVoice } from "./voice.js";
 import { initStudy } from "./study.js";
 import { initReader } from "./reader.js";
+import { initEncounter } from "./encounter.js";
 import { initAdmin } from "./admin.js";
 import { initLibrary } from "./library.js";
 import { hydrate } from "./icons.js";
@@ -98,6 +99,7 @@ function start() {
 	initVoice();
 	initStudy();
 	initReader();
+	initEncounter();
 	syncChrome();
 	initAccount();
 	initAdmin();

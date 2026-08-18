@@ -1304,6 +1304,180 @@ kbd {
 	background: var(--parchment-2);
 }
 
+/* ---------- Encounter builder ---------- */
+/* The builder overlays the transcript the way study does: a tool surface in
+   chrome stone, not a reading surface — parchment is reserved for content, so
+   the panels are stone frames and only the verdict word carries colour. */
+.main.is-encountering > .transcript,
+.main.is-encountering > .composer-dock { display: none; }
+
+.encounter {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scroll-behavior: smooth;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+.enc-saved select {
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+	color: var(--parchment);
+	font-size: var(--fs-sm);
+	padding: 0.15rem 0.1rem;
+	max-width: 12rem;
+	cursor: pointer;
+}
+.enc-saved select:focus { outline: none; border-bottom-color: var(--gold); }
+
+.enc-body {
+	max-width: var(--measure);
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--sp-4);
+	align-items: start;
+}
+.enc-col { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.enc-panel {
+	padding: var(--sp-3) var(--sp-4) var(--sp-4);
+	box-shadow: var(--shadow-2);
+}
+.enc-heading {
+	margin: 0 0 var(--sp-3);
+	font-family: var(--font-prose);
+	font-variant: small-caps;
+	letter-spacing: 0.08em;
+	font-size: var(--fs-sm);
+	color: var(--parchment);
+	opacity: 0.8;
+}
+
+/* Party chips: click to remove — the chip-active frame is the affordance. */
+.enc-party { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.enc-chip {
+	display: inline-flex;
+	align-items: center;
+	padding: 0.1rem 0.55rem;
+	color: var(--ink);
+	cursor: pointer;
+	font-size: var(--fs-sm);
+}
+.enc-chip-lvl { font-family: var(--font-pixel); font-size: var(--fs-xs); letter-spacing: 0.04em; }
+.enc-party-sum { align-self: center; font-size: var(--fs-xs); opacity: 0.5; }
+.enc-add-party { display: flex; align-items: center; gap: var(--sp-2); }
+.enc-level-label { font-size: var(--fs-xs); opacity: 0.6; }
+#enc-level { width: 4.5rem; }
+
+.enc-field { padding: 0.35rem 0.6rem; min-width: 0; background: transparent; }
+.enc-field:focus { outline: none; }
+
+/* Bestiary search + hits. */
+.enc-search { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+#enc-search-input { flex: 1; }
+.enc-results {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-1);
+	max-height: 16rem;
+	overflow-y: auto;
+}
+.enc-hit {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: var(--sp-2);
+	width: 100%;
+	text-align: left;
+	padding: 0.25rem 0.55rem;
+	color: var(--ink);
+	cursor: pointer;
+}
+.enc-hit-name {
+	font-size: var(--fs-sm);
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.enc-hit-meta { flex: none; font-family: var(--font-pixel); font-size: var(--fs-xs); opacity: 0.6; }
+
+/* Roster rows with quiet steppers — the row is data, not chrome. */
+.enc-row { display: flex; align-items: baseline; gap: var(--sp-2); padding: var(--sp-1) 0; }
+.enc-row + .enc-row { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.enc-row-name { font-size: var(--fs-sm); min-width: 0; overflow-wrap: anywhere; }
+.enc-row-meta { margin-left: auto; flex: none; font-family: var(--font-pixel); font-size: var(--fs-xs); opacity: 0.55; }
+.enc-row-ctl { display: flex; gap: 0.1rem; flex: none; }
+.enc-step {
+	background: none;
+	border: none;
+	color: var(--parchment);
+	opacity: 0.55;
+	cursor: pointer;
+	padding: 0.1rem 0.45rem;
+	font-family: var(--font-pixel);
+}
+.enc-step:hover { opacity: 1; color: var(--gold-bright); }
+.enc-step.rm:hover { color: var(--ember); }
+
+/* Buttons ride the gold button frame — ink on gold, like every button here. */
+.enc-btn {
+	padding: 0.3rem 0.85rem;
+	color: #1a1208;
+	cursor: pointer;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.04em;
+	filter: brightness(0.94);
+	transition: filter 0.15s ease;
+}
+.enc-btn:hover { filter: brightness(1.06); }
+.enc-btn.danger { color: var(--ember-deep); }
+.enc-btn.ask { color: var(--accent-deep); }
+
+/* The verdict: one loud word, the book's own escalation — parchment for
+   trivial, gold rising to bright, then ember, then the leather's red. */
+.enc-verdict { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; }
+.enc-band {
+	font-family: var(--font-display);
+	font-size: 1.5rem;
+	letter-spacing: 0.06em;
+	color: var(--parchment);
+}
+.enc-band.none { opacity: 0.4; }
+.enc-band.trivial { opacity: 0.65; }
+.enc-band.easy { color: var(--gold); }
+.enc-band.medium { color: var(--gold-bright); }
+.enc-band.hard { color: var(--ember); }
+.enc-band.deadly { color: var(--leather); }
+.enc-xp { font-family: var(--font-pixel); font-size: var(--fs-xs); opacity: 0.6; letter-spacing: 0.02em; }
+.enc-meter {
+	height: 0.5rem;
+	margin: var(--sp-3) 0 var(--sp-2);
+	background: rgba(255, 255, 255, 0.08);
+}
+.enc-fill { display: block; height: 100%; width: 0; background: var(--parchment); transition: width 0.25s ease; }
+.enc-fill.easy { background: var(--gold); }
+.enc-fill.medium { background: var(--gold-bright); }
+.enc-fill.hard { background: var(--ember); }
+.enc-fill.deadly { background: var(--leather-deep); }
+.enc-thresholds { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); }
+.enc-th {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.03em;
+	opacity: 0.5;
+}
+.enc-th.hit { opacity: 1; color: var(--gold-bright); }
+
+.enc-actions { display: flex; flex-direction: column; gap: var(--sp-3); }
+.enc-save { display: flex; gap: var(--sp-2); }
+#enc-name { flex: 1; }
+.enc-action-row { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.enc-action-row .ask { margin-left: auto; }
+.enc-empty { margin: 0; font-size: var(--fs-sm); font-style: italic; opacity: 0.55; }
+.enc-empty.warn { opacity: 0.9; color: var(--ember); font-style: normal; }
+
 /* ---------- Reference drawer ---------- */
 /* The drawer is the right-hand page of the open book: spine down its inner
    edge, page-stack along the bottom. Framed by .f-page in pixel.css. */
@@ -1964,6 +2138,10 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	#reader-view.toc-open .reader-toc { display: block; }
 	.reader-page { padding: var(--sp-4) var(--sp-3) var(--sp-3); }
 
+	.encounter { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
+	.enc-body { grid-template-columns: 1fr; }
+	.enc-action-row .ask { margin-left: 0; }
+
 	.gate {
 		padding:
 			calc(var(--sp-5) + env(safe-area-inset-top)) var(--sp-4)
@@ -1998,5 +2176,6 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 		transition-duration: 0.01ms !important;
 	}
 	.transcript,
-	.study { scroll-behavior: auto; }
+	.study,
+	.encounter { scroll-behavior: auto; }
 }

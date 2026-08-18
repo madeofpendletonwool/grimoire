@@ -92,6 +92,11 @@
 .chip,
 .suggestion,
 .send-btn,
+.enc-panel,
+.enc-btn,
+.enc-chip,
+.enc-hit,
+.enc-field,
 .gate-submit,
 .new-chat,
 .study-card,
@@ -123,7 +128,8 @@
 .palette-box,
 .settings-popup,
 .study-answer,
-.reader-toc {
+.reader-toc,
+.enc-panel {
 	border-width: 6px;
 	border-image-source: var(--frame-stone);
 	border-image-slice: 3 fill;
@@ -134,14 +140,16 @@
 
 /* Inset field — text sunk into the stone. */
 .f-field,
-.composer {
+.composer,
+.enc-field {
 	border-width: 6px;
 	border-image-source: var(--frame-field);
 	border-image-slice: 3 fill;
 }
 .f-field:focus-within,
 .f-field.is-focus,
-.composer:focus-within {
+.composer:focus-within,
+.enc-field:focus {
 	border-image-source: var(--frame-field-focus);
 }
 
@@ -149,7 +157,9 @@
    leave no room for the label. */
 .f-chip,
 .chip,
-.suggestion {
+.suggestion,
+.enc-chip,
+.enc-hit {
 	border-width: 3px;
 	border-image-source: url("/static/assets/ui/chip.png");
 	border-image-slice: 3 fill;
@@ -157,7 +167,9 @@
 .f-chip:hover,
 .f-chip.is-active,
 .chip:not(.chip-miss):hover,
-.suggestion:hover {
+.suggestion:hover,
+.enc-chip:hover,
+.enc-hit:hover {
 	border-image-source: url("/static/assets/ui/chip-active.png");
 }
 
@@ -165,7 +177,8 @@
 .send-btn,
 .gate-submit,
 .new-chat,
-.study-grade {
+.study-grade,
+.enc-btn {
 	border-width: 6px;
 	border-image-source: url("/static/assets/ui/button.png");
 	border-image-slice: 3 fill;
@@ -175,7 +188,8 @@
 .send-btn:active:not(:disabled),
 .gate-submit:active:not(:disabled),
 .new-chat:active,
-.study-grade:active:not(:disabled) {
+.study-grade:active:not(:disabled),
+.enc-btn:active:not(:disabled) {
 	border-image-source: url("/static/assets/ui/button-active.png");
 }
 
