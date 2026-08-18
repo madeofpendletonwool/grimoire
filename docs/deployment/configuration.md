@@ -82,12 +82,14 @@ The rules corpora are fetched and indexed at first run; the live lookups run at 
 | Variable              | Default                                        | Notes                                                   |
 | --------------------- | ---------------------------------------------- | ------------------------------------------------------- |
 | `MTG_RULES_URL`       | the official Comprehensive Rules               | Source of the MTG rules text.                           |
-| `MTGJSON_URL`         | `https://mtgjson.com/api/v5/AtomicCards.json.gz` | Card-name dictionary used for mention detection.      |
+| `MTGJSON_URL`         | `https://mtgjson.com/api/v5/AtomicCards.json.gz` | Card database + card-name dictionary (mention detection, deck builder). |
 | `DND_REPO`            | the community 5e SRD repo                      | GitHub repo (`owner/name`) the SRD markdown is fetched from. |
 | `DND_REF`             | the repo's default branch                      | Branch/tag to fetch the SRD from.                       |
 | `DND_DOCS_DIR`        | _(empty)_                                      | Local directory of markdown/text D&D documents (your books, the Sage Advice compendium) indexed alongside the SRD. Convert PDFs with `scripts/extract-dnd-pdfs.py`. The books are gitignored and never leave your machine. |
 | `SCRYFALL_BASE_URL`   | `https://api.scryfall.com`                     | Card oracle text + rulings; no key required.            |
 | `OPEN5E_BASE_URL`     | `https://api.open5e.com`                       | SRD entities + entity-name dictionary for D&D grounding; no key required. |
+| `GRIMOIRE_EDHREC`     | `0`                                            | Enable the deck builder's EDHREC enrichment (per-commander synergy re-ranking + Commander Spellbook combos). Reads EDHREC's unofficial Next.js JSON routes with a disk cache and ~1 req/s spacing; falls back to the local engine if they change. See [Deck Builder](../features/deck-builder.md). |
+| `GRIMOIRE_EDHREC_CACHE_DIR` | `data/edhrec-cache`                      | Where the EDHREC enrichment cache lives.                |
 
 ### Reindexing
 
