@@ -38,6 +38,12 @@
 				<span data-ico="card"></span> Study
 			</button>
 
+			<!-- The D&D encounter builder: party + monsters + a live DMG difficulty
+			     verdict, saved per user. A sibling destination to Study. -->
+			<button type="button" class="rail-action rail-encounter" id="rail-encounter">
+				<span data-ico="dice"></span> Encounter
+			</button>
+
 			<div class="corpus-picker" role="radiogroup" aria-label="Rules corpus">
 				<button type="button" class="corpus-opt is-active" data-corpus="mtg" role="radio" aria-checked="true">
 					<span data-ico="orbBlue"></span> Magic
@@ -107,6 +113,68 @@
 					<button type="button" class="icon-btn" id="study-close" aria-label="Leave study" title="Back to chat" data-gi="close"></button>
 				</header>
 				<div class="study-body" id="study-body"></div>
+			</section>
+
+			<!-- ---------- Encounter builder surface ---------- -->
+			<section class="encounter" id="encounter-view" hidden aria-label="Encounter builder">
+				<header class="study-head">
+					<h2 class="study-title" id="encounter-title">Encounter</h2>
+					<div class="enc-saved" id="enc-saved-wrap">
+						<select id="enc-saved" aria-label="Saved encounters">
+							<option value="">Saved encounters…</option>
+						</select>
+					</div>
+					<p class="study-meta" id="encounter-meta"></p>
+					<button type="button" class="icon-btn" id="encounter-close" aria-label="Leave the builder" title="Back to chat" data-gi="close"></button>
+				</header>
+				<div class="enc-body">
+					<div class="enc-col">
+						<div class="enc-panel">
+							<h3 class="enc-heading">Party</h3>
+							<div class="enc-party" id="enc-party"></div>
+							<form class="enc-add-party" id="enc-add-party" autocomplete="off">
+								<label class="enc-level-label" for="enc-level">Level</label>
+								<input id="enc-level" class="enc-field" type="number" min="1" max="20" value="1" aria-label="Character level">
+								<button type="submit" class="enc-btn">Add character</button>
+							</form>
+						</div>
+						<div class="enc-panel">
+							<h3 class="enc-heading">Bestiary</h3>
+							<form class="enc-search" id="enc-search" autocomplete="off">
+								<input id="enc-search-input" class="enc-field" type="search" placeholder="Search SRD monsters…"
+									aria-label="Search monsters">
+								<button type="submit" class="enc-btn" aria-label="Search">Find</button>
+							</form>
+							<div class="enc-results" id="enc-results" role="listbox" aria-label="Monster results"></div>
+						</div>
+					</div>
+					<div class="enc-col">
+						<div class="enc-panel">
+							<h3 class="enc-heading">Monsters</h3>
+							<div class="enc-roster" id="enc-roster"></div>
+						</div>
+						<div class="enc-panel enc-verdict-panel">
+							<h3 class="enc-heading">Difficulty</h3>
+							<div class="enc-verdict" id="enc-verdict">
+								<span class="enc-band" id="enc-band">—</span>
+								<span class="enc-xp" id="enc-xp"></span>
+							</div>
+							<div class="enc-meter" id="enc-meter" aria-hidden="true" hidden><span id="enc-meter-fill"></span></div>
+							<div class="enc-thresholds" id="enc-thresholds"></div>
+						</div>
+						<div class="enc-panel enc-actions">
+							<form class="enc-save" id="enc-save" autocomplete="off">
+								<input id="enc-name" class="enc-field" type="text" placeholder="Encounter name" aria-label="Encounter name">
+								<button type="submit" class="enc-btn">Save</button>
+							</form>
+							<div class="enc-action-row">
+								<button type="button" class="enc-btn" id="enc-new">New</button>
+								<button type="button" class="enc-btn danger" id="enc-delete" hidden>Delete</button>
+								<button type="button" class="enc-btn ask" id="enc-ask">Ask the sage about this</button>
+							</div>
+						</div>
+					</div>
+				</div>
 			</section>
 
 			<div class="composer-dock">

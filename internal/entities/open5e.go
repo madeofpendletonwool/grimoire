@@ -408,39 +408,39 @@ func kindFromModel(model string) string {
 // open5eObject models the union of fields the formatted kinds need. Fields the
 // fetched object does not carry stay zero-valued and are omitted from the body.
 type open5eObject struct {
-	Name            string                `json:"name"`
-	Document        documentRef           `json:"document"`
-	Level           *float64              `json:"level"`
-	School          *namedRef             `json:"school"`
-	Desc            string                `json:"desc"`
-	HigherLevel     string                `json:"higher_level"`
-	RangeText       string                `json:"range_text"`
-	CastingTime     string                `json:"casting_time"`
-	Duration        string                `json:"duration"`
-	Concentration   *bool                 `json:"concentration"`
-	Classes         []namedRef            `json:"classes"`
-	Type            *namedRef             `json:"type"`
-	Size            *namedRef             `json:"size"`
-	HitPoints       *float64              `json:"hit_points"`
-	ArmorClass      *float64              `json:"armor_class"`
-	ChallengeRating *float64              `json:"challenge_rating"`
-	Speed           *creatureSpeed        `json:"speed"`
-	Actions         []creatureAction      `json:"actions"`
-	Rarity          string                `json:"rarity"`
-	Category        string                `json:"category"`
+	Name            string           `json:"name"`
+	Document        documentRef      `json:"document"`
+	Level           *float64         `json:"level"`
+	School          *namedRef        `json:"school"`
+	Desc            string           `json:"desc"`
+	HigherLevel     string           `json:"higher_level"`
+	RangeText       string           `json:"range_text"`
+	CastingTime     string           `json:"casting_time"`
+	Duration        string           `json:"duration"`
+	Concentration   *bool            `json:"concentration"`
+	Classes         []namedRef       `json:"classes"`
+	Type            *namedRef        `json:"type"`
+	Size            *namedRef        `json:"size"`
+	HitPoints       *float64         `json:"hit_points"`
+	ArmorClass      *float64         `json:"armor_class"`
+	ChallengeRating *float64         `json:"challenge_rating"`
+	Speed           *creatureSpeed   `json:"speed"`
+	Actions         []creatureAction `json:"actions"`
+	Rarity          string           `json:"rarity"`
+	Category        string           `json:"category"`
 
 	// Full statblock fields (creatures).
-	AbilityScores      map[string]int           `json:"ability_scores"`
-	SavingThrows       map[string]int           `json:"saving_throws"`
-	SkillBonuses       map[string]int           `json:"skill_bonuses"`
-	PassivePerception  *float64                 `json:"passive_perception"`
-	BlindsightRange    *float64                 `json:"blindsight_range"`
-	DarkvisionRange    *float64                 `json:"darkvision_range"`
-	TremorsenseRange   *float64                 `json:"tremorsense_range"`
-	TruesightRange     *float64                 `json:"truesight_range"`
-	Languages          creatureLanguages        `json:"languages"`
-	Resistances        resistancesAndImmunities `json:"resistances_and_immunities"`
-	Traits             []creatureAction         `json:"traits"`
+	AbilityScores     map[string]int           `json:"ability_scores"`
+	SavingThrows      map[string]int           `json:"saving_throws"`
+	SkillBonuses      map[string]int           `json:"skill_bonuses"`
+	PassivePerception *float64                 `json:"passive_perception"`
+	BlindsightRange   *float64                 `json:"blindsight_range"`
+	DarkvisionRange   *float64                 `json:"darkvision_range"`
+	TremorsenseRange  *float64                 `json:"tremorsense_range"`
+	TruesightRange    *float64                 `json:"truesight_range"`
+	Languages         creatureLanguages        `json:"languages"`
+	Resistances       resistancesAndImmunities `json:"resistances_and_immunities"`
+	Traits            []creatureAction         `json:"traits"`
 }
 
 type documentRef struct {
@@ -477,10 +477,10 @@ type creatureLanguages struct {
 
 // resistancesAndImmunities carries the display strings the API pre-formats.
 type resistancesAndImmunities struct {
-	DamageVulnerabilities  string `json:"damage_vulnerabilities_display"`
-	DamageResistances      string `json:"damage_resistances_display"`
-	DamageImmunities       string `json:"damage_immunities_display"`
-	ConditionImmunities    string `json:"condition_immunities_display"`
+	DamageVulnerabilities string `json:"damage_vulnerabilities_display"`
+	DamageResistances     string `json:"damage_resistances_display"`
+	DamageImmunities      string `json:"damage_immunities_display"`
+	ConditionImmunities   string `json:"condition_immunities_display"`
 }
 
 // formatObject renders an SRD object as grounding prose, per kind. Only

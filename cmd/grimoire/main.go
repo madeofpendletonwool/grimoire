@@ -55,6 +55,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
+	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -532,6 +533,13 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+
+	// Saved encounters share that file as well; difficulty verdicts are never
+	// stored, only the party and roster they are recomputed from.
+	encounters, err := encounter.New(store.DB())
+	if err != nil {
+		return err
+	}
 	// Upgrade path: an install that predates accounts has history filed under
 	// the anonymous owner. Hand it to the first keeper on the way up, so it is
 	// already theirs by the time they sign in.
@@ -548,6 +556,7 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()))
 
 	httpSrv := &http.Server{
 		Addr:              addr(),
