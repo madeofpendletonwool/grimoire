@@ -32,17 +32,21 @@
 				<span data-ico="scroll"></span> New chat
 			</button>
 
-			<!-- A destination, not a foot utility — so it sits with New chat, between
-			     two other 32px sprites rather than among the vector-icon rows below. -->
-			<button type="button" class="rail-action rail-study" id="rail-study">
-				<span data-ico="card"></span> Study
-			</button>
+		<!-- A destination, not a foot utility — so it sits with New chat, between
+		     two other 32px sprites rather than among the vector-icon rows below. -->
+		<button type="button" class="rail-action rail-study" id="rail-study">
+			<span data-ico="card"></span> Study
+		</button>
 
-			<!-- The D&D encounter builder: party + monsters + a live DMG difficulty
-			     verdict, saved per user. A sibling destination to Study. -->
-			<button type="button" class="rail-action rail-encounter" id="rail-encounter">
-				<span data-ico="dice"></span> Encounter
-			</button>
+		<button type="button" class="rail-action rail-reader" id="rail-reader">
+			<span data-ico="openBook"></span> Read
+		</button>
+
+		<!-- The D&D encounter builder: party + monsters + a live DMG difficulty
+		     verdict, saved per user. A sibling destination to Study. -->
+		<button type="button" class="rail-action rail-encounter" id="rail-encounter">
+			<span data-ico="dice"></span> Encounter
+		</button>
 
 			<!-- The MTG deck builder: describe an idea, pick a commander, draft
 		     the 99 with the model, iterate, analyze a pasted list. A sibling
@@ -111,16 +115,30 @@
 				<div class="messages" id="messages"></div>
 			</div>
 
-			<!-- ---------- Study surface ---------- -->
-			<section class="study" id="study-view" hidden aria-label="Study">
-				<header class="study-head">
-					<h2 class="study-title" id="study-title">Study</h2>
-					<div class="study-decks" id="study-decks" role="tablist" aria-label="Deck"></div>
-					<p class="study-meta" id="study-meta"></p>
-					<button type="button" class="icon-btn" id="study-close" aria-label="Leave study" title="Back to chat" data-gi="close"></button>
-				</header>
-				<div class="study-body" id="study-body"></div>
-			</section>
+		<!-- ---------- Study surface ---------- -->
+		<section class="study" id="study-view" hidden aria-label="Study">
+			<header class="study-head">
+				<h2 class="study-title" id="study-title">Study</h2>
+				<div class="study-decks" id="study-decks" role="tablist" aria-label="Deck"></div>
+				<p class="study-meta" id="study-meta"></p>
+				<button type="button" class="icon-btn" id="study-close" aria-label="Leave study" title="Back to chat" data-gi="close"></button>
+			</header>
+			<div class="study-body" id="study-body"></div>
+		</section>
+
+		<!-- ---------- Reading surface ---------- -->
+		<section class="reader" id="reader-view" hidden aria-label="Reading">
+			<header class="reader-head">
+				<h2 class="reader-title" id="reader-title">Read</h2>
+				<div class="reader-guides" id="reader-guides" role="tablist" aria-label="Book"></div>
+				<button type="button" class="icon-btn" id="reader-contents" aria-label="Toggle contents" title="Contents" data-gi="menu"></button>
+				<button type="button" class="icon-btn" id="reader-close" aria-label="Leave the book" title="Back to chat" data-gi="close"></button>
+			</header>
+			<div class="reader-body">
+				<nav class="reader-toc" id="reader-toc" aria-label="Contents"></nav>
+				<div class="reader-page" id="reader-page" tabindex="-1"></div>
+			</div>
+		</section>
 
 			<!-- ---------- Encounter builder surface ---------- -->
 			<section class="encounter" id="encounter-view" hidden aria-label="Encounter builder">

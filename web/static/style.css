@@ -1077,6 +1077,233 @@ kbd {
 }
 .study-empty-sub { opacity: 0.6; font-size: var(--fs-sm); max-width: 30rem; }
 
+/* ---------- Reading surface ---------- */
+/* Two panes over the stone column: the contents on stone (it is navigation,
+   the same chrome the rail is), the page itself on parchment — reading is the
+   one thing the app exists to do, so the book gets the artifact surface. */
+.main.is-reading > .transcript,
+.main.is-reading > .composer-dock { display: none; }
+
+.reader {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-3);
+	padding: var(--sp-4) var(--sp-5) var(--sp-5);
+}
+.reader-head {
+	max-width: 76rem;
+	width: 100%;
+	margin: 0 auto;
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-3);
+	flex-wrap: wrap;
+}
+.reader-title {
+	margin: 0;
+	font-family: var(--font-prose);
+	font-variant: small-caps;
+	letter-spacing: 0.04em;
+	font-size: var(--fs-lg);
+	font-weight: 600;
+	color: var(--gold);
+}
+.reader-head .icon-btn { flex: none; align-self: center; }
+.reader-contents { display: none; }
+
+/* Guide tabs — same quiet pixel labels as the study deck tabs. */
+.reader-guides { display: flex; gap: var(--sp-2); align-items: baseline; flex-wrap: wrap; }
+.reader-guide {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.03em;
+	padding: var(--sp-1) var(--sp-2);
+	background: none;
+	border: none;
+	border-bottom: 2px solid transparent;
+	color: var(--parchment);
+	opacity: 0.55;
+	cursor: pointer;
+}
+.reader-guide:hover { opacity: 0.85; }
+.reader-guide.is-active {
+	opacity: 1;
+	border-bottom-color: var(--accent);
+	color: var(--accent);
+}
+
+.reader-body {
+	flex: 1;
+	min-height: 0;
+	position: relative;
+	max-width: 76rem;
+	width: 100%;
+	margin: 0 auto;
+	display: flex;
+	gap: var(--sp-4);
+}
+
+/* Contents: stone chrome, quiet parchment type, chapters in small caps. */
+.reader-toc {
+	flex: none;
+	width: 290px;
+	overflow-y: auto;
+	padding: var(--sp-3) var(--sp-2);
+	scrollbar-width: thin;
+}
+.reader-toc-item {
+	display: block;
+	width: 100%;
+	text-align: left;
+	background: none;
+	border: none;
+	padding: 0.28rem var(--sp-2);
+	padding-left: calc(var(--sp-2) + (var(--toc-level, 1) - 1) * 0.85rem);
+	color: var(--parchment);
+	opacity: 0.6;
+	font-size: var(--fs-sm);
+	line-height: 1.35;
+	cursor: pointer;
+}
+.reader-toc-item:hover { opacity: 0.95; }
+.reader-toc-item.is-chapter {
+	margin-top: var(--sp-3);
+	font-family: var(--font-prose);
+	font-variant: small-caps;
+	letter-spacing: 0.05em;
+	font-weight: 600;
+	color: var(--gold-dim);
+	opacity: 0.9;
+}
+.reader-toc-item.is-chapter:first-child { margin-top: 0; }
+.reader-toc-item.is-active { opacity: 1; color: var(--gold-bright); }
+.reader-toc-item.is-active.is-chapter { color: var(--gold-bright); }
+
+/* The page: parchment, prose at reading size, crumbs and a page-turn footer. */
+.reader-page {
+	flex: 1;
+	min-width: 0;
+	overflow-y: auto;
+	padding: var(--sp-5) var(--sp-6) var(--sp-4);
+	color: var(--ink);
+	scrollbar-width: thin;
+}
+.reader-crumbs {
+	display: flex;
+	align-items: baseline;
+	gap: 0.4rem;
+	flex-wrap: wrap;
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+}
+.reader-crumb {
+	background: none;
+	border: none;
+	padding: 0;
+	color: var(--ink-soft);
+	font-size: inherit;
+	cursor: pointer;
+	border-bottom: 1px dotted var(--parchment-line);
+}
+.reader-crumb:hover { color: var(--ink); }
+.reader-crumb-sep { opacity: 0.5; }
+.reader-heading {
+	margin: var(--sp-2) 0 var(--sp-4);
+	font-family: var(--font-prose);
+	font-weight: 600;
+	font-size: 1.45rem;
+	line-height: 1.2;
+}
+.reader-prose { font-family: var(--font-prose); font-size: 1.05rem; line-height: 1.65; }
+.reader-prose p { margin: 0 0 0.9em; }
+.reader-source {
+	margin: var(--sp-4) 0 0;
+	font-size: var(--fs-xs);
+	font-style: italic;
+	color: var(--ink-soft);
+	opacity: 0.85;
+}
+.reader-note { opacity: 0.55; font-size: var(--fs-sm); font-style: italic; }
+.reader-note.warn { opacity: 0.9; color: var(--ember); font-style: normal; }
+
+/* Page-turn footer: a quiet dashed rule, then the two directions. */
+.reader-turn {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--sp-3);
+	margin-top: var(--sp-5);
+	padding-top: var(--sp-3);
+	border-top: 1px dashed var(--parchment-line);
+}
+.reader-turn-btn {
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+	max-width: 46%;
+	background: none;
+	border: none;
+	padding: var(--sp-1) 0;
+	text-align: left;
+	color: var(--ink-soft);
+	font-size: var(--fs-sm);
+	cursor: pointer;
+}
+.reader-turn-btn:hover:not(:disabled) { color: var(--ink); }
+.reader-turn-btn:disabled { opacity: 0.3; cursor: default; }
+.reader-turn-arrow { font-size: var(--fs-lg); line-height: 1; }
+.reader-turn-next { margin-left: auto; text-align: right; }
+.reader-turn-btn span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.reader-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--sp-2);
+	text-align: center;
+	padding: var(--sp-6) var(--sp-4);
+	color: var(--ink-soft);
+}
+.reader-empty .gi { color: var(--gold-dim); opacity: 0.8; }
+.reader-empty-title { margin: 0; font-family: var(--font-prose); font-weight: 600; color: var(--ink); }
+.reader-empty-sub { margin: 0; font-size: var(--fs-sm); max-width: 30rem; }
+
+/* Reference drawer's hand-off to the reading surface. */
+.drawer-read {
+	margin-top: var(--sp-3);
+	background: none;
+	border: none;
+	padding: 0;
+	color: var(--accent-deep);
+	font-size: var(--fs-sm);
+	font-weight: 600;
+	cursor: pointer;
+	border-bottom: 1px solid transparent;
+}
+.drawer-read:hover { border-bottom-color: var(--accent-deep); }
+
+/* Tables inside prose — the SRD's class and equipment tables ride their
+   sections as HTML, and the markdown pass re-renders them as real cells. */
+.prose table {
+	width: 100%;
+	border-collapse: collapse;
+	margin: 0 0 1em;
+	font-size: 0.92em;
+	line-height: 1.4;
+}
+.prose th, .prose td {
+	border: 1px solid var(--parchment-line);
+	padding: 0.25rem 0.55rem;
+	text-align: left;
+	vertical-align: top;
+}
+.prose th {
+	font-variant: small-caps;
+	letter-spacing: 0.03em;
+	background: var(--parchment-2);
+}
+
 /* ---------- Encounter builder ---------- */
 /* The builder overlays the transcript the way study does: a tool surface in
    chrome stone, not a reading surface — parchment is reserved for content, so
@@ -1893,6 +2120,24 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.study-meta { margin-left: 0; flex-basis: 100%; }
 	.study-decks { flex-basis: 100%; }
 
+	/* Reading: the contents column becomes an overlay behind a toggle, so the
+	   page keeps the whole width and the book still fits a thumb. */
+	.reader { padding: var(--sp-3) var(--sp-3) var(--sp-4); }
+	.reader-guides { flex-basis: 100%; }
+	.reader-contents { display: inline-flex; }
+	.reader-toc {
+		display: none;
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		z-index: 6;
+		width: min(78vw, 300px);
+		box-shadow: var(--shadow-2);
+	}
+	#reader-view.toc-open .reader-toc { display: block; }
+	.reader-page { padding: var(--sp-4) var(--sp-3) var(--sp-3); }
+
 	.encounter { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
 	.enc-body { grid-template-columns: 1fr; }
 	.enc-action-row .ask { margin-left: 0; }
@@ -2065,6 +2310,9 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .deck-panel .prose pre { background: rgba(0, 0, 0, 0.25); color: var(--parchment); }
 .deck-panel .prose pre { border-color: var(--stone-line); }
 .deck-panel .prose blockquote { border-left-color: var(--stone-line); }
+.deck-panel .prose th,
+.deck-panel .prose td { border-color: var(--stone-line); }
+.deck-panel .prose th { background: rgba(0, 0, 0, 0.25); }
 .deck-list { display: flex; flex-direction: column; gap: 0.1rem; }
 .deck-section {
 	margin: var(--sp-3) 0 var(--sp-1);
@@ -2149,7 +2397,6 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	font-size: var(--fs-sm);
 	line-height: 1.5;
 }
-.deck-chat-turn.is-player .deck-chat-text { white-space: pre-wrap; }
-.deck-chat-turn.is-player .deck-chat-text { opacity: 0.75; font-style: italic; }
+.deck-chat-turn.is-player .deck-chat-text { white-space: pre-wrap; opacity: 0.75; font-style: italic; }
 .deck-chat-status { font-size: var(--fs-xs); opacity: 0.7; margin: 0 0 var(--sp-2); min-height: 1em; }
 .deck-chat-form { display: flex; flex-direction: column; gap: var(--sp-2); }

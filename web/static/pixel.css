@@ -108,7 +108,9 @@
 .new-chat,
 .study-card,
 .study-answer,
-.study-grade {
+.study-grade,
+.reader-toc,
+.reader-page {
 	border-style: solid;
 	border-radius: 0;
 	background-color: transparent;
@@ -121,7 +123,8 @@
 .f-parchment,
 .msg-sage .bubble,
 .gate-page,
-.study-card {
+.study-card,
+.reader-page {
 	border-width: 10px;
 	border-image-source: url("/static/assets/ui/panel-parchment.png");
 	border-image-slice: 5 fill;
@@ -132,6 +135,7 @@
 .palette-box,
 .settings-popup,
 .study-answer,
+.reader-toc,
 .enc-panel,
 .deck-panel {
 	border-width: 6px;

@@ -144,3 +144,65 @@ func TestParseMTG_TopLevelRuleHasTrailingPeriod(t *testing.T) {
 		t.Errorf("rule 100.1 body = %q", found)
 	}
 }
+
+func TestParseMTG_ReaderNodes(t *testing.T) {
+	ds, err := ParseMTG(strings.NewReader(mtgSample))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	nodes := ds.Reader
+	if len(nodes) == 0 {
+		t.Fatal("no reader nodes parsed")
+	}
+
+	byNumber := map[string]ReaderNode{}
+	for _, n := range nodes {
+		if n.Guide != "rules" || n.GuideKind != "rules" {
+			t.Errorf("node %s guide = %s/%s", n.Number, n.Guide, n.GuideKind)
+		}
+		byNumber[n.Number] = n
+	}
+
+	// Chapter 1 carries its title and its sections hang beneath it.
+	ch1, ok := byNumber["1"]
+	if !ok || ch1.Title != "Game Concepts" || ch1.Level != 1 {
+		t.Errorf("chapter 1 = %+v", ch1)
+	}
+	if byNumber["101"].Level != 2 || byNumber["101"].Title != "The Magic Golden Rules" {
+		t.Errorf("section 101 = %+v", byNumber["101"])
+	}
+	if byNumber["102"].Level != 2 || byNumber["102"].Title != "Players" {
+		t.Errorf("section 102 = %+v", byNumber["102"])
+	}
+
+	// A section's reading body carries its rules with numbers, in order.
+	body := byNumber["101"].Body
+	if !strings.Contains(body, "101.1. Whenever a card's text directly contradicts") {
+		t.Errorf("101 body missing rule text: %q", body)
+	}
+	if !strings.Contains(body, "101.2. When a rule or effect allows") {
+		t.Errorf("101 body missing second rule: %q", body)
+	}
+
+	// The glossary is a chapter of term entries, not one giant blob.
+	gloss := byNumber["glossary"]
+	if !ok || gloss.Level != 1 {
+		t.Errorf("glossary chapter = %+v", gloss)
+	}
+	var vigilance string
+	for _, n := range nodes {
+		if n.Title == "Vigilance" && n.Guide == "rules" {
+			vigilance = n.Body
+		}
+	}
+	if !strings.Contains(vigilance, "attack without tapping") {
+		t.Errorf("glossary term Vigilance missing: %q", vigilance)
+	}
+
+	// Positions are strictly increasing in book order.
+	for i := 1; i < len(nodes); i++ {
+		if nodes[i].Position <= nodes[i-1].Position {
+			t.Fatalf("positions not increasing at %d", i)
+		}
+	}
+}

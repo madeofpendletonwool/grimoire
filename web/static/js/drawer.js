@@ -5,6 +5,7 @@ import { $, clear, el, isNarrow } from "./dom.js";
 import { api } from "./api.js";
 import { ruleCard, cardView } from "./render.js";
 import { registerRefHandlers } from "./refs.js";
+import { openReader } from "./reader.js";
 import { activeCorpus } from "./state.js";
 
 let lastFocus = null;
@@ -49,6 +50,10 @@ export async function openRule(rule, corpus) {
 
 	if (rule.body) body.append(ruleCard(rule, "", false, c));
 
+	// A numbered entry can be opened as a page of its book — the reader
+	// resolves the citation onto the section that carries it.
+	if (number) body.append(readLink(c, number));
+
 	const root = sectionKeyOf(number);
 	if (!root) return;
 
@@ -68,9 +73,25 @@ export async function openRule(rule, corpus) {
 			$("drawer-title").textContent = `${data.parent.number} · ${data.parent.body}`;
 		}
 		entries.forEach((e, i) => body.append(ruleCard(e, "", i > 0, c)));
+		if (number) body.append(readLink(c, number));
 	} catch (_) {
 		note.textContent = "The full section could not be loaded.";
 	}
+}
+
+/** The trailing affordance that hands a citation to the reading surface. */
+function readLink(corpus, number) {
+	return el("button", {
+		class: "drawer-read",
+		text: "Read this in the book",
+		attrs: { type: "button", title: "Open the reading surface at this rule" },
+		on: {
+			click: () => {
+				closeDrawer();
+				openReader(corpus, { number });
+			},
+		},
+	});
 }
 
 /** Open a card. Accepts a resolved card object or a bare name to look up. */

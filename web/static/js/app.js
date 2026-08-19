@@ -9,6 +9,7 @@ import { initChat, refreshHistory, syncChrome, setCorpus, setFoot } from "./chat
 import { initResolve } from "./resolve.js";
 import { initVoice } from "./voice.js";
 import { initStudy } from "./study.js";
+import { initReader } from "./reader.js";
 import { initEncounter } from "./encounter.js";
 import { initDeck } from "./deck.js";
 import { initAdmin } from "./admin.js";
@@ -98,6 +99,7 @@ function start() {
 	initResolve();
 	initVoice();
 	initStudy();
+	initReader();
 	initEncounter();
 	initDeck();
 	syncChrome();

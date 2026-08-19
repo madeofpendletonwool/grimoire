@@ -71,6 +71,9 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(vectorSchema); err != nil {
 		return fmt.Errorf("migrate vectors: %w", err)
 	}
+	if _, err := s.db.Exec(readerSchema); err != nil {
+		return fmt.Errorf("migrate reader: %w", err)
+	}
 	return nil
 }
 
@@ -104,7 +107,7 @@ CREATE TABLE IF NOT EXISTS entity_names (
 
 // Reset drops and rebuilds the docs tables (used on reindex).
 func (s *Store) Reset() error {
-	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names; DELETE FROM entity_names; DELETE FROM doc_vectors; DROP TABLE IF EXISTS docs_build; DROP TABLE IF EXISTS doc_vectors_build;`)
+	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names; DELETE FROM doc_vectors; DELETE FROM reader_nodes; DELETE FROM reader_guides;`)
 	return err
 }
 
@@ -226,10 +229,16 @@ func (s *Store) swapDocs(ctx context.Context, ds *data.Dataset) error {
 			return err
 		}
 	}
-
 	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO index_meta(key, value) VALUES('built_at', ?)`, nowRFC3339()); err != nil {
 		return err
 	}
+
+	// The reader tree rides in the same transaction: an index build is
+	// all-or-nothing across the FTS tables and the reading tables.
+	if err := s.indexReader(ctx, tx, ds.Reader); err != nil {
+		return err
+	}
+
 	return tx.Commit()
 }
 
