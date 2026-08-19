@@ -206,6 +206,46 @@ func (c *Client) StreamPrompt(ctx context.Context, system, user string, onDelta 
 	return c.callMessages(ctx, system, []message{{Role: "user", Content: user}}, true, onDelta)
 }
 
+// StreamChat runs a multi-turn exchange with a caller-supplied system prompt.
+// It is what a feature reaches for when the conversation itself is the point —
+// the deck builder's "talk about this deck" — rather than the single grounded
+// question AnswerPrompt covers. History is replayed as-is; the final turn is
+// the one being answered. onDelta nil reads one JSON body; non-nil asks for
+// SSE.
+func (c *Client) StreamChat(ctx context.Context, system string, turns []Turn, onDelta func(string) error) (string, error) {
+	msgs := chatMessages(turns)
+	if len(msgs) == 0 {
+		return "", fmt.Errorf("no message to answer")
+	}
+	return c.callMessages(ctx, system, msgs, onDelta != nil, onDelta)
+}
+
+// chatMessages normalizes turns into API messages: unknown roles become user
+// turns, empty content is dropped, and consecutive same-role turns are folded
+// because the API rejects them.
+func chatMessages(turns []Turn) []message {
+	msgs := make([]message, 0, len(turns))
+	for _, t := range turns {
+		role := t.Role
+		if role != "assistant" {
+			role = "user"
+		}
+		if strings.TrimSpace(t.Content) == "" {
+			continue
+		}
+		if n := len(msgs); n > 0 && msgs[n-1].Role == role {
+			msgs[n-1].Content += "\n\n" + t.Content
+			continue
+		}
+		msgs = append(msgs, message{Role: role, Content: t.Content})
+	}
+	// The exchange must begin with a user turn.
+	for len(msgs) > 0 && msgs[0].Role != "user" {
+		msgs = msgs[1:]
+	}
+	return msgs
+}
+
 // run builds the Q&A exchange from a Request and sends it.
 func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error) (string, error) {
 	streaming := onDelta != nil

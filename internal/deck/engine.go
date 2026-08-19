@@ -59,6 +59,17 @@ var themeStopwords = map[string]bool{
 	"mid": true, "high": true, "low": true, "cheap": true, "expensive": true,
 	"powerful": true, "good": true, "great": true, "fun": true, "jank": true,
 	"competitive": true, "casual": true, "aggro": true, "new": true,
+	// Colours are chosen in the colours box, not searched for. Left in, they
+	// are the loudest terms in the query — "green" matches every card whose
+	// rules text says the word — and they bury the theme the player actually
+	// named.
+	"white": true, "blue": true, "black": true, "red": true, "green": true,
+	"colorless": true, "colourless": true, "mono": true, "multicolor": true,
+	"multicolour": true, "azorius": true, "dimir": true, "rakdos": true,
+	"gruul": true, "selesnya": true, "orzhov": true, "izzet": true,
+	"golgari": true, "boros": true, "simic": true, "bant": true, "esper": true,
+	"grixis": true, "jund": true, "naya": true, "abzan": true, "jeskai": true,
+	"sultai": true, "mardu": true, "temur": true,
 }
 
 // Roles are the buckets a Commander draft fills. The engine proposes

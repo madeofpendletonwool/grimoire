@@ -242,8 +242,11 @@
 						<h3 class="deck-heading">Analyze a list</h3>
 						<form class="deck-idea-form" id="deck-analyze-form" autocomplete="off">
 							<textarea id="deck-analyze-input" class="deck-idea-input" rows="4"
-								placeholder="Paste a decklist — one card per line&#10;2x Sol Ring&#10;36 Mountain"
+								placeholder="Paste a decklist — one card per line&#10;1 Sol Ring [LTC]&#10;1 Arachnogenesis (C15) 12&#10;19 Forest"
 								aria-label="Decklist to analyze"></textarea>
+							<input id="deck-analyze-commander" class="deck-field" type="text"
+								placeholder="Commander (optional, if the list has no Commander: line)"
+								aria-label="Commander for the pasted list">
 							<button type="submit" class="deck-btn">Analyze</button>
 						</form>
 					</div>
@@ -260,6 +263,20 @@
 						<h3 class="deck-heading">Report</h3>
 						<div class="deck-report" id="deck-report"></div>
 						<div class="deck-curve" id="deck-curve" hidden></div>
+					</div>
+					<div class="deck-panel deck-chat-panel">
+						<h3 class="deck-heading">Talk about it</h3>
+						<div class="deck-chat-log" id="deck-chat-log" aria-live="polite" aria-label="Deck conversation"></div>
+						<p class="deck-chat-status" id="deck-chat-status"></p>
+						<form class="deck-chat-form" id="deck-chat-form" autocomplete="off">
+							<textarea id="deck-chat-input" class="deck-idea-input" rows="2"
+								placeholder="e.g. what should I cut for more ramp?"
+								aria-label="Ask about this deck"></textarea>
+							<div class="deck-action-row">
+								<button type="submit" class="deck-btn">Ask</button>
+								<button type="button" class="deck-btn" id="deck-chat-clear">Clear</button>
+							</div>
+						</form>
 					</div>
 					<div class="deck-panel deck-actions">
 						<form class="deck-save" id="deck-save" autocomplete="off">

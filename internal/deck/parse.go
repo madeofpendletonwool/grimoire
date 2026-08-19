@@ -9,10 +9,15 @@ import (
 // ParseDecklist parses a pasted decklist: one card per line, with counts as
 // either "2x Name", "2 Name", "Name x2", or "Name x 2". Commander-zone lines
 // marked "Commander" (or a lone "1 Name" after a "Commander:" header) are
-// tagged to the commander board. Comments (#, //), sideboard headers, and
-// blank lines are skipped. Every line that names a card is kept verbatim —
-// resolution against the card database happens separately, so a typo'd name
-// survives to be fuzzy-matched or flagged, never silently dropped.
+// tagged to the commander board. Comments (#, //), board headers, card-type
+// section headers, and blank lines are skipped.
+//
+// Printing annotations are stripped from every name: the set code and
+// collector number Archidekt, Moxfield and Arena decorate their exports with
+// are not part of the card's name, and leaving them attached is what makes a
+// real export fail to resolve. What remains is kept verbatim — resolution
+// against the card database happens separately, so a typo'd name survives to
+// be fuzzy-matched or flagged, never silently dropped.
 func ParseDecklist(text string) []Entry {
 	var entries []Entry
 	board := "main"
@@ -21,44 +26,119 @@ func ParseDecklist(text string) []Entry {
 		if line == "" {
 			continue
 		}
-		lower := strings.ToLower(line)
-
-		// "Commander: Kaalia" carries the name inline (one-shot); a bare
-		// "Commander" / "Commanders" header switches the following lines.
-		if lower == "commander" || lower == "commanders" || lower == "command zone" {
-			board = "commander"
-			continue
-		}
-		if name, ok := commanderInline(line); ok {
-			entries = append(entries, Entry{Name: name, Count: 1, Board: "commander"})
-			continue
-		}
-		if lower == "sideboard" || lower == "side" || strings.HasPrefix(lower, "sideboard") {
-			board = "sideboard"
-			continue
-		}
-		if lower == "mainboard" || lower == "main" || lower == "deck" {
-			board = "main"
-			continue
-		}
 		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 			continue
 		}
-
-		count, name := splitCount(line)
-		if name == "" {
+		// MTGO writes sideboard lines inline as "SB: 1 Sol Ring".
+		if rest, ok := cutPrefixFold(line, "SB:"); ok {
+			if e, ok := parseCardLine(rest, "sideboard"); ok {
+				entries = append(entries, e)
+			}
 			continue
 		}
-		// Prose tolerance: model-written drafts wrap the list in sentences.
-		// A bare line (no leading count) that reads like prose — sentence
-		// punctuation, a colon, or too many words — is skipped. Card names
-		// never end in ".", "!", or "?" and never contain ":".
-		if count == 1 && name == line && looksLikeProse(name) {
+		// A board header switches the following lines; a trailing "(15)" from
+		// an exporter is part of the header, not a card.
+		if b, ok := boardHeader(line); ok {
+			board = b
 			continue
 		}
-		entries = append(entries, Entry{Name: name, Count: count, Board: board})
+		// "Commander: Kaalia of the Vast" carries the name inline.
+		if name, ok := commanderInline(line); ok {
+			entries = append(entries, Entry{Name: CleanCardName(name), Count: 1, Board: "commander"})
+			continue
+		}
+		// Type headers an exporter writes above each group ("Creatures (30)").
+		// One of these closes the commander block: an export lists the
+		// commander first and then groups the maindeck by type, so without
+		// this every card after "Commander (1)" lands in the command zone.
+		if sectionHeader(line) {
+			if board == "commander" {
+				board = "main"
+			}
+			continue
+		}
+		if e, ok := parseCardLine(line, board); ok {
+			entries = append(entries, e)
+		}
 	}
 	return entries
+}
+
+// parseCardLine turns one decklist line into an entry, or reports that the
+// line names no card. Every line that does name a card is kept verbatim apart
+// from its printing annotations — resolution against the card database
+// happens separately, so a typo'd name survives to be matched or flagged,
+// never silently dropped.
+func parseCardLine(line, board string) (Entry, bool) {
+	count, name := splitCount(line)
+	name = CleanCardName(name)
+	if name == "" {
+		return Entry{}, false
+	}
+	// Prose tolerance: model-written drafts wrap the list in sentences. A bare
+	// line (no leading count) that reads like prose — sentence punctuation, a
+	// colon, or too many words — is skipped. Card names never end in ".", "!",
+	// or "?" and never contain ":".
+	if count == 1 && !hasLeadingCount(line) && looksLikeProse(name) {
+		return Entry{}, false
+	}
+	return Entry{Name: name, Count: count, Board: board}, true
+}
+
+// boardHeader matches a line that names a board rather than a card, tolerating
+// the "(15)" count exporters append. It returns the board the following lines
+// belong to.
+func boardHeader(line string) (string, bool) {
+	head := strings.ToLower(stripTrailingCount(line))
+	head = strings.TrimRight(head, ":")
+	switch head {
+	case "commander", "commanders", "command zone", "commandzone":
+		return "commander", true
+	case "sideboard", "side", "sb":
+		return "sideboard", true
+	case "mainboard", "maindeck", "main", "deck", "decklist":
+		return "main", true
+	}
+	return "", false
+}
+
+// sectionHeader reports whether a line is one of the card-type group headings
+// exporters write above each block ("Creatures (30)", "Lands"). Those are not
+// cards, and counting them as one is how a pasted list grows phantom entries.
+func sectionHeader(line string) bool {
+	return sectionHeaders[strings.ToLower(strings.TrimRight(stripTrailingCount(line), ":"))]
+}
+
+var sectionHeaders = map[string]bool{
+	"creature": true, "creatures": true, "land": true, "lands": true,
+	"instant": true, "instants": true, "sorcery": true, "sorceries": true,
+	"artifact": true, "artifacts": true, "enchantment": true, "enchantments": true,
+	"planeswalker": true, "planeswalkers": true, "battle": true, "battles": true,
+	"kindred": true, "tribal": true, "token": true, "tokens": true,
+	"maybeboard": true, "considering": true, "companion": true,
+	"spell": true, "spells": true, "ramp": true, "removal": true, "other": true,
+}
+
+// stripTrailingCount drops an exporter's "(30)" tally from a header line.
+func stripTrailingCount(line string) string {
+	s := strings.TrimSpace(line)
+	if !strings.HasSuffix(s, ")") {
+		return s
+	}
+	i := strings.LastIndexByte(s, '(')
+	if i < 1 || !isDigits(strings.TrimSpace(s[i+1:len(s)-1])) {
+		return s
+	}
+	return strings.TrimSpace(s[:i])
+}
+
+// cutPrefixFold strips a case-insensitive prefix, reporting whether it was
+// there.
+func cutPrefixFold(s, prefix string) (string, bool) {
+	if len(s) < len(prefix) || !strings.EqualFold(s[:len(prefix)], prefix) {
+		return s, false
+	}
+	return strings.TrimSpace(s[len(prefix):]), true
 }
 
 // looksLikeProse reports whether a bare line reads as a sentence rather than
@@ -109,6 +189,13 @@ func splitCount(line string) (int, string) {
 		return n, name
 	}
 	return 1, strings.TrimSpace(line)
+}
+
+// hasLeadingCount reports whether the line opens with an explicit count, which
+// makes it a card line no matter how it reads.
+func hasLeadingCount(line string) bool {
+	_, _, ok := leadingCount(line)
+	return ok
 }
 
 // leadingCount matches a count at the start of the line.

@@ -41,6 +41,13 @@ func (c *Card) IsBasicLand() bool {
 	return strings.Contains(c.TypeLine, "Basic Land")
 }
 
+// PlayableInCommander reports whether the card is legal in the format as
+// printed. MTGJSON leaves the legality blank for cards that were never in it —
+// the Alchemy rebalances ("A-Rulik Mons"), digital-only and Un-set cards — and
+// suggesting one of those is the same failure as suggesting a card that does
+// not exist: the player cannot sleeve it.
+func (c *Card) PlayableInCommander() bool { return c.LegalCommander == "Legal" }
+
 // Store persists cards in the shared SQLite database, following the per-package
 // schema pattern: the cards and cards_fts tables are siblings of the docs and
 // chat tables, so a rules reindex never touches them. Populated during an
@@ -221,6 +228,10 @@ func scanCards(rows *sql.Rows) ([]*Card, error) {
 // first. The query is sanitized into FTS5 prefix tokens joined by OR so
 // "seeker skybreak" finds Seeker of Skybreak; an empty result falls back to a
 // substring scan so a lone unusual word still hits.
+//
+// The name column carries the weight here, unlike the synergy searches below:
+// this is the lookup a written card name goes through, so a hit in the name
+// must outrank a card that merely mentions those words in its rules text.
 func (s *Store) SearchNames(ctx context.Context, q string, limit int) ([]*Card, error) {
 	if limit <= 0 {
 		limit = 20
@@ -232,7 +243,7 @@ func (s *Store) SearchNames(ctx context.Context, q string, limit int) ([]*Card, 
 			       c.commander_legal, c.legal_commander, c.game_changer
 			  FROM cards_fts f JOIN cards c ON c.name = f.name
 			 WHERE cards_fts MATCH ?
-			 ORDER BY bm25(cards_fts, 0, 3.0, 1.0) LIMIT ?`, match, limit)
+			 ORDER BY bm25(cards_fts, 10.0, 1.0, 0.5) LIMIT ?`, match, limit)
 		if err == nil {
 			out, err := scanCards(rows)
 			if err != nil {
@@ -256,14 +267,33 @@ func (s *Store) SearchNames(ctx context.Context, q string, limit int) ([]*Card, 
 }
 
 // Commanders returns commander-eligible cards within an allowed color mask
-// (0 = any identity), ranked by EDHREC popularity. When terms are given the
-// candidates are first narrowed by an FTS match over name/type/oracle text so
-// a themed idea ("angels and dragons") surfaces on-theme commanders even when
-// their global rank is modest.
+// (0 = any identity), best fit for the idea's terms first.
+//
+// Ranking is deliberately not raw FTS relevance. An idea names a tribe and a
+// pair of colours ("green and red goblins"), and what the player means is a
+// commander that *is* those colours and cares about that tribe — so a term hit
+// in the type line or the name counts for far more than the same word buried
+// in rules text, and a commander whose identity is exactly the colours asked
+// for outranks one that merely fits inside them. EDHREC popularity breaks ties
+// rather than deciding the order, because the on-theme legend is often the
+// obscure one.
 func (s *Store) Commanders(ctx context.Context, allowedMask int, terms []string, limit int) ([]*Card, error) {
 	if limit <= 0 {
 		limit = 12
 	}
+	pool := map[string]*Card{}
+	collect := func(cards []*Card) {
+		for _, c := range cards {
+			if !c.CommanderLegal || !c.PlayableInCommander() {
+				continue
+			}
+			if allowedMask != 0 && c.colorMask()&^allowedMask != 0 {
+				continue
+			}
+			pool[strings.ToLower(c.Name)] = c
+		}
+	}
+
 	if match := ftsQuery(strings.Join(terms, " ")); match != "" {
 		rows, err := s.db.QueryContext(ctx, `
 			SELECT c.name, c.mana_cost, c.mana_value, c.type_line, c.oracle_text,
@@ -271,24 +301,131 @@ func (s *Store) Commanders(ctx context.Context, allowedMask int, terms []string,
 			       c.commander_legal, c.legal_commander, c.game_changer
 			  FROM cards_fts f JOIN cards c ON c.name = f.name
 			 WHERE cards_fts MATCH ?
-			 ORDER BY bm25(cards_fts, 0, 3.0, 1.0) LIMIT 400`, match)
+			 ORDER BY bm25(cards_fts, 4.0, 4.0, 1.0) LIMIT 600`, match)
 		if err == nil {
 			out, err := scanCards(rows)
 			if err != nil {
 				return nil, err
 			}
-			return filterCommanders(out, allowedMask, limit), nil
+			collect(out)
 		}
 	}
+	// Always mix in the popular legends of the identity, so a narrow or
+	// misspelled idea still comes back with something playable.
 	cond, args := identityCond(allowedMask)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+cardColumns+` FROM cards
-		 WHERE commander_legal = 1`+cond+`
-		 ORDER BY edhrec_rank IS NULL, edhrec_rank LIMIT ?`, append(args, limit)...)
+		 WHERE commander_legal = 1 AND legal_commander = 'Legal'`+cond+`
+		 ORDER BY edhrec_rank IS NULL, edhrec_rank LIMIT ?`, append(args, 200)...)
 	if err != nil {
 		return nil, err
 	}
-	return scanCards(rows)
+	popular, err := scanCards(rows)
+	if err != nil {
+		return nil, err
+	}
+	collect(popular)
+
+	ranked := make([]*Card, 0, len(pool))
+	for _, c := range pool {
+		ranked = append(ranked, c)
+	}
+	scores := make(map[string]float64, len(ranked))
+	for _, c := range ranked {
+		scores[c.Name] = commanderScore(c, terms, allowedMask)
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if scores[ranked[i].Name] != scores[ranked[j].Name] {
+			return scores[ranked[i].Name] > scores[ranked[j].Name]
+		}
+		return lessByRank(ranked[i], ranked[j])
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	return ranked, nil
+}
+
+// commanderScore rates one legend against the idea's terms and the requested
+// colours. Weights are ordered by how strongly each signal predicts "this is
+// the commander they meant": its exact colours, then its creature types, then
+// its name, and only then its rules text.
+func commanderScore(c *Card, terms []string, allowedMask int) float64 {
+	score := 0.0
+	if allowedMask != 0 && c.colorMask() == allowedMask {
+		score += 3
+	}
+	typeLine := strings.ToLower(c.TypeLine)
+	name := strings.ToLower(c.Name)
+	oracle := strings.ToLower(c.OracleText)
+	for _, t := range terms {
+		switch {
+		case termInWords(typeLine, t):
+			score += 2.5
+		case termInWords(name, t):
+			score += 1.5
+		case strings.Contains(oracle, t):
+			score += 0.5
+		}
+	}
+	// Popularity is a tiebreak, capped so it cannot outweigh a theme match.
+	if c.EDHRECRank > 0 {
+		score += min(1.0, 1000/float64(c.EDHRECRank+200))
+	}
+	return score
+}
+
+// termInWords reports whether a term from the player's idea appears as a whole
+// word in the text, in either number — ideas are written "goblins" and type
+// lines read "Goblin Warrior".
+func termInWords(haystack, term string) bool {
+	if containsWord(haystack, term) {
+		return true
+	}
+	if s, ok := strings.CutSuffix(term, "s"); ok && len(s) > 2 {
+		return containsWord(haystack, s)
+	}
+	return containsWord(haystack, term+"s")
+}
+
+// containsWord reports whether haystack contains needle as a whole word, so
+// "goblin" matches "Creature — Goblin Warrior" but "rat" does not match
+// "Pirate".
+func containsWord(haystack, needle string) bool {
+	if needle == "" {
+		return false
+	}
+	for i := 0; ; {
+		j := strings.Index(haystack[i:], needle)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		end := start + len(needle)
+		beforeOK := start == 0 || !isWordByte(haystack[start-1])
+		// Tolerate the plural an idea is usually written with.
+		afterOK := end == len(haystack) || !isWordByte(haystack[end]) ||
+			(haystack[end] == 's' && (end+1 == len(haystack) || !isWordByte(haystack[end+1])))
+		if beforeOK && afterOK {
+			return true
+		}
+		i = start + 1
+	}
+}
+
+func isWordByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+}
+
+// lessByRank orders two cards by EDHREC popularity, unranked cards last.
+func lessByRank(a, b *Card) bool {
+	if a.EDHRECRank == 0 {
+		return false
+	}
+	if b.EDHRECRank == 0 {
+		return true
+	}
+	return a.EDHRECRank < b.EDHRECRank
 }
 
 // Candidates returns non-land cards within an allowed color mask, ranked by
@@ -338,15 +475,12 @@ func identityCond(allowedMask int) (string, []any) {
 	return ` AND (color_mask & ~?) = 0`, []any{allowedMask}
 }
 
-// filterCommanders narrows FTS hits to commander-eligible cards inside the
-// allowed identity, keeping EDHREC-rank order, then trims to limit.
-func filterCommanders(cards []*Card, allowedMask, limit int) []*Card {
-	return filterIdentity(cards, allowedMask, nil, limit, true)
-}
-
 func filterIdentity(cards []*Card, allowedMask int, exclude map[string]bool, limit int, commandersOnly bool) []*Card {
 	out := make([]*Card, 0, limit)
 	for _, c := range cards {
+		if !c.PlayableInCommander() {
+			continue
+		}
 		if commandersOnly && !c.CommanderLegal {
 			continue
 		}
@@ -360,21 +494,14 @@ func filterIdentity(cards []*Card, allowedMask int, exclude map[string]bool, lim
 			continue
 		}
 		out = append(out, c)
-		if len(out) >= limit {
-			break
-		}
 	}
-	// Rank order within the filtered set.
-	sort.SliceStable(out, func(i, j int) bool {
-		ri, rj := out[i].EDHRECRank, out[j].EDHRECRank
-		if ri == 0 {
-			return false
-		}
-		if rj == 0 {
-			return true
-		}
-		return ri < rj
-	})
+	// Rank order across the whole filtered set, then trim. Trimming first
+	// would hand back whatever the text search happened to list first and
+	// merely reorder that, which is not the same thing at all.
+	sort.SliceStable(out, func(i, j int) bool { return lessByRank(out[i], out[j]) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out
 }
 
