@@ -185,8 +185,8 @@ func (s *Server) handleDeckBuild(w http.ResponseWriter, r *http.Request) {
 
 	// Verify the commander before the stream commits: an SSE writer has
 	// already written its 200, so a bad commander must reject earlier.
-	cmdr, err := s.carddb.Get(req.Commander)
-	if err != nil {
+	cmdr, ok := s.carddb.Resolve(r.Context(), req.Commander)
+	if !ok {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown commander %q — could not verify it", req.Commander))
 		return
 	}
@@ -260,7 +260,7 @@ func (s *Server) handleDeckBuild(w http.ResponseWriter, r *http.Request) {
 
 	// Parse the model's list, validate every name, compute analysis, done.
 	entries := deck.ParseDecklist(answer)
-	known, fabricated := s.validateEntries(entries, cmdr)
+	known, fabricated := s.validateEntries(r.Context(), entries, cmdr)
 	analysis := deck.Analyze(cmdr.Name, known, s.cardLookup)
 	sse.send("done", map[string]any{
 		"deck":       known,
@@ -326,12 +326,13 @@ func truncateForPrompt(s string, n int) string {
 // the card database) and fabricated names (not in the database). Basic lands
 // are always known — the database carries them, but a miss here would be a
 // data gap, not a hallucination.
-func (s *Server) validateEntries(entries []deck.Entry, cmdr *carddb.Card) (known []deck.Entry, fabricated []string) {
+func (s *Server) validateEntries(ctx context.Context, entries []deck.Entry, cmdr *carddb.Card) (known []deck.Entry, fabricated []string) {
 	for _, e := range entries {
 		if strings.EqualFold(e.Name, cmdr.Name) {
 			continue // commander handled separately
 		}
-		if _, err := s.carddb.Get(e.Name); err == nil {
+		if c, ok := s.carddb.Resolve(ctx, e.Name); ok {
+			e.Name = c.Name
 			known = append(known, e)
 			continue
 		}
@@ -391,15 +392,34 @@ func (s *Server) handleDeckAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries := deck.ParseDecklist(req.Decklist)
-	commander := strings.TrimSpace(req.Commander)
+	// A "Commander:" line in the list wins over the field; either is resolved
+	// to a real card so the identity check has something to check against.
+	commander := deck.CleanCardName(req.Commander)
 	for _, e := range entries {
 		if e.Board == "commander" {
 			commander = e.Name
 			break
 		}
 	}
+	var commanderCard *carddb.Card
+	if commander != "" {
+		if c, ok := s.carddb.Resolve(r.Context(), commander); ok {
+			commanderCard, commander = c, c.Name
+		}
+	}
 
 	resolved, unresolved := s.resolveEntries(r.Context(), entries)
+	// Most exports have no "Commander:" line — the general is just another
+	// maindeck line. Move it to the command zone so it is listed once, in the
+	// right place, rather than appearing twice.
+	if commander != "" {
+		for i := range resolved {
+			if strings.EqualFold(resolved[i].Name, commander) {
+				resolved[i].Board = "commander"
+				break
+			}
+		}
+	}
 	analysis := deck.Analyze(commander, resolved, s.cardLookup)
 
 	// Model critique, best-effort and grounded in the analysis + card texts.
@@ -413,10 +433,8 @@ func (s *Server) handleDeckAnalyze(w http.ResponseWriter, r *http.Request) {
 		"analysis":   analysis,
 		"unresolved": unresolved,
 	}
-	if commander != "" {
-		if c, err := s.carddb.Get(commander); err == nil {
-			resp["commander"] = toStatView(c, nil)
-		}
+	if commanderCard != nil {
+		resp["commander"] = toStatView(commanderCard, nil)
 	}
 	if critique != "" {
 		resp["critique"] = critique
@@ -424,46 +442,34 @@ func (s *Server) handleDeckAnalyze(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// resolveEntries resolves parsed names against the database: exact
-// (case-insensitive), then an FTS match for typos. Unresolved names are
-// reported, never dropped silently.
+// resolveEntries resolves parsed names against the database, canonicalising
+// each to the card's real name. A name that resolved to something written
+// differently carries a note saying what was pasted, so the reader can see the
+// substitution rather than wonder where a card went. Lines that resolve to the
+// same card are merged, and names that do not resolve are reported, never
+// dropped silently and never replaced by a near-miss.
 func (s *Server) resolveEntries(ctx context.Context, entries []deck.Entry) (resolved, unresolved []deck.Entry) {
+	index := map[string]int{}
 	for _, e := range entries {
-		name := e.Name
-		if _, err := s.carddb.Get(name); err == nil {
-			resolved = append(resolved, e)
+		c, ok := s.carddb.Resolve(ctx, e.Name)
+		if !ok {
+			unresolved = append(unresolved, e)
 			continue
 		}
-		// Fuzzy: one FTS search, take the top hit above a sanity bar.
-		if hits, err := s.carddb.SearchNames(ctx, name, 1); err == nil && len(hits) > 0 && similarName(name, hits[0].Name) {
-			e.Name = hits[0].Name
-			e.Note = "matched " + name
-			resolved = append(resolved, e)
+		written := e.Name
+		e.Name = c.Name
+		if !strings.EqualFold(written, c.Name) {
+			e.Note = "pasted as “" + written + "”"
+		}
+		key := e.Board + "\x00" + strings.ToLower(e.Name)
+		if i, seen := index[key]; seen {
+			resolved[i].Count += e.Count
 			continue
 		}
-		unresolved = append(unresolved, e)
+		index[key] = len(resolved)
+		resolved = append(resolved, e)
 	}
 	return resolved, unresolved
-}
-
-// similarName guards the fuzzy path: the matched card's name must share the
-// first letter or half the words, else "Sol Ring" would "fix" into "Solfatara".
-func similarName(want, got string) bool {
-	w, g := strings.ToLower(want), strings.ToLower(got)
-	if w == g {
-		return true
-	}
-	ww := strings.Fields(w)
-	gw := strings.Fields(g)
-	shared := 0
-	for _, a := range ww {
-		for _, b := range gw {
-			if a == b {
-				shared++
-			}
-		}
-	}
-	return shared*2 >= len(ww) || shared > 0 && w[0] == g[0] && shared*3 >= len(ww)
 }
 
 // deckCritique asks the model for a grounded read of the analyzed deck.
@@ -554,7 +560,7 @@ func (s *Server) handleCreateDeck(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate every card name server-side: a saved deck contains only real
 	// cards (plus basics) or is rejected with the offending names.
-	known, fabricated := s.validateEntries(req.Cards, &carddb.Card{Name: commander})
+	known, fabricated := s.validateEntries(r.Context(), req.Cards, &carddb.Card{Name: commander})
 	if len(fabricated) > 0 {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("could not verify: %s", strings.Join(fabricated, ", ")))
 		return
@@ -602,7 +608,7 @@ func (s *Server) handleUpdateDeck(w http.ResponseWriter, r *http.Request) {
 		if req.Commander != nil {
 			commander = *req.Commander
 		}
-		known, fabricated := s.validateEntries(req.Cards, &carddb.Card{Name: commander})
+		known, fabricated := s.validateEntries(r.Context(), req.Cards, &carddb.Card{Name: commander})
 		if len(fabricated) > 0 {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("could not verify: %s", strings.Join(fabricated, ", ")))
 			return

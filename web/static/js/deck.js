@@ -5,9 +5,10 @@
 // server-verified; names the model invented are flagged, never displayed as
 // real.
 
-import { $, el, clear, esc, isNarrow } from "./dom.js";
-import { api, streamDeckBuild } from "./api.js";
+import { $, el, clear, isNarrow } from "./dom.js";
+import { api, streamDeckBuild, streamDeckChat } from "./api.js";
 import { state } from "./state.js";
+import { renderAnswer, bindRuleRefs } from "./render.js";
 
 let idea = "";
 let colors = "";
@@ -18,6 +19,8 @@ let commentary = "";
 let unverified = [];
 let currentID = null; // saved deck id, null while unsaved
 let draftAbort = null;
+let chatTurns = []; // the conversation about this deck: [{ role, content }]
+let chatAbort = null;
 
 export function initDeck() {
 	$("rail-deck").addEventListener("click", openDeck);
@@ -35,6 +38,9 @@ export function initDeck() {
 	$("deck-copy").addEventListener("click", onCopy);
 	$("deck-delete").addEventListener("click", onDelete);
 	$("deck-saved").addEventListener("change", onPickSaved);
+	$("deck-chat-form").addEventListener("submit", onChatAsk);
+	$("deck-chat-clear").addEventListener("click", resetChat);
+	renderChat();
 }
 
 /** Open the builder surface. */
@@ -51,6 +57,7 @@ export function openDeck() {
 export function closeDeck() {
 	state.deckOpen = false;
 	if (draftAbort) draftAbort.abort();
+	if (chatAbort) chatAbort.abort();
 	$("deck-view").hidden = true;
 	$("main").classList.remove("is-decking");
 	$("rail-deck").focus();
@@ -89,9 +96,11 @@ function renderCommanders(box, cmdrs) {
 		if (c.mana_cost) bits.push(c.mana_cost);
 		if (c.type_line) bits.push(c.type_line.split(" — ")[0]);
 		if (c.edhrec_rank) bits.push(`EDHREC #${c.edhrec_rank.toLocaleString()}`);
+		// el() sets attributes with setAttribute, which escapes for us — running
+		// esc() here too would hand back "Shelob&#39;s ..." as the commander.
 		box.append(el("button", {
 			class: "deck-hit",
-			attrs: { type: "button", "data-draft": esc(c.name), title: `Draft with ${c.name}` },
+			attrs: { type: "button", "data-draft": c.name, title: `Draft with ${c.name}` },
 		},
 		el("span", { class: "deck-hit-name", text: c.name }),
 		el("span", { class: "deck-hit-meta", text: bits.join(" · ") }),
@@ -107,6 +116,7 @@ function startDraft(name) {
 	unverified = [];
 	analysis = null;
 	commentary = "";
+	resetChat();
 	$("deck-revise-btn").disabled = false;
 	runBuild(false);
 }
@@ -139,13 +149,20 @@ async function runBuild(revision) {
 			onDelta: (text) => {
 				streamed += text;
 				$("deck-commentary").hidden = false;
+				// Plain text while it streams — re-rendering Markdown on every
+				// token would rebuild the block hundreds of times.
 				$("deck-commentary").textContent = streamed;
+				$("deck-commentary").classList.remove("prose");
 			},
 			onDone: (payload) => {
 				entries = payload.deck || [];
 				analysis = payload.analysis || null;
 				unverified = payload.unverified || [];
 				commentary = payload.commentary || streamed;
+				const box = $("deck-commentary");
+				box.classList.add("prose");
+				renderAnswer(box, commentary, "mtg");
+				bindRuleRefs(box, "mtg");
 				renderDeck();
 				renderReport();
 				status.textContent = `${commander.name} · ${totalMain()} cards`;
@@ -173,9 +190,10 @@ async function onAnalyze(e) {
 	const status = $("deck-draft-status");
 	status.textContent = "Analyzing the list…";
 	try {
-		const data = await api.deckAnalyze(list, "");
+		const data = await api.deckAnalyze(list, $("deck-analyze-commander").value.trim());
 		commander = data.commander ? { name: data.commander.name } : commander;
 		entries = data.deck || [];
+		resetChat();
 		analysis = data.analysis || null;
 		unverified = data.unresolved || [];
 		commentary = data.critique || "";
@@ -185,6 +203,92 @@ async function onAnalyze(e) {
 	} catch (err) {
 		status.textContent = `Analysis failed: ${err.message}`;
 	}
+}
+
+/* ---------- Talk about the deck ----------
+   The analyzer says what the list *is*; this is where the player argues with
+   it. The deck on screen travels with every question, so a draft that was
+   never saved is as discussable as a saved one. */
+
+async function onChatAsk(e) {
+	e.preventDefault();
+	const input = $("deck-chat-input");
+	const question = input.value.trim();
+	if (!question) return;
+	if (entries.length === 0 && !commander) {
+		$("deck-chat-status").textContent = "Draft, load or analyze a deck first.";
+		return;
+	}
+	if (chatAbort) chatAbort.abort();
+	const controller = new AbortController();
+	chatAbort = controller;
+
+	input.value = "";
+	const history = chatTurns.slice();
+	chatTurns.push({ role: "user", content: question });
+	const answer = { role: "assistant", content: "" };
+	chatTurns.push(answer);
+	renderChat();
+	$("deck-chat-status").textContent = "Thinking…";
+
+	const cards = entries.map((c) => ({ name: c.name, count: c.count, board: c.board }));
+	try {
+		await streamDeckChat(commander ? commander.name : "", cards, question, history, {
+			onDelta: (text) => {
+				answer.content += text;
+				renderChat();
+			},
+			onDone: () => {
+				$("deck-chat-status").textContent = "";
+				renderChat();
+			},
+			onError: (msg) => {
+				$("deck-chat-status").textContent = msg;
+				// Drop an answer that never arrived, so the next question is
+				// not sent with an empty assistant turn in its history.
+				if (!answer.content) chatTurns = chatTurns.filter((t) => t !== answer);
+				renderChat();
+			},
+		}, controller.signal);
+	} catch (err) {
+		if (err.name !== "AbortError") $("deck-chat-status").textContent = `Ask failed: ${err.message}`;
+	}
+}
+
+function resetChat() {
+	if (chatAbort) chatAbort.abort();
+	chatTurns = [];
+	$("deck-chat-status").textContent = "";
+	renderChat();
+}
+
+/** A block of model-written Markdown, rendered the way a sage answer is —
+ *  headings, lists, emphasis and mana pips, not literal asterisks. */
+function prose(className, text) {
+	const box = el("div", { class: `${className} prose` });
+	renderAnswer(box, text, "mtg");
+	bindRuleRefs(box, "mtg");
+	return box;
+}
+
+function renderChat() {
+	const log = clear($("deck-chat-log"));
+	if (chatTurns.length === 0) {
+		log.append(el("p", {
+			class: "deck-empty",
+			text: "Ask about the deck — what to cut, why the curve is off, whether a card is pulling its weight.",
+		}));
+		return;
+	}
+	for (const t of chatTurns) {
+		const sage = t.role === "assistant";
+		log.append(el("div", { class: `deck-chat-turn is-${sage ? "sage" : "player"}` },
+			el("span", { class: "deck-chat-who", text: sage ? "Sage" : "You" }),
+			sage && t.content
+				? prose("deck-chat-text", t.content)
+				: el("div", { class: "deck-chat-text", text: t.content || "…" })));
+	}
+	log.scrollTop = log.scrollHeight;
 }
 
 /* ---------- Rendering ---------- */
@@ -212,8 +316,15 @@ function renderDeck() {
 		for (const e of side) wrap.append(deckRow(e));
 	}
 	if (unverified.length > 0) {
-		wrap.append(el("p", { class: "deck-flag warn", text: `Couldn't verify (excluded): ${unverified.join(", ")}` }));
+		wrap.append(el("p", { class: "deck-flag warn", text: `Couldn't verify (excluded): ${unverifiedNames().join(", ")}` }));
 	}
+}
+
+/** The unverified list arrives as names from a draft and as whole entries from
+ *  an analysis. Read both as names — printing one shape with the other's
+ *  renderer is how the panel ended up listing "[object Object]". */
+function unverifiedNames() {
+	return unverified.map((u) => (typeof u === "string" ? u : u && u.name) || "").filter(Boolean);
 }
 
 function deckRow(e) {
@@ -256,8 +367,9 @@ function renderReport() {
 		wrap.append(el("p", { class: "deck-flag", text: w }));
 	}
 	if (commentary) {
-		const p = el("p", { class: "deck-critique", text: commentary });
-		wrap.append(p);
+		// The model writes Markdown. Dropping it into textContent is what put
+		// literal "## What Works" and "**Bottom line**" on screen.
+		wrap.append(prose("deck-critique", commentary));
 	}
 
 	// Curve bar chart, pure frontend from the analysis bucket counts.
@@ -309,6 +421,7 @@ async function onPickSaved() {
 		currentID = d.id;
 		commander = d.commander ? { name: d.commander } : null;
 		entries = d.cards || [];
+		resetChat();
 		analysis = null;
 		unverified = [];
 		commentary = d.notes || "";

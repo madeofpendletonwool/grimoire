@@ -97,6 +97,13 @@
 .enc-chip,
 .enc-hit,
 .enc-field,
+.deck-panel,
+.deck-btn,
+.deck-chip,
+.deck-hit,
+.deck-field,
+.deck-idea-input,
+.deck-chat-log,
 .gate-submit,
 .new-chat,
 .study-card,
@@ -125,7 +132,8 @@
 .palette-box,
 .settings-popup,
 .study-answer,
-.enc-panel {
+.enc-panel,
+.deck-panel {
 	border-width: 6px;
 	border-image-source: var(--frame-stone);
 	border-image-slice: 3 fill;
@@ -137,7 +145,10 @@
 /* Inset field — text sunk into the stone. */
 .f-field,
 .composer,
-.enc-field {
+.enc-field,
+.deck-field,
+.deck-idea-input,
+.deck-chat-log {
 	border-width: 6px;
 	border-image-source: var(--frame-field);
 	border-image-slice: 3 fill;
@@ -145,7 +156,9 @@
 .f-field:focus-within,
 .f-field.is-focus,
 .composer:focus-within,
-.enc-field:focus {
+.enc-field:focus,
+.deck-field:focus,
+.deck-idea-input:focus {
 	border-image-source: var(--frame-field-focus);
 }
 
@@ -155,7 +168,9 @@
 .chip,
 .suggestion,
 .enc-chip,
-.enc-hit {
+.enc-hit,
+.deck-chip,
+.deck-hit {
 	border-width: 3px;
 	border-image-source: url("/static/assets/ui/chip.png");
 	border-image-slice: 3 fill;
@@ -165,7 +180,8 @@
 .chip:not(.chip-miss):hover,
 .suggestion:hover,
 .enc-chip:hover,
-.enc-hit:hover {
+.enc-hit:hover,
+.deck-hit:hover {
 	border-image-source: url("/static/assets/ui/chip-active.png");
 }
 
@@ -174,7 +190,8 @@
 .gate-submit,
 .new-chat,
 .study-grade,
-.enc-btn {
+.enc-btn,
+.deck-btn {
 	border-width: 6px;
 	border-image-source: url("/static/assets/ui/button.png");
 	border-image-slice: 3 fill;
@@ -185,7 +202,8 @@
 .gate-submit:active:not(:disabled),
 .new-chat:active,
 .study-grade:active:not(:disabled),
-.enc-btn:active:not(:disabled) {
+.enc-btn:active:not(:disabled),
+.deck-btn:active:not(:disabled) {
 	border-image-source: url("/static/assets/ui/button-active.png");
 }
 

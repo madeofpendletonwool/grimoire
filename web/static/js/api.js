@@ -222,6 +222,13 @@ export function streamDeckBuild(idea, commander, feedback, current, handlers, si
 	return postSSE("/api/deck/build", { idea, commander, feedback, current }, handlers, signal);
 }
 
+/** Ask a question about the deck on screen and consume the answer as SSE. The
+ *  deck travels with the question because the surface is stateless — an
+ *  unsaved draft is as discussable as a saved one. */
+export function streamDeckChat(commander, cards, question, history, handlers, signal) {
+	return postSSE("/api/deck/chat", { commander, cards, question, history }, handlers, signal);
+}
+
 function dispatch(frame, handlers) {
 	let event = "message";
 	const data = [];

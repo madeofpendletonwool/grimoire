@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/deck/propose", s.handleDeckPropose)
 	mux.HandleFunc("POST /api/deck/build", s.handleDeckBuild)
 	mux.HandleFunc("POST /api/deck/analyze", s.handleDeckAnalyze)
+	mux.HandleFunc("POST /api/deck/chat", s.handleDeckChat)
 	mux.HandleFunc("GET /api/deck/combos", s.handleDeckCombos)
 	mux.HandleFunc("GET /api/decks", s.handleListDecks)
 	mux.HandleFunc("POST /api/decks", s.handleCreateDeck)
