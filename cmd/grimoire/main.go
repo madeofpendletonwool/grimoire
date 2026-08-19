@@ -35,6 +35,9 @@
 //	DND_REPO            override D&D SRD repo "owner/name"
 //	DND_REF             override D&D SRD git ref
 //	DND_DOCS_DIR        local D&D documents (markdown/text) imported alongside the SRD
+//	GRIMOIRE_EDHREC     enable EDHREC enrichment for the deck builder (default false).
+//	                    Unofficial Next.js data routes; cached on disk, ~1 req/s.
+//	GRIMOIRE_EDHREC_CACHE_DIR  where the EDHREC cache lives (default data/edhrec-cache)
 package main
 
 import (
@@ -51,9 +54,12 @@ import (
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/cache"
+	"github.com/madeofpendletonwool/grimoire/internal/carddb"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
+	"github.com/madeofpendletonwool/grimoire/internal/deck"
+	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
@@ -103,7 +109,8 @@ Env (see .env.example):
   GRIMOIRE_INVITE_TTL, GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
   ANTHROPIC_FALLBACK_BASE_URL, ANTHROPIC_FALLBACK_API_KEY, ANTHROPIC_FALLBACK_MODEL (and _2_, _3_, ...),
   EMBEDDINGS_BASE_URL, EMBEDDINGS_API_KEY, EMBEDDINGS_MODEL,
-  SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, OPEN5E_BASE_URL, DND_REPO, DND_REF, DND_DOCS_DIR`)
+  SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, OPEN5E_BASE_URL, DND_REPO, DND_REF, DND_DOCS_DIR,
+  GRIMOIRE_EDHREC, GRIMOIRE_EDHREC_CACHE_DIR`)
 }
 
 func env(key, def string) string {
@@ -255,6 +262,21 @@ func rulingsService() *rulings.Service {
 // dictionary.
 func mtgjsonURL() string { return env("MTGJSON_URL", data.DefaultMTGJSONURL) }
 
+// edhrecEnabled reads the deck builder's EDHREC enrichment flag. Off by
+// default: the routes are unofficial, so enrichment is opt-in.
+func edhrecEnabled() bool {
+	switch strings.ToLower(os.Getenv("GRIMOIRE_EDHREC")) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// edhrecCacheDir returns where the EDHREC disk cache lives.
+func edhrecCacheDir() string {
+	return env("GRIMOIRE_EDHREC_CACHE_DIR", filepath.Join(filepath.Dir(dbPath()), "edhrec-cache"))
+}
+
 // open5eBaseURL returns the Open5e endpoint used for both the D&D entity
 // resolver and the entity-name dictionary build, so one override retargets
 // both.
@@ -316,10 +338,12 @@ func buildIndex(ctx context.Context, store *index.Store) error {
 		log.Printf("indexed semantic vectors")
 	}
 
-	// The card dictionary is best-effort: the chat still works without it,
-	// just with weaker card detection (text heuristics only).
-	if err := buildCardDictionary(ctx, store); err != nil {
-		log.Printf("card dictionary skipped: %v (chat will detect cards by text heuristics only)", err)
+	// The card database and the card-name dictionary share one AtomicCards
+	// download: Populate captures the full card rows for the deck builder and
+	// returns the names for the chat's dictionary. Best-effort — the app works
+	// without it, the deck builder just reports unavailable.
+	if err := buildCardDatabase(ctx, store); err != nil {
+		log.Printf("card database skipped: %v (deck builder will be unavailable until reindex)", err)
 	}
 
 	// The D&D entity-name dictionary is equally best-effort: without it the
@@ -336,17 +360,18 @@ func buildIndex(ctx context.Context, store *index.Store) error {
 	return nil
 }
 
-// buildCardDictionary fetches MTGJSON AtomicCards and stores the card-name
-// set so the chat can detect card mentions the text heuristics miss.
-func buildCardDictionary(ctx context.Context, store *index.Store) error {
-	names, err := data.FetchCardNames(ctx, mtgjsonURL())
+// buildCardDatabase populates the deck builder's card tables from MTGJSON
+// AtomicCards and refreshes the chat's card-name dictionary from the same
+// download.
+func buildCardDatabase(ctx context.Context, store *index.Store) error {
+	names, err := carddb.Populate(ctx, store.DB(), mtgjsonURL())
 	if err != nil {
-		return fmt.Errorf("fetch mtgjson: %w", err)
+		return fmt.Errorf("populate card database: %w", err)
 	}
 	if err := store.IndexCards(ctx, names); err != nil {
 		return fmt.Errorf("index card names: %w", err)
 	}
-	log.Printf("indexed %d card names from MTGJSON", len(names))
+	log.Printf("indexed %d cards from MTGJSON", len(names))
 	return nil
 }
 
@@ -378,7 +403,7 @@ func loadCardDictionary(ctx context.Context, store *index.Store) *cards.Dictiona
 		return nil
 	}
 	if len(names) == 0 {
-		if err := buildCardDictionary(ctx, store); err != nil {
+		if err := buildCardDatabase(ctx, store); err != nil {
 			log.Printf("card dictionary unavailable: %v", err)
 			return nil
 		}
@@ -553,6 +578,35 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+
+	// The deck builder's card database shares it too. An install that indexed
+	// before the deck builder existed has an empty table; populate it once
+	// from MTGJSON rather than reporting the feature unavailable forever.
+	cardStore, err := carddb.New(store.DB())
+	if err != nil {
+		return err
+	}
+	if n, _ := cardStore.Count(); n == 0 {
+		if err := buildCardDatabase(ctx, store); err != nil {
+			log.Printf("card database unavailable: %v (deck builder disabled until a reindex)", err)
+			cardStore = nil
+		}
+	}
+
+	// Saved decks, same shared file, same reindex-safe treatment.
+	decks, err := deck.New(store.DB())
+	if err != nil {
+		return err
+	}
+
+	// EDHREC enrichment is opt-in behind GRIMOIRE_EDHREC=1.
+	edhrecClient := edhrec.New(edhrec.Options{
+		Enabled:  edhrecEnabled(),
+		CacheDir: edhrecCacheDir(),
+	})
+	if edhrecClient.Enabled() {
+		log.Printf("EDHREC enrichment enabled (cache: %s)", edhrecCacheDir())
+	}
 	// Upgrade path: an install that predates accounts has history filed under
 	// the anonymous owner. Hand it to the first keeper on the way up, so it is
 	// already theirs by the time they sign in.
@@ -570,6 +624,9 @@ func runServe() error {
 		return err
 	}
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()))
+	if cardStore != nil {
+		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)
+	}
 
 	httpSrv := &http.Server{
 		Addr:              addr(),

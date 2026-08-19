@@ -93,6 +93,7 @@ nav:
       - Card & Entity Lookup: features/lookup.md
       - Interaction Resolver: features/resolver.md
       - Study Mode: features/study.md
+      - Deck Builder: features/deck-builder.md
       - The Tome & Themes: features/tome.md
   - Deployment:
       - Quick Start: deployment/quickstart.md
