@@ -83,6 +83,18 @@ export const api = {
 	deleteChat: (id) =>
 		fetch(`/api/chats/${encodeURIComponent(id)}`, { method: "DELETE" }).then(json),
 
+	// Shared answer links — a snapshot of one Q&A under an unguessable token,
+	// readable by anyone with the link until revoked.
+	shareMessage: (chatID, messageID) =>
+		fetch(`/api/chats/${encodeURIComponent(chatID)}/messages/${encodeURIComponent(messageID)}/share`, {
+			method: "POST",
+		}).then(json),
+
+	listShares: () => fetch("/api/shares").then(json),
+
+	revokeShare: (token) =>
+		fetch(`/api/shares/${encodeURIComponent(token)}`, { method: "DELETE" }).then(json),
+
 	studyQueue: (corpus, limit = 20, signal, topic = "") =>
 		fetch(`/api/study/queue?corpus=${encodeURIComponent(corpus)}&limit=${limit}` +
 			(topic ? `&topic=${encodeURIComponent(topic)}` : ""), { signal }).then(json),

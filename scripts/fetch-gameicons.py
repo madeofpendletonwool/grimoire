@@ -35,6 +35,7 @@ ICONS = {
     "delete":     "delapouite/trash-can",
     "mic":        "delapouite/microphone",
     "send":       "lorc/paper-arrow",
+    "share":      "delapouite/share",
     "stop":       "delapouite/stop-sign",
     "settings":   "lorc/gears",
     "search":     "lorc/magnifying-glass",

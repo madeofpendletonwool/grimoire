@@ -1,0 +1,112 @@
+/* The public share page — the tome opened to one answer for anyone holding
+   the link. Standalone like the gate: it borrows the app's tokens and prose
+   rules but brings its own layout, so nothing here can churn the app's
+   sheets.
+
+   The card is framed by the parchment panel sprite directly (the same
+   nine-slice .f-parchment uses), so the page reads as the artifact — a
+   single loose page, not the whole chamber. */
+
+.share-body { overflow: auto; }
+
+.share {
+	min-height: 100%;
+	display: grid;
+	place-items: center;
+	padding: var(--sp-5) var(--sp-4);
+}
+
+.share-card {
+	width: 100%;
+	max-width: 44rem;
+	padding: var(--sp-2) var(--sp-2) var(--sp-1);
+	color: var(--ink);
+	box-shadow: var(--shadow-3);
+	animation: rise 0.18s ease;
+
+	/* the .f-parchment nine-slice, restated so this sheet stands alone */
+	border-style: solid;
+	border-radius: 0;
+	background-color: transparent;
+	border-image-repeat: stretch;
+	image-rendering: pixelated;
+	border-width: 10px;
+	border-image-source: url("/static/assets/ui/panel-parchment.png");
+	border-image-slice: 5 fill;
+}
+
+.share-page {
+	padding: var(--sp-4) var(--sp-4) var(--sp-5);
+	font-family: var(--font-prose);
+	font-size: 1.08rem;
+	line-height: 1.6;
+	overflow-wrap: anywhere;
+	/* the corpus's own colour, as a rule down the inside of the page */
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.share-head { margin-bottom: var(--sp-4); }
+
+.share-brand {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	font-family: var(--font-display);
+	font-weight: 700;
+	letter-spacing: 0.14em;
+	text-indent: 0.14em;
+	text-transform: uppercase;
+	font-size: 0.8rem;
+	color: var(--outline);
+	line-height: 1;
+}
+.share-sigil { line-height: 0; filter: drop-shadow(0 3px 8px rgba(73, 51, 51, 0.4)); }
+
+.share-corpus {
+	margin: var(--sp-3) 0 var(--sp-1);
+	font-family: var(--font-pixel);
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: var(--ink-soft);
+}
+
+.share-question {
+	margin: 0 0 var(--sp-2);
+	font-family: var(--font-prose);
+	font-weight: 700;
+	font-size: 1.35rem;
+	line-height: 1.3;
+	color: var(--ink);
+}
+
+.share-question + .share-prose,
+.share-head + .share-prose { border-top: 1px dashed var(--parchment-line); padding-top: var(--sp-3); }
+
+.share-note {
+	margin: var(--sp-2) 0 0;
+	font-style: italic;
+	color: var(--ink-soft);
+}
+
+/* A public page has no drawer, so its chips are labels, not buttons. */
+.share-page .chip { cursor: default; }
+.share-page .chip:hover { filter: none; }
+
+.share-foot {
+	margin-top: var(--sp-4);
+	padding-top: var(--sp-2);
+	border-top: 1px dashed var(--parchment-line);
+}
+.share-foot p {
+	margin: 0;
+	font-family: var(--font-ui);
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+}
+.share-foot a { color: var(--ink); }
+
+@media (max-width: 640px) {
+	.share { padding: var(--sp-3) var(--sp-2); }
+	.share-page { padding: var(--sp-3) var(--sp-2) var(--sp-4); }
+}

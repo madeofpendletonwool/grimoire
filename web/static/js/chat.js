@@ -7,6 +7,7 @@ import { renderAnswer, bindRuleRefs, renderCitations, renderRulings } from "./re
 import { openRule, openCard, closeDrawer } from "./drawer.js";
 import { openPalette } from "./palette.js";
 import { syncModeChrome, renderWelcome, isResolveMode } from "./resolve.js";
+import { shareButton } from "./shares.js";
 import { sprite, gi } from "./icons.js";
 
 let abortStream = null;
@@ -260,8 +261,8 @@ async function ask(question) {
 				renderAnswer(prose, text, corpus);
 				stick();
 			},
-			onDone: () => {
-				finishSage(row, bubble, prose, text, meta, corpus);
+			onDone: (payload) => {
+				finishSage(row, bubble, prose, text, meta, corpus, payload.message_id);
 			},
 			onError: (message) => {
 				if (text) {
@@ -333,6 +334,10 @@ function sageMessage(m) {
 	renderAnswer(prose, m.content, corpus);
 	const bubble = el("div", { class: "bubble" }, prose);
 	const row = el("div", { class: "msg msg-sage" }, sageWho(), bubble);
+	if (state.chat) {
+		const share = shareButton(state.chat.id, m.id);
+		if (share) row.append(el("div", { class: "msg-actions" }, share));
+	}
 	bindRuleRefs(prose, corpus);
 	const cites = renderCitations(m.sources, m.cards, m.entities, null, corpus);
 	if (cites) bubble.append(cites);
@@ -341,7 +346,10 @@ function sageMessage(m) {
 	return row;
 }
 
-function finishSage(row, bubble, prose, text, meta, corpus) {
+// finishSage seals a streamed answer. messageID is the stored assistant
+// message id from the done event — zero when the stream never completed, in
+// which case there is nothing durable to share.
+function finishSage(row, bubble, prose, text, meta, corpus, messageID) {
 	renderAnswer(prose, text, corpus);
 	bindRuleRefs(prose, corpus);
 	bubble.classList.remove("is-streaming");
@@ -349,6 +357,10 @@ function finishSage(row, bubble, prose, text, meta, corpus) {
 	if (cites) bubble.append(cites);
 	const rules = renderRulings(meta.rulings);
 	if (rules) bubble.append(rules);
+	if (state.chat && messageID) {
+		const share = shareButton(state.chat.id, messageID);
+		if (share) row.append(el("div", { class: "msg-actions" }, share));
+	}
 }
 
 /* ---------- Composer behaviour ---------- */

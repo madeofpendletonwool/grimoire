@@ -28,6 +28,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
+	"github.com/madeofpendletonwool/grimoire/internal/share"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/web"
 )
@@ -57,6 +58,7 @@ type Server struct {
 	carddb           *carddb.Store
 	decks            *deck.Store
 	edhrec           *edhrec.Client
+	shares           *share.Store
 	users            *auth.Store
 	openRegistration bool
 	tmpl             *template.Template
@@ -144,6 +146,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/encounters/{id}", s.handleGetEncounter)
 	mux.HandleFunc("PATCH /api/encounters/{id}", s.handleUpdateEncounter)
 	mux.HandleFunc("DELETE /api/encounters/{id}", s.handleDeleteEncounter)
+	mux.HandleFunc("POST /api/chats/{id}/messages/{messageID}/share", s.handleShareMessage)
+	mux.HandleFunc("GET /api/shares", s.handleListShares)
+	mux.HandleFunc("DELETE /api/shares/{token}", s.handleRevokeShare)
+	mux.HandleFunc("GET /s/{token}", s.handleSharePage)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))

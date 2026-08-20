@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en" data-corpus="{{.Corpus}}">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<meta name="color-scheme" content="dark">
+	{{if eq .State "ok"}}<meta name="robots" content="noindex">{{end}}
+	<title>{{.Title}}</title>
+	<link rel="stylesheet" href="/static/fonts.css">
+	<link rel="stylesheet" href="/static/mana.css">
+	<link rel="stylesheet" href="/static/style.css">
+	<link rel="stylesheet" href="/static/pixel.css">
+	<link rel="stylesheet" href="/static/themes.css">
+	<link rel="stylesheet" href="/static/share.css">
+	<link rel="icon" type="image/png" href="/static/assets/favicon-32.png">
+</head>
+<body class="share-body">
+	<!-- The chamber. Layers are built by js/scene.js from the chosen scene. -->
+	<div class="scene" id="scene" aria-hidden="true"></div>
+
+	<main class="share">
+		<!-- The one page anyone can read: no session, no script but the
+		     renderer. The token in the URL is the whole access model. -->
+		<section class="share-card" aria-label="Shared answer">
+		<div class="share-page">
+			{{if eq .State "ok"}}
+			<header class="share-head">
+				<div class="share-brand"><span class="share-sigil" data-ico="spellbook" data-ico-scale="2"></span> Grimoire</div>
+				<p class="share-corpus">{{.CorpusName}}</p>
+				<h1 class="share-question">{{.Question}}</h1>
+			</header>
+
+			<!-- The raw Markdown, hydrated into #share-answer by the same
+			     client renderer the app uses. -->
+			<div class="share-src" id="share-src" hidden>{{.Answer}}</div>
+			<div class="prose share-prose" id="share-answer" aria-live="polite"></div>
+
+			{{if .Sources}}
+			<div class="citations">
+				<span class="citations-label">Rules:</span>
+				{{range .Sources}}{{if .Number}}<span class="chip" title="{{.Title}}">{{.Number}}</span>{{else}}<span class="chip" title="{{.Body}}">{{.Title}}</span>{{end}}{{end}}
+			</div>
+			{{end}}
+
+			{{if .Cards}}
+			<div class="citations">
+				<span class="citations-label">Cards:</span>
+				{{range .Cards}}<span class="chip chip-card">{{.Name}}</span>{{end}}
+			</div>
+			{{end}}
+
+			{{if .Entities}}
+			<div class="citations">
+				<span class="citations-label">References:</span>
+				{{range .Entities}}<span class="chip chip-entity">{{.Name}}</span>{{end}}
+			</div>
+			{{end}}
+
+			{{if .Rulings}}
+			<div class="rulings">
+				<div class="rulings-label">Official rulings</div>
+				{{range .Rulings}}
+				<div class="ruling">
+					<p class="ruling-comment">{{.Comment}}</p>
+					<span class="ruling-attr">
+						{{if .CardName}}<span class="ruling-card">{{.CardName}}</span><span class="ruling-sep">·</span>{{end}}
+						{{if .Source}}<span class="ruling-source">{{.Source}}</span><span class="ruling-sep">·</span>{{end}}
+						{{if .PublishedAt}}<span class="ruling-date">{{.PublishedAt}}</span>{{end}}
+					</span>
+				</div>
+				{{end}}
+			</div>
+			{{end}}
+
+			<footer class="share-foot">
+				<p>Answered by a self-hosted Grimoire instance{{if .CreatedAt}} · {{.CreatedAt}}{{end}}</p>
+			</footer>
+			{{else if eq .State "gone"}}
+			<div class="share-brand"><span class="share-sigil" data-ico="spellbook" data-ico-scale="2"></span> Grimoire</div>
+			<h1 class="share-question">This page has been sealed.</h1>
+			<p class="share-note">The keeper who shared it has revoked the link.</p>
+			{{else}}
+			<div class="share-brand"><span class="share-sigil" data-ico="spellbook" data-ico-scale="2"></span> Grimoire</div>
+			<h1 class="share-question">No such page.</h1>
+			<p class="share-note">This link does not open anything in this tome.</p>
+			{{end}}
+		</div>
+		</section>
+	</main>
+
+	<script type="module" src="/static/js/share.js"></script>
+</body>
+</html>

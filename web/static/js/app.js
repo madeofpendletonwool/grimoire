@@ -14,6 +14,7 @@ import { initEncounter } from "./encounter.js";
 import { initDeck } from "./deck.js";
 import { initAdmin } from "./admin.js";
 import { initLibrary } from "./library.js";
+import { initShares } from "./shares.js";
 import { hydrate } from "./icons.js";
 import { initScene, initSettings } from "./scene.js";
 
@@ -106,6 +107,7 @@ function start() {
 	initAccount();
 	initAdmin();
 	initLibrary();
+	initShares();
 	loadMeta();
 	refreshHistory();
 	if (!isNarrow()) $("composer-input").focus();

@@ -67,6 +67,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/server"
+	"github.com/madeofpendletonwool/grimoire/internal/share"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 )
 
@@ -607,6 +608,14 @@ func runServe() error {
 	if edhrecClient.Enabled() {
 		log.Printf("EDHREC enrichment enabled (cache: %s)", edhrecCacheDir())
 	}
+
+	// Shared answer links share that file too: a share is a snapshot, so the
+	// tables reference nothing that a chat deletion or index rebuild touches.
+	shares, err := share.New(store.DB())
+	if err != nil {
+		return err
+	}
+
 	// Upgrade path: an install that predates accounts has history filed under
 	// the anonymous owner. Hand it to the first keeper on the way up, so it is
 	// already theirs by the time they sign in.
@@ -623,6 +632,7 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+	srv = srv.WithShares(shares)
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()))
 	if cardStore != nil {
 		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)

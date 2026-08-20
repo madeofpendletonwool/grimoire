@@ -2400,3 +2400,86 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .deck-chat-turn.is-player .deck-chat-text { white-space: pre-wrap; opacity: 0.75; font-style: italic; }
 .deck-chat-status { font-size: var(--fs-xs); opacity: 0.7; margin: 0 0 var(--sp-2); min-height: 1em; }
 .deck-chat-form { display: flex; flex-direction: column; gap: var(--sp-2); }
+/* ---------- Shared links ---------- */
+
+/* The share control under an answer — quiet until hovered, like the other
+   affordances around the transcript. */
+.msg-actions {
+	display: flex;
+	align-items: center;
+	margin-top: var(--sp-1);
+}
+.msg-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	padding: 0.15rem 0.4rem;
+	background: none;
+	border: none;
+	cursor: pointer;
+	font-family: var(--font-pixel);
+	font-size: 0.66rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--parchment);
+	opacity: 0.5;
+	transition: opacity 0.12s ease;
+}
+.msg-action:hover { opacity: 1; color: var(--gold-bright); }
+.msg-action:disabled { opacity: 0.35; cursor: default; }
+.msg-action .gi { width: 0.9rem; height: 0.9rem; }
+
+/* The copied-link notice. One at a time, bottom centre, gone in a blink. */
+.toast {
+	position: fixed;
+	left: 50%;
+	bottom: calc(var(--sp-5) + env(safe-area-inset-bottom, 0px));
+	transform: translateX(-50%) translateY(6px);
+	z-index: 80;
+	padding: 0.4rem 0.9rem;
+	font-size: var(--fs-sm);
+	color: var(--gold-bright);
+	background: var(--stone-700);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	box-shadow: var(--shadow-2);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.toast.is-shown { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.warn { color: var(--ember); }
+
+/* The keeper's list of live links, in Settings beside the invites. */
+.share-row {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	padding: var(--sp-1) 0;
+	font-size: var(--fs-sm);
+}
+.share-status {
+	flex: none;
+	font-family: var(--font-pixel);
+	font-size: 0.64rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--gold);
+}
+.share-status.is-revoked { color: var(--parchment); opacity: 0.45; }
+.share-q {
+	flex: 1 1 auto;
+	min-width: 0;
+	color: var(--parchment);
+	text-decoration: none;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.share-q:hover { color: var(--gold-bright); }
+.share-row.is-revoked .share-q {
+	text-decoration: line-through;
+	opacity: 0.45;
+	pointer-events: none;
+}
+.share-date { flex: none; font-size: var(--fs-xs); opacity: 0.55; }
