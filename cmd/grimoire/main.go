@@ -4,6 +4,9 @@
 //
 //	grimoire serve          serve the UI + API (builds the index on first run)
 //	grimoire index          (re)build the search index and exit
+//	grimoire migrate status show which schema migrations have been applied
+//	grimoire migrate up     apply pending schema migrations and exit
+//	grimoire migrate down   roll back the most recent migration and exit
 //	grimoire [-h]           help
 //
 // Configuration is via environment variables (see .env.example):
@@ -65,6 +68,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
+	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/server"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
@@ -91,6 +95,10 @@ func main() {
 		if err := runIndex(); err != nil {
 			log.Fatalf("index: %v", err)
 		}
+	case "migrate":
+		if err := runMigrate(os.Args[2:]); err != nil {
+			log.Fatalf("migrate: %v", err)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
 		usage()
@@ -104,6 +112,7 @@ func usage() {
 Usage:
   grimoire serve     serve the UI + API (builds the index on first run)
   grimoire index     (re)build the search index and exit
+  grimoire migrate status|up|down   inspect or move the database schema
 
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
@@ -293,13 +302,79 @@ func fetchOpts() data.FetchOptions {
 }
 
 func openStore() (*index.Store, error) {
-	db := dbPath()
-	if dir := filepath.Dir(db); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("create db dir: %w", err)
-		}
+	if err := ensureDBDir(); err != nil {
+		return nil, err
 	}
-	return index.Open(db)
+	store, err := index.Open(dbPath())
+	if err != nil {
+		return nil, err
+	}
+	// Schema first, always. A failure here is fatal to the caller: serving on
+	// a half-applied schema is how a self-hosted box loses data quietly.
+	if err := migrate.Up(store.DB()); err != nil {
+		store.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+// ensureDBDir creates the directory the SQLite file lives in. Shared by the
+// store opener and the migrate subcommands so `grimoire migrate up` works on a
+// box that has never booted the server.
+func ensureDBDir() error {
+	dir := filepath.Dir(dbPath())
+	if dir == "" || dir == "." {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create db dir: %w", err)
+	}
+	return nil
+}
+
+// runMigrate implements the operator-facing schema subcommands. They open the
+// database directly rather than through index.Open, so `status` reports on the
+// schema as it actually is instead of on one the opener just created.
+func runMigrate(args []string) error {
+	sub := "status"
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	if err := ensureDBDir(); err != nil {
+		return err
+	}
+	db, err := index.OpenDB(dbPath())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	switch sub {
+	case "status":
+		return migrate.Status(db, os.Stdout)
+	case "up":
+		if err := migrate.Up(db); err != nil {
+			return err
+		}
+		v, err := migrate.Version(db)
+		if err != nil {
+			return err
+		}
+		log.Printf("schema up to date at version %d", v)
+		return nil
+	case "down":
+		if err := migrate.Down(db); err != nil {
+			return err
+		}
+		v, err := migrate.Version(db)
+		if err != nil {
+			return err
+		}
+		log.Printf("rolled back; schema now at version %d", v)
+		return nil
+	default:
+		return fmt.Errorf("unknown migrate subcommand %q (want status, up or down)", sub)
+	}
 }
 
 // ensureIndexed builds the index if the store is empty.

@@ -32,8 +32,16 @@ type Result struct {
 	Score  float64
 }
 
-// Open opens (or creates) the SQLite index at path.
-func Open(path string) (*Store, error) {
+// OpenDB opens the shared SQLite handle every store in the app sits on.
+//
+// WAL and a busy timeout are set here rather than per store: the campaign
+// layer adds concurrent readers during play, and a reader that meets a writer
+// on a rollback-journal database fails instead of waiting. Foreign keys are on
+// so a dangling reference is a write error rather than a silent orphan.
+//
+// It is exported so the migrate CLI subcommands can reach the same file
+// without going through the index schema — one definition of the DSN, not two.
+func OpenDB(path string) (*sql.DB, error) {
 	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -47,6 +55,15 @@ func Open(path string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)
+	}
+	return db, nil
+}
+
+// Open opens (or creates) the SQLite index at path.
+func Open(path string) (*Store, error) {
+	db, err := OpenDB(path)
+	if err != nil {
+		return nil, err
 	}
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
