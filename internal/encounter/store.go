@@ -17,13 +17,15 @@ import (
 var ErrNotFound = errors.New("encounter not found")
 
 // Encounter is a saved encounter: a party (character levels), a monster
-// roster, and a name. Difficulty and budget are never stored — they are
-// recomputed from these fields on every read.
+// roster, a name, and the design notes the builder wrote for it. Difficulty
+// and budget are never stored — they are recomputed from the party and roster
+// on every read.
 type Encounter struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Party     []int     `json:"party"`
 	Monsters  []Monster `json:"monsters"`
+	Notes     string    `json:"notes"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -45,6 +47,11 @@ func New(db *sql.DB) (*Store, error) {
 	if err := addColumnIfMissing(db, "encounters", "name", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return nil, fmt.Errorf("encounter migrate: %w", err)
 	}
+	// The design notes arrived with the encounter designer; installs that
+	// saved encounters before it grow the column in place.
+	if err := addColumnIfMissing(db, "encounters", "notes", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, fmt.Errorf("encounter migrate: %w", err)
+	}
 	return s, nil
 }
 
@@ -53,6 +60,7 @@ CREATE TABLE IF NOT EXISTS encounters (
 	id          TEXT PRIMARY KEY,
 	owner_id    TEXT NOT NULL,
 	name        TEXT NOT NULL DEFAULT '',
+	notes       TEXT NOT NULL DEFAULT '',
 	party       TEXT NOT NULL DEFAULT '[]',
 	monsters    TEXT NOT NULL DEFAULT '[]',
 	created_at  INTEGER NOT NULL,
@@ -100,9 +108,9 @@ func newID() string {
 }
 
 // Create saves a new encounter for the owner.
-func (s *Store) Create(ctx context.Context, owner, name string, party []int, monsters []Monster) (Encounter, error) {
+func (s *Store) Create(ctx context.Context, owner, name string, party []int, monsters []Monster, notes string) (Encounter, error) {
 	e := Encounter{
-		ID: newID(), Name: strings.TrimSpace(name), Party: party, Monsters: monsters,
+		ID: newID(), Name: strings.TrimSpace(name), Party: party, Monsters: monsters, Notes: notes,
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
 	partyJSON, err := json.Marshal(e.Party)
@@ -114,9 +122,9 @@ func (s *Store) Create(ctx context.Context, owner, name string, party []int, mon
 		return Encounter{}, fmt.Errorf("encode monsters: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO encounters (id, owner_id, name, party, monsters, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, owner, e.Name, string(partyJSON), string(monstersJSON), e.CreatedAt.UnixMilli(), e.UpdatedAt.UnixMilli()); err != nil {
+		INSERT INTO encounters (id, owner_id, name, notes, party, monsters, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, owner, e.Name, e.Notes, string(partyJSON), string(monstersJSON), e.CreatedAt.UnixMilli(), e.UpdatedAt.UnixMilli()); err != nil {
 		return Encounter{}, fmt.Errorf("insert encounter: %w", err)
 	}
 	return e, nil
@@ -125,7 +133,7 @@ func (s *Store) Create(ctx context.Context, owner, name string, party []int, mon
 // List returns the owner's encounters, most recently updated first.
 func (s *Store) List(ctx context.Context, owner string) ([]Encounter, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, party, monsters, created_at, updated_at
+		SELECT id, name, notes, party, monsters, created_at, updated_at
 		  FROM encounters WHERE owner_id = ? ORDER BY updated_at DESC`, owner)
 	if err != nil {
 		return nil, fmt.Errorf("list encounters: %w", err)
@@ -136,7 +144,7 @@ func (s *Store) List(ctx context.Context, owner string) ([]Encounter, error) {
 // Get returns one of the owner's encounters.
 func (s *Store) Get(ctx context.Context, owner, id string) (Encounter, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, party, monsters, created_at, updated_at
+		SELECT id, name, notes, party, monsters, created_at, updated_at
 		  FROM encounters WHERE owner_id = ? AND id = ?`, owner, id)
 	if err != nil {
 		return Encounter{}, fmt.Errorf("get encounter: %w", err)
@@ -154,13 +162,16 @@ func (s *Store) Get(ctx context.Context, owner, id string) (Encounter, error) {
 // Update replaces the mutable fields of one of the owner's encounters.
 // Empty monsters means "leave the roster alone" so a rename does not have to
 // re-send the encounter body; party updates likewise only apply when sent.
-func (s *Store) Update(ctx context.Context, owner, id string, name *string, party []int, monsters []Monster, hasParty, hasMonsters bool) (Encounter, error) {
+func (s *Store) Update(ctx context.Context, owner, id string, name *string, party []int, monsters []Monster, notes *string, hasParty, hasMonsters bool) (Encounter, error) {
 	e, err := s.Get(ctx, owner, id)
 	if err != nil {
 		return Encounter{}, err
 	}
 	if name != nil {
 		e.Name = strings.TrimSpace(*name)
+	}
+	if notes != nil {
+		e.Notes = *notes
 	}
 	if hasParty {
 		e.Party = party
@@ -178,9 +189,9 @@ func (s *Store) Update(ctx context.Context, owner, id string, name *string, part
 	}
 	e.UpdatedAt = time.Now().UTC()
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE encounters SET name = ?, party = ?, monsters = ?, updated_at = ?
+		UPDATE encounters SET name = ?, notes = ?, party = ?, monsters = ?, updated_at = ?
 		 WHERE owner_id = ? AND id = ?`,
-		e.Name, string(partyJSON), string(monstersJSON), e.UpdatedAt.UnixMilli(), owner, id)
+		e.Name, e.Notes, string(partyJSON), string(monstersJSON), e.UpdatedAt.UnixMilli(), owner, id)
 	if err != nil {
 		return Encounter{}, fmt.Errorf("update encounter: %w", err)
 	}
@@ -203,7 +214,7 @@ func (s *Store) Delete(ctx context.Context, owner, id string) error {
 	return nil
 }
 
-// scanAll drains a id/name/party/monsters/created/updated cursor into
+// scanAll drains a id/name/notes/party/monsters/created/updated cursor into
 // encounters.
 func scanAll(rows *sql.Rows) ([]Encounter, error) {
 	defer rows.Close()
@@ -212,7 +223,7 @@ func scanAll(rows *sql.Rows) ([]Encounter, error) {
 		var e Encounter
 		var partyJSON, monstersJSON string
 		var createdMilli, updatedMilli int64
-		if err := rows.Scan(&e.ID, &e.Name, &partyJSON, &monstersJSON, &createdMilli, &updatedMilli); err != nil {
+		if err := rows.Scan(&e.ID, &e.Name, &e.Notes, &partyJSON, &monstersJSON, &createdMilli, &updatedMilli); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(partyJSON), &e.Party); err != nil {

@@ -144,15 +144,30 @@ export const api = {
 
 	getEncounter: (id) => fetch(`/api/encounters/${encodeURIComponent(id)}`).then(json),
 
-	saveEncounter: (id, name, party, monsters) =>
+	saveEncounter: (id, name, party, monsters, notes) =>
 		fetch(id ? `/api/encounters/${encodeURIComponent(id)}` : "/api/encounters", {
 			method: id ? "PATCH" : "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ name, party, monsters }),
+			body: JSON.stringify({ name, party, monsters, notes: notes || "" }),
 		}).then(json),
 
 	deleteEncounter: (id) =>
 		fetch(`/api/encounters/${encodeURIComponent(id)}`, { method: "DELETE" }).then(json),
+
+	// One creature's full SRD statblock out of the mirrored bestiary, so the
+	// roster can expand in place instead of sending the DM elsewhere.
+	encounterStatblock: (name, signal) =>
+		fetch(`/api/encounter/statblock?name=${encodeURIComponent(name)}`, { signal }).then(json),
+
+	// What the party can afford at a target difficulty. The DMG tables stay on
+	// the server, the same as the verdict.
+	encounterBudget: (party, difficulty, signal) =>
+		fetch("/api/encounter/budget", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ party, difficulty }),
+			signal,
+		}).then(json),
 
 	// Deck builder: commander proposals, the streamed draft, list analysis,
 	// Spellbook combos, and saved decks. Every card the draft returns was
@@ -242,6 +257,13 @@ export function streamAnswer(chatID, question, handlers, signal) {
 /** Post a board + sequence to the resolver and consume the trace as SSE. */
 export function streamResolve(board, sequence, note, handlers, signal) {
 	return postSSE("/api/resolve", { board, sequence, note }, handlers, signal);
+}
+
+/** Ask the designer for a whole encounter and consume it as server-sent
+ *  events. Everything in the payload is optional — an empty brief is the case
+ *  the designer exists for. */
+export function streamEncounterDesign(payload, handlers, signal) {
+	return postSSE("/api/encounter/design", payload, handlers, signal);
 }
 
 /** Post a deck build request and consume the draft as server-sent events. */

@@ -580,6 +580,30 @@ func runServe() error {
 		return err
 	}
 
+	// The SRD bestiary is mirrored into the same file so the encounter
+	// designer can see the whole shelf at once — filtering by challenge
+	// rating and by how a creature fights needs every statblock, not one
+	// lookup at a time. Loading is instant; a missing or stale mirror is
+	// refreshed in the background so a cold start still serves immediately.
+	bestiary, err := encounter.NewCatalog(store.DB(), open5eBaseURL())
+	if err != nil {
+		return err
+	}
+	if err := bestiary.Load(); err != nil {
+		log.Printf("bestiary load: %v", err)
+	}
+	if bestiary.Stale() {
+		go func() {
+			if err := bestiary.EnsureFresh(context.Background()); err != nil {
+				log.Printf("bestiary sync: %v (the encounter designer waits for a mirror)", err)
+				return
+			}
+			log.Printf("bestiary mirrored: %d SRD creatures", bestiary.Count())
+		}()
+	} else {
+		log.Printf("bestiary ready: %d SRD creatures", bestiary.Count())
+	}
+
 	// The deck builder's card database shares it too. An install that indexed
 	// before the deck builder existed has an empty table; populate it once
 	// from MTGJSON rather than reporting the feature unavailable forever.
@@ -633,7 +657,7 @@ func runServe() error {
 		return err
 	}
 	srv = srv.WithShares(shares)
-	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()))
+	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()), bestiary)
 	if cardStore != nil {
 		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)
 	}

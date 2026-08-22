@@ -26,6 +26,16 @@ Unauthenticated API calls get `401` with a JSON body; an unauthenticated browser
 | `POST` | `/api/chats/{id}/messages` | `{question}`, `?nocache` | SSE: `meta`, `delta`, `done`, `error` |
 | `GET` | `/api/study/queue` | `corpus`, `topic` (optional), `limit` | `{cards:[{key,front,back,…}], stats:{total,new,due,learned}}` |
 | `POST` | `/api/study/grade` | `{key, corpus, grade}` | `{card:{…, reps, interval_days, ease, due_at}}` |
+| `POST` | `/api/encounter/design` | `{idea?, party?, difficulty?, feedback?, current?, notes?}` | SSE: `meta`, `delta`, `done`, `error` — a whole encounter. Every field is optional; `done` carries `{name, monsters, unverified, notes, verdict, budget, party}` |
+| `POST` | `/api/encounter/budget` | `{party, difficulty}` | `{budget:{band,thresholds,target_xp,ceiling_xp,max_solo_cr,shapes:[…]}, bestiary}` — the DMG maths, no model involved |
+| `GET` | `/api/encounter/monsters` | `q` | `{monsters:[{name,cr,xp,type}], source?}` — the local mirror first, Open5e as fallback |
+| `GET` | `/api/encounter/statblock` | `name` | `{creature:{…}}` — one full SRD statblock from the local mirror |
+| `POST` | `/api/encounters/evaluate` | `{party, monsters}` | `{verdict:{difficulty,total_xp,adjusted_xp,multiplier,thresholds,margins}}` |
+| `GET` | `/api/encounters` | — | `{encounters:[{id,name,party,monsters,notes,verdict}]}` |
+| `POST` | `/api/encounters` | `{name, party, monsters, notes?}` | `{encounter:{…}}` |
+| `GET` | `/api/encounters/{id}` | — | `{encounter:{…}}` — the verdict is recomputed on every read |
+| `PATCH` | `/api/encounters/{id}` | `{name?, party?, monsters?, notes?}` | `{encounter:{…}}` |
+| `DELETE` | `/api/encounters/{id}` | — | `204` |
 | `GET` | `/api/reader/guides` | `corpus` | `{guides:[{guide,title,kind,nodes}]}` — the readable books |
 | `GET` | `/api/reader/toc` | `corpus`, `guide` (or bare `number` to resolve) | `{guide, toc:[{number,title,level,has_body}]}` |
 | `GET` | `/api/reader/page` | `corpus`, `number`, `guide` (optional — a bare rule/record number resolves) | `{guide, number, title, body, crumbs, prev, next}` |
@@ -39,6 +49,8 @@ Unauthenticated API calls get `401` with a JSON body; an unauthenticated browser
 | `GET` | `/api/invites` | — (admin) | `{invites:[{id,status,note,created_at,expires_at?,used_at?}]}` — never the raw `code` |
 | `DELETE` | `/api/invites/{id}` | — (admin) | `204`; revokes a pending link (or trims a spent one) |
 | `GET` | `/healthz` | — | `{status, indexed}` |
+
+The encounter endpoints never accept a difficulty or an XP figure from the client: XP is re-derived from each monster's challenge rating via the Monster Manual table, and the verdict is computed server-side on every read.
 
 `/api/ask` remains for scripted one-off questions. The UI uses the `/api/chats` endpoints, which save the thread and stream the answer.
 

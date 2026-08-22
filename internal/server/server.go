@@ -55,6 +55,7 @@ type Server struct {
 	study            *study.Store
 	encounters       *encounter.Store
 	bestiary         *encounter.Bestiary
+	catalog          *encounter.Catalog
 	carddb           *carddb.Store
 	decks            *deck.Store
 	edhrec           *edhrec.Client
@@ -130,6 +131,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/reader/toc", s.handleReaderTOC)
 	mux.HandleFunc("GET /api/reader/page", s.handleReaderPage)
 	mux.HandleFunc("GET /api/encounter/monsters", s.handleEncounterMonsters)
+	mux.HandleFunc("GET /api/encounter/statblock", s.handleEncounterStatblock)
+	mux.HandleFunc("POST /api/encounter/budget", s.handleEncounterBudget)
+	mux.HandleFunc("POST /api/encounter/design", s.handleEncounterDesign)
 	mux.HandleFunc("POST /api/encounters/evaluate", s.handleEvaluate)
 	mux.HandleFunc("POST /api/deck/propose", s.handleDeckPropose)
 	mux.HandleFunc("POST /api/deck/build", s.handleDeckBuild)

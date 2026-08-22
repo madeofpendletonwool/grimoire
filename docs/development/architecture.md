@@ -10,7 +10,9 @@ internal/
   cards/          Scryfall card lookup (named + search), cached + rate-limited
   chat/           saved conversations + messages (same SQLite file as the index)
   data/           fetch + parse MTG (.txt) and D&D (markdown) into records; corpus registry + entity-resolver interface
+  deck/           Commander deck builder: parsing, synergy engine, analysis, saved decks
   embeddings/     OpenAI-compatible embeddings client for semantic retrieval
+  encounter/      D&D encounter builder: DMG difficulty maths, mirrored SRD bestiary, design planning
   entities/       per-corpus entity resolution into grounding text (MTG cards, D&D via Open5e)
   index/          SQLite + FTS5 store; full-text + rule-number search
   llm/            Anthropic Messages client (configurable base URL), RAG + streaming
@@ -20,7 +22,7 @@ internal/
   study/          spaced-repetition reviews (SM-2) over the corpus (same SQLite file)
 web/
   templates/      the app shell, plus the login / first-run gate
-  static/js/      ES modules: chat, palette, reference drawer, study, resolve, voice, scene, icons
+  static/js/      ES modules: chat, palette, reference drawer, study, resolve, deck, encounter, voice, scene, icons
 ```
 
 The binary embeds all front-end assets, so the runtime image is just the binary + CA certs.
@@ -29,7 +31,7 @@ The binary embeds all front-end assets, so the runtime image is just the binary 
 
 Chat history and accounts live in the **same SQLite file** as the rules index. That is safe: `grimoire index` only clears the document tables, so rebuilding the index never drops a conversation or signs anyone out. Keep the `/data` volume and both survive upgrades.
 
-Also riding along in that file: the grounded-answer cache and the per-user study schedules. Pure-Go SQLite with FTS5 — no CGO, a single static binary.
+Also riding along in that file: the grounded-answer cache, the per-user study schedules, saved decks and encounters, and the mirrored SRD bestiary the encounter builder chooses from. Pure-Go SQLite with FTS5 — no CGO, a single static binary.
 
 ## The retrieval flow
 

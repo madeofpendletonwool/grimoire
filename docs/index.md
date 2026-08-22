@@ -55,6 +55,12 @@ Open <http://localhost:8080>, claim the keeper account, and you are in. Search w
 
     The corpus as a spaced-repetition deck — MTG keywords and D&D conditions, scheduled by SM-2.
 
+-   ![Encounter builder](assets/sprites/swords.png){: loading=lazy }
+
+    **[Encounter Builder](features/encounter-builder.md)**
+
+    Describe a mood, or nothing at all, and get a whole D&D encounter back — real SRD statblocks, on budget.
+
 -   ![The tome](assets/sprites/bookGold.png){: loading=lazy }
 
     **[The Tome & Themes](features/tome.md)**
