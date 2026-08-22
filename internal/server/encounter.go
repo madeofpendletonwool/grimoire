@@ -14,19 +14,22 @@ import (
 // saved encounters. Difficulty verdicts are computed here on every request —
 // clients send party and monsters only, never a difficulty.
 
-// WithEncounters wires the encounter store and monster search client. It is
-// separate from New so the encounter feature is additive for callers that do
-// not use it; without it the encounter endpoints report unavailable.
-func (s *Server) WithEncounters(store *encounter.Store, bestiary *encounter.Bestiary) *Server {
+// WithEncounters wires the encounter store, the local SRD bestiary, and the
+// remote monster search that stands in when the bestiary has not mirrored
+// yet. It is separate from New so the encounter feature is additive for
+// callers that do not use it; without it the encounter endpoints report
+// unavailable.
+func (s *Server) WithEncounters(store *encounter.Store, bestiary *encounter.Bestiary, catalog *encounter.Catalog) *Server {
 	s.encounters = store
 	s.bestiary = bestiary
+	s.catalog = catalog
 	return s
 }
 
 // encountersEnabled reports whether the encounter builder is wired, writing
 // the error response when it is not.
 func (s *Server) encountersEnabled(w http.ResponseWriter) bool {
-	if s.encounters == nil {
+	if s.encounters == nil || s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("encounter builder is not available"))
 		return false
 	}
@@ -40,6 +43,7 @@ type encounterView struct {
 	Name      string              `json:"name"`
 	Party     []int               `json:"party"`
 	Monsters  []encounter.Monster `json:"monsters"`
+	Notes     string              `json:"notes"`
 	CreatedAt string              `json:"created_at"`
 	UpdatedAt string              `json:"updated_at"`
 	Verdict   encounter.Verdict   `json:"verdict"`
@@ -47,7 +51,7 @@ type encounterView struct {
 
 func toEncounterView(e encounter.Encounter) encounterView {
 	return encounterView{
-		ID: e.ID, Name: e.Name, Party: e.Party, Monsters: e.Monsters,
+		ID: e.ID, Name: e.Name, Party: e.Party, Monsters: e.Monsters, Notes: e.Notes,
 		CreatedAt: e.CreatedAt.Format(http.TimeFormat), UpdatedAt: e.UpdatedAt.Format(http.TimeFormat),
 		Verdict: encounter.Evaluate(e.Party, e.Monsters),
 	}
@@ -60,6 +64,7 @@ type encounterRequest struct {
 	Name     *string             `json:"name"`
 	Party    []int               `json:"party"`
 	Monsters []encounter.Monster `json:"monsters"`
+	Notes    *string             `json:"notes"`
 }
 
 // maxEncounterSize bounds a stored encounter: enough for any sane table,
@@ -122,13 +127,23 @@ func (s *Server) handleEncounterMonsters(w http.ResponseWriter, r *http.Request)
 	if !s.encountersEnabled(w) {
 		return
 	}
-	if s.bestiary == nil {
+	if s.bestiary == nil && s.catalog.Count() == 0 {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("monster search is not available"))
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("q is required"))
+		return
+	}
+	// The mirrored bestiary answers instantly and works offline; the remote
+	// search is the fallback for an install that has not mirrored yet.
+	if hits := s.catalog.Search(q, 0); len(hits) > 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"monsters": hits, "source": "local"})
+		return
+	}
+	if s.bestiary == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"monsters": []encounter.MonsterSummary{}})
 		return
 	}
 	hits, err := s.bestiary.Search(r.Context(), q)
@@ -207,7 +222,11 @@ func (s *Server) handleCreateEncounter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	e, err := s.encounters.Create(r.Context(), userID(r), *req.Name, req.Party, monsters)
+	notes := ""
+	if req.Notes != nil {
+		notes = *req.Notes
+	}
+	e, err := s.encounters.Create(r.Context(), userID(r), *req.Name, req.Party, monsters, notes)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -254,7 +273,7 @@ func (s *Server) handleUpdateEncounter(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Monsters = normalized
 	}
-	e, err := s.encounters.Update(r.Context(), userID(r), r.PathValue("id"), req.Name, req.Party, req.Monsters, req.Party != nil, req.Monsters != nil)
+	e, err := s.encounters.Update(r.Context(), userID(r), r.PathValue("id"), req.Name, req.Party, req.Monsters, req.Notes, req.Party != nil, req.Monsters != nil)
 	if err != nil {
 		if errors.Is(err, encounter.ErrNotFound) {
 			writeError(w, http.StatusNotFound, err)

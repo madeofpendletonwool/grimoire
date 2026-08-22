@@ -153,40 +153,91 @@
 					<button type="button" class="icon-btn" id="encounter-close" aria-label="Leave the builder" title="Back to chat" data-gi="close"></button>
 				</header>
 				<div class="enc-body">
-					<div class="enc-col">
+					<!-- The brief: everything the DM has to say, which is allowed to be
+					     nothing at all. Party and difficulty carry usable defaults, the
+					     idea is optional, and the seeds turn "no idea" into one click. -->
+					<div class="enc-col enc-col-brief">
 						<div class="enc-panel">
-							<h3 class="enc-heading">Party</h3>
-							<div class="enc-party" id="enc-party"></div>
-							<form class="enc-add-party" id="enc-add-party" autocomplete="off">
-								<label class="enc-level-label" for="enc-level">Level</label>
-								<input id="enc-level" class="enc-field" type="number" min="1" max="20" value="1" aria-label="Character level">
-								<button type="submit" class="enc-btn">Add character</button>
+							<h3 class="enc-heading">The table</h3>
+							<div class="enc-quick">
+								<label class="enc-quick-field">
+									<span>Players</span>
+									<input id="enc-party-count" class="enc-field enc-num" type="number" min="1" max="12" value="4"
+										aria-label="Number of characters">
+								</label>
+								<label class="enc-quick-field">
+									<span>Level</span>
+									<input id="enc-party-level" class="enc-field enc-num" type="number" min="1" max="20" value="3"
+										aria-label="Character level">
+								</label>
+								<span class="enc-party-sum" id="enc-party-sum"></span>
+							</div>
+							<details class="enc-more">
+								<summary>Mixed levels</summary>
+								<div class="enc-party" id="enc-party"></div>
+								<form class="enc-add-party" id="enc-add-party" autocomplete="off">
+									<label class="enc-level-label" for="enc-level">Level</label>
+									<input id="enc-level" class="enc-field enc-num" type="number" min="1" max="20" value="1" aria-label="Character level">
+									<button type="submit" class="enc-btn">Add character</button>
+								</form>
+							</details>
+						</div>
+						<div class="enc-panel">
+							<h3 class="enc-heading">The ask</h3>
+							<div class="enc-bands" id="enc-bands" role="group" aria-label="Target difficulty"></div>
+							<p class="enc-budget" id="enc-budget"></p>
+							<form class="enc-idea-form" id="enc-design-form" autocomplete="off">
+								<textarea id="enc-idea" class="enc-idea-input" rows="3"
+									placeholder="Say as much or as little as you like — “something creepy in the swamp”, “a boss fight for the finale”, or nothing at all."
+									aria-label="What kind of encounter do you want"></textarea>
+								<div class="enc-seeds" id="enc-seeds"></div>
+								<div class="enc-action-row">
+									<button type="submit" class="enc-btn primary" id="enc-design-btn">Build the encounter</button>
+									<button type="button" class="enc-btn" id="enc-surprise" title="Let the sage pick the concept">Surprise me</button>
+								</div>
 							</form>
 						</div>
 						<div class="enc-panel">
-							<h3 class="enc-heading">Bestiary</h3>
+							<h3 class="enc-heading">Revise</h3>
+							<form class="enc-idea-form" id="enc-refine-form" autocomplete="off">
+								<textarea id="enc-feedback" class="enc-idea-input" rows="2"
+									placeholder="e.g. fewer goblins and one nastier thing · move it underwater · make it hard"
+									aria-label="How should the encounter change"></textarea>
+								<button type="submit" class="enc-btn" id="enc-refine-btn" disabled>Revise it</button>
+							</form>
+						</div>
+						<details class="enc-panel enc-manual">
+							<summary class="enc-heading">Add a monster by hand</summary>
 							<form class="enc-search" id="enc-search" autocomplete="off">
 								<input id="enc-search-input" class="enc-field" type="search" placeholder="Search SRD monsters…"
 									aria-label="Search monsters">
 								<button type="submit" class="enc-btn" aria-label="Search">Find</button>
 							</form>
 							<div class="enc-results" id="enc-results" role="listbox" aria-label="Monster results"></div>
-						</div>
+						</details>
 					</div>
-					<div class="enc-col">
-						<div class="enc-panel">
-							<h3 class="enc-heading">Monsters</h3>
-							<div class="enc-roster" id="enc-roster"></div>
-						</div>
+
+					<!-- The encounter itself. The verdict is chrome — a gauge on stone —
+					     and the encounter is content, so the sheet below it is parchment. -->
+					<div class="enc-col enc-col-sheet">
 						<div class="enc-panel enc-verdict-panel">
-							<h3 class="enc-heading">Difficulty</h3>
-							<div class="enc-verdict" id="enc-verdict">
+							<div class="enc-verdict">
 								<span class="enc-band" id="enc-band">—</span>
 								<span class="enc-xp" id="enc-xp"></span>
 							</div>
-							<div class="enc-meter" id="enc-meter" aria-hidden="true" hidden><span id="enc-meter-fill"></span></div>
+							<div class="enc-meter" id="enc-meter" hidden>
+								<span class="enc-fill" id="enc-meter-fill"></span>
+								<span class="enc-ticks" id="enc-ticks" aria-hidden="true"></span>
+							</div>
 							<div class="enc-thresholds" id="enc-thresholds"></div>
 						</div>
+						<article class="enc-sheet" id="enc-sheet">
+							<p class="enc-status" id="enc-status"></p>
+							<h3 class="enc-sheet-title" id="enc-sheet-title" hidden></h3>
+							<div class="enc-roster" id="enc-roster"></div>
+							<p class="enc-flag" id="enc-unverified" hidden></p>
+							<div class="enc-notes prose" id="enc-notes"></div>
+						</article>
 						<div class="enc-panel enc-actions">
 							<form class="enc-save" id="enc-save" autocomplete="off">
 								<input id="enc-name" class="enc-field" type="text" placeholder="Encounter name" aria-label="Encounter name">
@@ -194,6 +245,7 @@
 							</form>
 							<div class="enc-action-row">
 								<button type="button" class="enc-btn" id="enc-new">New</button>
+								<button type="button" class="enc-btn" id="enc-copy">Copy</button>
 								<button type="button" class="enc-btn danger" id="enc-delete" hidden>Delete</button>
 								<button type="button" class="enc-btn ask" id="enc-ask">Ask the sage about this</button>
 							</div>

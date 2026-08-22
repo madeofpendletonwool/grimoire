@@ -93,10 +93,12 @@
 .suggestion,
 .send-btn,
 .enc-panel,
+.enc-sheet,
 .enc-btn,
 .enc-chip,
 .enc-hit,
 .enc-field,
+.enc-idea-input,
 .deck-panel,
 .deck-btn,
 .deck-chip,
@@ -124,6 +126,7 @@
 .msg-sage .bubble,
 .gate-page,
 .study-card,
+.enc-sheet,
 .reader-page {
 	border-width: 10px;
 	border-image-source: url("/static/assets/ui/panel-parchment.png");
@@ -150,6 +153,7 @@
 .f-field,
 .composer,
 .enc-field,
+.enc-idea-input,
 .deck-field,
 .deck-idea-input,
 .deck-chat-log {
@@ -161,6 +165,7 @@
 .f-field.is-focus,
 .composer:focus-within,
 .enc-field:focus,
+.enc-idea-input:focus,
 .deck-field:focus,
 .deck-idea-input:focus {
 	border-image-source: var(--frame-field-focus);
@@ -184,6 +189,7 @@
 .chip:not(.chip-miss):hover,
 .suggestion:hover,
 .enc-chip:hover,
+.enc-chip.is-on,
 .enc-hit:hover,
 .deck-hit:hover {
 	border-image-source: url("/static/assets/ui/chip-active.png");

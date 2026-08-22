@@ -51,7 +51,11 @@ func newEncounterServer(t *testing.T) (*Server, *httptest.Server) {
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
-	s = s.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5e.URL))
+	catalog, err := encounter.NewCatalog(store.DB(), open5e.URL)
+	if err != nil {
+		t.Fatalf("new bestiary catalog: %v", err)
+	}
+	s = s.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5e.URL), catalog)
 	return s, open5e
 }
 

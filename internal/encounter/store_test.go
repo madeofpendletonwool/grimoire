@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/madeofpendletonwool/grimoire/internal/index"
@@ -30,7 +31,7 @@ func TestStoreCRUD(t *testing.T) {
 
 	created, err := s.Create(ctx, "alice", "Ambush on the Triboar Trail", []int{1, 1, 2}, []Monster{
 		{Name: "Goblin", CR: "1/4", XP: 50, Count: 4},
-	})
+	}, "## The pitch\nA scouting party, badly hidden.")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -45,13 +46,16 @@ func TestStoreCRUD(t *testing.T) {
 	if got.Name != "Ambush on the Triboar Trail" || !reflect.DeepEqual(got.Party, []int{1, 1, 2}) || len(got.Monsters) != 1 || got.Monsters[0].Count != 4 {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
+	if !strings.Contains(got.Notes, "badly hidden") {
+		t.Fatalf("design notes not round-tripped: %q", got.Notes)
+	}
 
 	name := "Renamed"
 	newParty := []int{3, 3, 3, 2}
 	updated, err := s.Update(ctx, "alice", created.ID, &name, newParty, []Monster{
 		{Name: "Bugbear", CR: "1", XP: 200, Count: 1},
 		{Name: "Hobgoblin", CR: "1/2", XP: 100, Count: 3},
-	}, true, true)
+	}, nil, true, true)
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -83,7 +87,7 @@ func TestStoreCRUD(t *testing.T) {
 func TestStoreOwnerScoping(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	created, err := s.Create(ctx, "alice", "Keep", []int{5}, []Monster{{Name: "Ogre", CR: "2", XP: 450, Count: 2}})
+	created, err := s.Create(ctx, "alice", "Keep", []int{5}, []Monster{{Name: "Ogre", CR: "2", XP: 450, Count: 2}}, "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -91,7 +95,7 @@ func TestStoreOwnerScoping(t *testing.T) {
 	if _, err := s.Get(ctx, "bob", created.ID); err != ErrNotFound {
 		t.Fatalf("foreign get = %v, want ErrNotFound", err)
 	}
-	if _, err := s.Update(ctx, "bob", created.ID, nil, nil, nil, false, false); err != ErrNotFound {
+	if _, err := s.Update(ctx, "bob", created.ID, nil, nil, nil, nil, false, false); err != ErrNotFound {
 		t.Fatalf("foreign update = %v, want ErrNotFound", err)
 	}
 	if err := s.Delete(ctx, "bob", created.ID); err != ErrNotFound {
@@ -109,16 +113,19 @@ func TestStoreOwnerScoping(t *testing.T) {
 func TestStoreUpdateKeepsUnsentFields(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	created, err := s.Create(ctx, "alice", "Waves", []int{2, 2, 3}, []Monster{{Name: "Hobgoblin", CR: "1/2", XP: 100, Count: 6}})
+	created, err := s.Create(ctx, "alice", "Waves", []int{2, 2, 3}, []Monster{{Name: "Hobgoblin", CR: "1/2", XP: 100, Count: 6}}, "keep me")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	name := "Waves, revised"
-	updated, err := s.Update(ctx, "alice", created.ID, &name, nil, nil, false, false)
+	updated, err := s.Update(ctx, "alice", created.ID, &name, nil, nil, nil, false, false)
 	if err != nil {
 		t.Fatalf("rename-only update: %v", err)
 	}
 	if updated.Name != "Waves, revised" || len(updated.Party) != 3 || len(updated.Monsters) != 1 || updated.Monsters[0].Count != 6 {
 		t.Fatalf("rename-only update lost fields: %+v", updated)
+	}
+	if updated.Notes != "keep me" {
+		t.Fatalf("rename-only update lost the notes: %q", updated.Notes)
 	}
 }

@@ -94,6 +94,7 @@ nav:
       - Interaction Resolver: features/resolver.md
       - Study Mode: features/study.md
       - Deck Builder: features/deck-builder.md
+      - Encounter Builder: features/encounter-builder.md
       - The Tome & Themes: features/tome.md
   - Deployment:
       - Quick Start: deployment/quickstart.md
