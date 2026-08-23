@@ -14,7 +14,10 @@ internal/
   embeddings/     OpenAI-compatible embeddings client for semantic retrieval
   encounter/      D&D encounter builder: DMG difficulty maths, mirrored SRD bestiary, design planning
   entities/       per-corpus entity resolution into grounding text (MTG cards, D&D via Open5e)
+  gamesession/    campaign session layer: game sessions, verbatim sources, addressable spans, the ruling/Q&A/discovery log
   index/          SQLite + FTS5 store; full-text + rule-number search
+  campaign/       the campaign graph: entities, facts, provenance, events, quests, relationships
+  knowledge/      the epistemic layer: awareness, discoveries, scope-enforced retrieval
   llm/            Anthropic Messages client (configurable base URL), RAG + streaming
   migrate/        the database schema: embedded goose migrations + the runner
   resolver/       Magic interaction resolver: board + sequence → step-by-step prompt

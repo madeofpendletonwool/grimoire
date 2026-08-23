@@ -17,6 +17,7 @@ import (
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/cache"
+	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/carddb"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
@@ -25,6 +26,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
+	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
@@ -45,22 +47,26 @@ type Auth struct {
 
 // Server holds dependencies for serving the app.
 type Server struct {
-	store            *index.Store
-	llm              *llm.Client
-	cards            *cards.Service
-	rulings          *rulings.Service
-	cardDict         *cards.Dictionary
-	chats            *chat.Store
-	answers          *cache.Store
-	study            *study.Store
-	encounters       *encounter.Store
-	bestiary         *encounter.Bestiary
-	catalog          *encounter.Catalog
-	carddb           *carddb.Store
-	decks            *deck.Store
-	edhrec           *edhrec.Client
-	shares           *share.Store
-	users            *auth.Store
+	store      *index.Store
+	llm        *llm.Client
+	cards      *cards.Service
+	rulings    *rulings.Service
+	cardDict   *cards.Dictionary
+	chats      *chat.Store
+	answers    *cache.Store
+	study      *study.Store
+	encounters *encounter.Store
+	bestiary   *encounter.Bestiary
+	catalog    *encounter.Catalog
+	carddb     *carddb.Store
+	decks      *deck.Store
+	edhrec     *edhrec.Client
+	shares     *share.Store
+	users      *auth.Store
+	// The campaign graph and its session layer (MAD-303/306). Wired with
+	// WithCampaign; nil disables the campaign endpoints.
+	campaigns        *campaign.Store
+	sessions         *gamesession.Store
 	openRegistration bool
 	tmpl             *template.Template
 	static           fs.FS
@@ -154,6 +160,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/shares", s.handleListShares)
 	mux.HandleFunc("DELETE /api/shares/{token}", s.handleRevokeShare)
 	mux.HandleFunc("GET /s/{token}", s.handleSharePage)
+	mux.HandleFunc("GET /api/campaigns", s.handleListCampaigns)
+	mux.HandleFunc("POST /api/campaigns", s.handleCreateCampaign)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions", s.handleListSessions)
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions", s.handleCreateSession)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}", s.handleGetSession)
+	mux.HandleFunc("PATCH /api/campaigns/{cid}/sessions/{sid}", s.handleUpdateSession)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/sources", s.handleListSources)
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/sources", s.handleAddSource)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/sources/{srcid}", s.handleGetSource)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/span", s.handleResolveSpan)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/events", s.handleListEvents)
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/events", s.handleAddEvent)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/export", s.handleExportSession)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))

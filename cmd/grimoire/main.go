@@ -70,6 +70,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
+	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
@@ -817,6 +818,18 @@ func runServe() error {
 		log.Printf("adopted %d pre-authentication conversations", adopted)
 	}
 
+	// Campaigns and their session layer share the file as well; the session
+	// tables exist only through the migrations, so the store opens straight
+	// onto the migrated handle.
+	campaigns, err := campaign.New(store.DB())
+	if err != nil {
+		return err
+	}
+	gameSessions, err := gamesession.New(store.DB())
+	if err != nil {
+		return err
+	}
+
 	chatClient := llmClient()
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
@@ -825,6 +838,7 @@ func runServe() error {
 		return err
 	}
 	srv = srv.WithShares(shares)
+	srv = srv.WithCampaign(campaigns, gameSessions)
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()), bestiary)
 	if cardStore != nil {
 		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)
