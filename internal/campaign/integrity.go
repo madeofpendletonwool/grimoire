@@ -64,8 +64,14 @@ type Snapshot struct {
 // Integrity loads a campaign snapshot and runs every check over it. It is
 // deliberately read-only: findings are information, and the DM decides what
 // to do about them. The CLI `campaign check` subcommand calls this.
-func Integrity(ctx context.Context, db *sql.DB, campaignID string) ([]Finding, error) {
-	snap, err := LoadSnapshot(ctx, db, campaignID)
+//
+// The scope must be the DM's: the checker walks every fact, secret and
+// proposed included, so this is an unscoped read the DM scope alone holds.
+func Integrity(ctx context.Context, scope Scope, db *sql.DB, campaignID string) ([]Finding, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
+	snap, err := LoadSnapshot(ctx, ScopeDM, db, campaignID)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +79,12 @@ func Integrity(ctx context.Context, db *sql.DB, campaignID string) ([]Finding, e
 }
 
 // LoadSnapshot reads one campaign's graph into memory for the checks.
-func LoadSnapshot(ctx context.Context, db *sql.DB, campaignID string) (*Snapshot, error) {
+// DM-scope only, like Integrity: the snapshot carries every fact, secrets and
+// proposals included, and nothing below the DM should ever hold one.
+func LoadSnapshot(ctx context.Context, scope Scope, db *sql.DB, campaignID string) (*Snapshot, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	s := &Snapshot{CampaignID: campaignID, ProvenanceCount: map[string]int{}, CoveredFacts: map[string]bool{}}
 
 	rows, err := db.QueryContext(ctx, `SELECT `+entityCols+` FROM entities WHERE campaign_id = ?`, campaignID)

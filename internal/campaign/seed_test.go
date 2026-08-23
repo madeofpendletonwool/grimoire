@@ -21,7 +21,7 @@ func TestSeedFixture(t *testing.T) {
 	s, _ := New(db)
 	cid := fx.Campaign.ID
 
-	entities, err := s.ListEntities(ctx, cid, "")
+	entities, err := s.ListEntities(ctx, ScopeDM, cid, "")
 	if err != nil {
 		t.Fatalf("list entities: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestSeedFixture(t *testing.T) {
 	}
 
 	// Every fact carries provenance, and at least one fact is secret.
-	facts, err := s.ListFacts(ctx, cid, FactFilter{})
+	facts, err := s.ListFacts(ctx, ScopeDM, cid, FactFilter{})
 	if err != nil {
 		t.Fatalf("list facts: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestSeedFixture(t *testing.T) {
 	}
 	secrets := 0
 	for _, f := range facts {
-		prov, err := s.FactProvenance(ctx, cid, f.ID)
+		prov, err := s.FactProvenance(ctx, ScopeDM, cid, f.ID)
 		if err != nil {
 			t.Fatalf("provenance for %s: %v", f.ID, err)
 		}
@@ -55,11 +55,11 @@ func TestSeedFixture(t *testing.T) {
 	}
 
 	// The registered contradiction: both sides contested, linked, no winner.
-	visited, err := s.GetFact(ctx, cid, fx.FactDukeVisited)
+	visited, err := s.GetFact(ctx, ScopeDM, cid, fx.FactDukeVisited)
 	if err != nil {
 		t.Fatalf("get visited: %v", err)
 	}
-	never, err := s.GetFact(ctx, cid, fx.FactDukeNever)
+	never, err := s.GetFact(ctx, ScopeDM, cid, fx.FactDukeNever)
 	if err != nil {
 		t.Fatalf("get never: %v", err)
 	}
@@ -67,13 +67,13 @@ func TestSeedFixture(t *testing.T) {
 		t.Fatalf("both sides must be downgraded to contested: %s / %s",
 			visited.Confidence, never.Confidence)
 	}
-	versions, err := s.FactVersions(ctx, cid, fx.ContradictionID)
+	versions, err := s.FactVersions(ctx, ScopeDM, cid, fx.ContradictionID)
 	if err != nil || len(versions) != 2 {
 		t.Fatalf("the contradiction must hold both sides: %v %v", versions, err)
 	}
 
 	// The quest: a branching machine, moved twice, sitting on survivors_found.
-	q, err := s.GetQuest(ctx, cid, fx.QuestID)
+	q, err := s.GetQuest(ctx, ScopeDM, cid, fx.QuestID)
 	if err != nil {
 		t.Fatalf("get quest: %v", err)
 	}
@@ -83,13 +83,13 @@ func TestSeedFixture(t *testing.T) {
 	if q.CurrentState != "survivors_found" {
 		t.Fatalf("fixture quest should be partway through: %s", q.CurrentState)
 	}
-	moves, err := s.QuestTransitions(ctx, cid, fx.QuestID)
+	moves, err := s.QuestTransitions(ctx, ScopeDM, cid, fx.QuestID)
 	if err != nil || len(moves) != 2 {
 		t.Fatalf("want two recorded moves: %v %v", moves, err)
 	}
 
 	// Dual ordering: the flashback happened earlier in-world but later in play.
-	timeline, err := s.ListEvents(ctx, cid)
+	timeline, err := s.ListEvents(ctx, ScopeDM, cid)
 	if err != nil || len(timeline) != 2 {
 		t.Fatalf("fixture timeline: %v %v", timeline, err)
 	}
@@ -105,7 +105,7 @@ func TestSeedFixture(t *testing.T) {
 	}
 
 	// The alias resolves: Tom the Innkeeper is also Thomas Vane.
-	hits, err := s.ResolveName(ctx, cid, "Thomas Vane")
+	hits, err := s.ResolveName(ctx, ScopeDM, cid, "Thomas Vane")
 	if err != nil || len(hits) != 1 || hits[0].ID != fx.Tom {
 		t.Fatalf("alias resolve: %v %v", hits, err)
 	}
@@ -126,7 +126,7 @@ func TestSeedFixture(t *testing.T) {
 	}
 
 	// The whole fixture must pass its own integrity checks.
-	findings, err := Integrity(ctx, db, cid)
+	findings, err := Integrity(ctx, ScopeDM, db, cid)
 	if err != nil {
 		t.Fatalf("integrity: %v", err)
 	}

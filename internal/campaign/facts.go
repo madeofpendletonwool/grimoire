@@ -217,8 +217,12 @@ func (s *Store) factInCampaign(ctx context.Context, id, campaignID string) error
 	return nil
 }
 
-// GetFact returns one fact of a campaign.
-func (s *Store) GetFact(ctx context.Context, campaignID, id string) (*Fact, error) {
+// GetFact returns one fact of a campaign. DM-scope reads only; scoped fact
+// retrieval (what this knower may see) lives in internal/knowledge.
+func (s *Store) GetFact(ctx context.Context, scope Scope, campaignID, id string) (*Fact, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+factCols+` FROM facts WHERE id = ? AND campaign_id = ?`, id, campaignID)
 	f, err := scanFact(row)
@@ -238,7 +242,14 @@ type FactFilter struct {
 }
 
 // ListFacts returns a campaign's facts, newest first, through the filter.
-func (s *Store) ListFacts(ctx context.Context, campaignID string, filter FactFilter) ([]Fact, error) {
+// DM-scope reads only; scoped fact retrieval lives in internal/knowledge.
+// Note that the DM scope is not a dump: filter.Confidence can select
+// 'proposed', but callers serving the DM chat must not — a proposed fact is
+// invisible to every retrieval path until a human accepts it (ADR 3).
+func (s *Store) ListFacts(ctx context.Context, scope Scope, campaignID string, filter FactFilter) ([]Fact, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	q := `SELECT ` + factCols + ` FROM facts WHERE campaign_id = ?`
 	args := []any{campaignID}
 	if filter.SubjectEntity != "" {
@@ -306,7 +317,12 @@ func (s *Store) SupersedeFact(ctx context.Context, campaignID, oldID, newID stri
 }
 
 // FactProvenance lists where a fact came from, oldest record first.
-func (s *Store) FactProvenance(ctx context.Context, campaignID, factID string) ([]Provenance, error) {
+// DM-scope reads only: quotes and spans are the raw material of secrets, and
+// the "why does Grimoire think this?" button is a DM surface.
+func (s *Store) FactProvenance(ctx context.Context, scope Scope, campaignID, factID string) ([]Provenance, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	if err := s.factInCampaign(ctx, factID, campaignID); err != nil {
 		return nil, err
 	}
@@ -493,8 +509,12 @@ func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
-// Contradictions lists the register, open entries first.
-func (s *Store) Contradictions(ctx context.Context, campaignID string) ([]Contradiction, error) {
+// Contradictions lists the register, open entries first. DM-scope reads
+// only: both sides of a contradiction are spoiler-shaped until resolved.
+func (s *Store) Contradictions(ctx context.Context, scope Scope, campaignID string) ([]Contradiction, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, campaign_id, subject_entity, predicate, status, resolution_note, created_at
 		  FROM contradictions WHERE campaign_id = ?
@@ -519,8 +539,11 @@ func (s *Store) Contradictions(ctx context.Context, campaignID string) ([]Contra
 	return out, rows.Err()
 }
 
-// FactVersions lists the sides of one contradiction.
-func (s *Store) FactVersions(ctx context.Context, campaignID, contradictionID string) ([]FactVersion, error) {
+// FactVersions lists the sides of one contradiction. DM-scope reads only.
+func (s *Store) FactVersions(ctx context.Context, scope Scope, campaignID, contradictionID string) ([]FactVersion, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT v.id, v.contradiction_id, v.fact_id, v.label, v.statement, v.created_at
 		  FROM fact_versions v JOIN contradictions c ON c.id = v.contradiction_id

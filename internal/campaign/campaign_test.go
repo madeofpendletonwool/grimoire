@@ -214,14 +214,14 @@ func TestEntityNamesAndResolve(t *testing.T) {
 	}
 
 	// The canonical name landed in entity_aliases via CreateEntity.
-	names, err := s.EntityNames(ctx, c.ID, tom.ID)
+	names, err := s.EntityNames(ctx, ScopeDM, c.ID, tom.ID)
 	if err != nil || len(names) != 3 {
 		t.Fatalf("want canonical+alias+epithet: %v %v", names, err)
 	}
 
 	// Resolve reaches all three, case-insensitively.
 	for _, q := range []string{"Tom the Innkeeper", "thomas vane", "THE QUIET"} {
-		hits, err := s.ResolveName(ctx, c.ID, q)
+		hits, err := s.ResolveName(ctx, ScopeDM, c.ID, q)
 		if err != nil || len(hits) != 1 || hits[0].ID != tom.ID {
 			t.Fatalf("resolve %q: %v %v", q, hits, err)
 		}
@@ -232,14 +232,14 @@ func TestEntityNamesAndResolve(t *testing.T) {
 	if _, err := s.UpdateEntity(ctx, c.ID, tom.ID, &newName, nil, nil, nil); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	hits, err := s.ResolveName(ctx, c.ID, "Tom of the Waystone")
+	hits, err := s.ResolveName(ctx, ScopeDM, c.ID, "Tom of the Waystone")
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("resolve new canonical: %v %v", hits, err)
 	}
-	if hits, err = s.ResolveName(ctx, c.ID, "Tom the Innkeeper"); err != nil || len(hits) != 0 {
+	if hits, err = s.ResolveName(ctx, ScopeDM, c.ID, "Tom the Innkeeper"); err != nil || len(hits) != 0 {
 		t.Fatalf("old canonical should be gone: %v %v", hits, err)
 	}
-	if hits, err = s.ResolveName(ctx, c.ID, "Thomas Vane"); err != nil || len(hits) != 1 {
+	if hits, err = s.ResolveName(ctx, ScopeDM, c.ID, "Thomas Vane"); err != nil || len(hits) != 1 {
 		t.Fatalf("alias should survive a rename: %v %v", hits, err)
 	}
 }
@@ -256,7 +256,7 @@ func TestEntityDeleteIsSoft(t *testing.T) {
 	if err := s.DeleteEntity(ctx, c.ID, tom.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	got, err := s.GetEntity(ctx, c.ID, tom.ID)
+	got, err := s.GetEntity(ctx, ScopeDM, c.ID, tom.ID)
 	if err != nil {
 		t.Fatalf("soft-deleted entity must still load: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestRelationshipsFromControlledVocabulary(t *testing.T) {
 		t.Fatalf("duplicate edge must be ErrAlreadyExists, got %v", err)
 	}
 
-	edges, err := s.RelationshipsOf(ctx, c.ID, cult.ID)
+	edges, err := s.RelationshipsOf(ctx, ScopeDM, c.ID, cult.ID)
 	if err != nil || len(edges) != 2 {
 		t.Fatalf("both directions should come back: %v %v", edges, err)
 	}

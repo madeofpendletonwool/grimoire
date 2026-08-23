@@ -169,8 +169,12 @@ func scanQuest(row interface{ Scan(...any) error }) (*Quest, error) {
 	return &q, nil
 }
 
-// GetQuest returns one quest of a campaign.
-func (s *Store) GetQuest(ctx context.Context, campaignID, id string) (*Quest, error) {
+// GetQuest returns one quest of a campaign. DM-scope reads only: a quest's
+// shape and state are DM planning material.
+func (s *Store) GetQuest(ctx context.Context, scope Scope, campaignID, id string) (*Quest, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+questCols+` FROM quests WHERE id = ? AND campaign_id = ?`, id, campaignID)
 	q, err := scanQuest(row)
@@ -180,8 +184,11 @@ func (s *Store) GetQuest(ctx context.Context, campaignID, id string) (*Quest, er
 	return q, err
 }
 
-// ListQuests returns a campaign's quests by name.
-func (s *Store) ListQuests(ctx context.Context, campaignID string) ([]Quest, error) {
+// ListQuests returns a campaign's quests by name. DM-scope reads only.
+func (s *Store) ListQuests(ctx context.Context, scope Scope, campaignID string) ([]Quest, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+questCols+` FROM quests WHERE campaign_id = ? ORDER BY name COLLATE NOCASE`, campaignID)
 	if err != nil {
@@ -204,7 +211,7 @@ func (s *Store) ListQuests(ctx context.Context, campaignID string) ([]Quest, err
 // a checkbox — and the move is recorded with the event that caused it when
 // one is given. The event must belong to the same campaign.
 func (s *Store) TransitionQuest(ctx context.Context, campaignID, questID, toState, eventID string) (*Quest, error) {
-	q, err := s.GetQuest(ctx, campaignID, questID)
+	q, err := s.GetQuest(ctx, ScopeDM, campaignID, questID)
 	if err != nil {
 		return nil, err
 	}
@@ -242,8 +249,12 @@ func (s *Store) TransitionQuest(ctx context.Context, campaignID, questID, toStat
 }
 
 // QuestTransitions lists a quest's moves in the order they happened.
-func (s *Store) QuestTransitions(ctx context.Context, campaignID, questID string) ([]QuestTransition, error) {
-	if _, err := s.GetQuest(ctx, campaignID, questID); err != nil {
+// DM-scope reads only.
+func (s *Store) QuestTransitions(ctx context.Context, scope Scope, campaignID, questID string) ([]QuestTransition, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetQuest(ctx, ScopeDM, campaignID, questID); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `

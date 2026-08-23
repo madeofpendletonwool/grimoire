@@ -3,7 +3,10 @@
 The contract for the campaign core, written **before** any campaign code
 exists. The campaign core itself (MAD-303) now implements the tables below —
 see `internal/campaign` and migration `0002_campaign_core.sql`. The knowledge
-layer (MAD-304) and Stage 3 (MAD-306) are still held to this shape.
+layer (MAD-304) implements `awareness`, `discoveries` and the scoped
+retrieval — see `internal/knowledge` and migration `0003_knowledge.sql`,
+which also adds the `campaign_prose` FTS index. Stage 3 (MAD-306) is still
+held to this shape.
 
 The rest of Grimoire is a rules reference: fourteen independent tables, none of
 which point at each other. The campaign core is the opposite — about twenty
