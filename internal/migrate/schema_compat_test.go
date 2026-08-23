@@ -4,16 +4,23 @@ package migrate_test
 // fourteen packages' New() functions. A copy drifts. This test pins the two
 // together: build a database each way — migration first, then the packages;
 // and the packages first, then the migration — and assert both orders produce
-// the same schema and neither errors.
+// a compatible schema and neither errors.
 //
 // It is the test that fails when someone adds a column to a package's schema
 // const and forgets the migration, which is exactly the mistake the whole
 // runner exists to make impossible.
+//
+// The comparison is one-directional by design since the campaign core
+// (MAD-303): every table and index the packages create must exist in the
+// migrations with the same columns, but the migrations may own tables no
+// package creates — that is the new pattern (internal/campaign ships no DDL
+// of its own), not drift.
 
 import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -155,13 +162,13 @@ func TestBaselineMatchesPackageDDL(t *testing.T) {
 			t.Errorf("table %q columns differ — the baseline must declare the maximal schema:\n  baseline: %v\n  packages: %v", name, gotCols, wantCols)
 		}
 	}
-	for name := range got.tables {
-		if _, ok := want.tables[name]; !ok {
-			t.Errorf("table %q is created by the baseline migration but not by any package", name)
+	// Tables the migrations own beyond the packages (the campaign core and
+	// everything after it) are expected — see the comment at the top. Only a
+	// package table absent from the migration is drift.
+	for _, idx := range want.indexes {
+		if !slices.Contains(got.indexes, idx) {
+			t.Errorf("index %q is created by the packages but missing from the baseline migration", idx)
 		}
-	}
-	if strings.Join(got.indexes, ",") != strings.Join(want.indexes, ",") {
-		t.Errorf("indexes differ:\n  baseline: %v\n  packages: %v", got.indexes, want.indexes)
 	}
 
 	// Both orders must also compose without error, since both happen in the

@@ -1,9 +1,9 @@
 # The campaign data model
 
 The contract for the campaign core, written **before** any campaign code
-exists. Nothing here is implemented yet — this is the shape Stage 2 (MAD-303,
-MAD-304) and Stage 3 (MAD-306) are held to, and the document a human reads
-before that work starts.
+exists. The campaign core itself (MAD-303) now implements the tables below —
+see `internal/campaign` and migration `0002_campaign_core.sql`. The knowledge
+layer (MAD-304) and Stage 3 (MAD-306) are still held to this shape.
 
 The rest of Grimoire is a rules reference: fourteen independent tables, none of
 which point at each other. The campaign core is the opposite — about twenty
@@ -33,7 +33,7 @@ a tool built before the graph would have to be rewritten onto it.
         │                   │             quest_transitions
         │        ┌──────────┼──────────┐
         │        │          │          │
-        │  entity_names  facts   relationships
+        │  entity_aliases facts   relationships
         │                   │
         │        ┌──────────┼──────────┐
         │        │          │          │
@@ -76,7 +76,7 @@ provenance row is a bug, and integrity checks it.
 | Table | Columns | Notes |
 |---|---|---|
 | `entities` | `id, campaign_id, kind, name, summary, payload, status` | Typed nodes: `pc \| npc \| faction \| location \| item \| deity \| organization \| creature \| concept`. `payload` is JSON, because a location and a deity have almost nothing in common and a wide table of mostly-NULL columns would be worse than honest JSON. |
-| `entity_names` | `entity_id, name, kind` | Aliases and epithets — `canonical \| alias \| epithet`. One entity, many names: "Tom the innkeeper" is also "Thomas Vane". Without this, the extraction pass creates a second Tom, and the `entity_merge_candidate` check exists to catch exactly that. |
+| `entity_aliases` | `entity_id, name, kind` | Aliases and epithets — `canonical \| alias \| epithet`. One entity, many names: "Tom the innkeeper" is also "Thomas Vane". Without this, the extraction pass creates a second Tom, and the `entity_merge_candidate` check exists to catch exactly that. (Named `entity_aliases`, not the `entity_names` sketched here, because `entity_names` is already the rules-index's SRD name dictionary.) |
 | `relationships` | `from_entity, rel_type, to_entity, strength, justified_by_fact, since_event` | Typed edges from a **controlled list** — `knows, serves, owns, located_in, worships, betrayed, allied_with, secretly_controls`, … A free-text edge type is a graph nobody can query. `justified_by_fact` is what makes an edge auditable: the relationship is not asserted, it is *derived from* a fact that has provenance. |
 
 ### Facts
