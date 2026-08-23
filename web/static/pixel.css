@@ -112,7 +112,10 @@
 .study-answer,
 .study-grade,
 .reader-toc,
-.reader-page {
+.reader-page,
+.camp-panel,
+.camp-sheet,
+.camp-graph {
 	border-style: solid;
 	border-radius: 0;
 	background-color: transparent;
@@ -127,7 +130,9 @@
 .gate-page,
 .study-card,
 .enc-sheet,
-.reader-page {
+.reader-page,
+.camp-sheet,
+.camp-graph {
 	border-width: 10px;
 	border-image-source: url("/static/assets/ui/panel-parchment.png");
 	border-image-slice: 5 fill;
@@ -140,7 +145,8 @@
 .study-answer,
 .reader-toc,
 .enc-panel,
-.deck-panel {
+.deck-panel,
+.camp-panel {
 	border-width: 6px;
 	border-image-source: var(--frame-stone);
 	border-image-slice: 3 fill;

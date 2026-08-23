@@ -391,22 +391,40 @@ type Member struct {
 // this function is the only thing that mints them ahead of the invite flow
 // (MAD-305). A second row for the same user is ErrAlreadyExists.
 func (s *Store) AddMember(ctx context.Context, campaignID, userID, role, characterID string) error {
+	return s.addMember(ctx, s.db, campaignID, userID, role, characterID)
+}
+
+// AddMemberTx is AddMember inside a caller-owned transaction, so the invite
+// redeem path (internal/auth) can write the membership row in the same commit
+// as the account it belongs to.
+func (s *Store) AddMemberTx(ctx context.Context, tx *sql.Tx, campaignID, userID, role, characterID string) error {
+	return s.addMember(ctx, tx, campaignID, userID, role, characterID)
+}
+
+// dbRunner is the subset the member insert needs; *sql.DB and *sql.Tx both
+// satisfy it.
+type dbRunner interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (s *Store) addMember(ctx context.Context, q dbRunner, campaignID, userID, role, characterID string) error {
 	if !validRoles[role] {
 		return fmt.Errorf("%w: role %q", ErrInvalid, role)
 	}
-	if err := s.campaignExists(ctx, campaignID); err != nil {
+	if err := s.campaignExistsOn(ctx, q, campaignID); err != nil {
 		return err
 	}
-	if err := s.userExists(ctx, userID); err != nil {
+	if err := s.userExistsOn(ctx, q, userID); err != nil {
 		return err
 	}
 	if characterID != "" {
-		if _, err := s.entityInCampaign(ctx, characterID, campaignID); err != nil {
+		if _, err := s.entityInCampaignOn(ctx, q, characterID, campaignID); err != nil {
 			return err
 		}
 	}
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
+	_, err := q.ExecContext(ctx, `
 		INSERT INTO campaign_members (campaign_id, user_id, role, character_id, joined_at)
 		VALUES (?, ?, ?, ?, ?)`,
 		campaignID, userID, role, nullString(characterID), now.UnixMilli())
@@ -427,6 +445,24 @@ func (s *Store) RemoveMember(ctx context.Context, campaignID, userID string) err
 	if _, err := s.db.ExecContext(ctx,
 		`DELETE FROM campaign_members WHERE campaign_id = ? AND user_id = ?`, campaignID, userID); err != nil {
 		return fmt.Errorf("remove member: %w", err)
+	}
+	return nil
+}
+
+// SetMemberRole changes a member's role. Only the campaign's DM (or the
+// keeper) reaches this — the store trusts the caller's gate.
+func (s *Store) SetMemberRole(ctx context.Context, campaignID, userID, role string) error {
+	if !validRoles[role] {
+		return fmt.Errorf("%w: role %q", ErrInvalid, role)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE campaign_members SET role = ? WHERE campaign_id = ? AND user_id = ?`,
+		role, campaignID, userID)
+	if err != nil {
+		return fmt.Errorf("set member role: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: member %s in campaign %s", ErrNotFound, userID, campaignID)
 	}
 	return nil
 }
@@ -507,8 +543,13 @@ func nullString(s string) any {
 // ownership and membership foreign-key users, so validating here turns a
 // constraint traceback into a clean error.
 func (s *Store) userExists(ctx context.Context, id string) error {
+	return s.userExistsOn(ctx, s.db, id)
+}
+
+// userExistsOn is userExists over a runner (*sql.DB or *sql.Tx).
+func (s *Store) userExistsOn(ctx context.Context, q dbRunner, id string) error {
 	var one int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, id).Scan(&one)
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, id).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: user %s", ErrNotFound, id)
 	}

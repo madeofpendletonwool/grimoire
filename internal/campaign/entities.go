@@ -113,7 +113,12 @@ func scanEntity(row interface{ Scan(...any) error }) (*Entity, error) {
 // entityInCampaign loads an entity and checks it belongs to campaignID.
 // Foreign ids read as ErrNotFound, the same as missing ones.
 func (s *Store) entityInCampaign(ctx context.Context, id, campaignID string) (*Entity, error) {
-	row := s.db.QueryRowContext(ctx,
+	return s.entityInCampaignOn(ctx, s.db, id, campaignID)
+}
+
+// entityInCampaignOn is entityInCampaign over a runner (*sql.DB or *sql.Tx).
+func (s *Store) entityInCampaignOn(ctx context.Context, q dbRunner, id, campaignID string) (*Entity, error) {
+	row := q.QueryRowContext(ctx,
 		`SELECT `+entityCols+` FROM entities WHERE id = ? AND campaign_id = ?`, id, campaignID)
 	e, err := scanEntity(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -501,8 +506,13 @@ func (s *Store) DeleteRelationship(ctx context.Context, campaignID, id string) e
 
 // campaignExists reports ErrNotFound when the campaign row is missing.
 func (s *Store) campaignExists(ctx context.Context, id string) error {
+	return s.campaignExistsOn(ctx, s.db, id)
+}
+
+// campaignExistsOn is campaignExists over a runner (*sql.DB or *sql.Tx).
+func (s *Store) campaignExistsOn(ctx context.Context, q dbRunner, id string) error {
 	var one int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM campaigns WHERE id = ?`, id).Scan(&one)
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM campaigns WHERE id = ?`, id).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: campaign %s", ErrNotFound, id)
 	}

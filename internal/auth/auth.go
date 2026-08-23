@@ -119,6 +119,22 @@ CREATE TABLE IF NOT EXISTS invites (
 	note       TEXT
 );
 CREATE INDEX IF NOT EXISTS invites_created_by ON invites(created_by);
+-- The campaign binding table (MAD-305). Migration 0004 owns it and declares
+-- the full foreign keys; this declaration exists so a caller that constructs
+-- the auth store without the migration runner still gets working plain
+-- invites (the pre-migration compatibility pattern the baseline set with
+-- users.is_admin). It deliberately carries no REFERENCES campaigns(id): on an
+-- auth-only database that parent does not exist, and SQLite would refuse even
+-- invite deletions while trying to evaluate the cascade. In production the
+-- migration runner has always created the fully-constrained table first, so
+-- this statement is a no-op there.
+CREATE TABLE IF NOT EXISTS campaign_invites (
+	invite_id   TEXT PRIMARY KEY REFERENCES invites(id) ON DELETE CASCADE,
+	campaign_id TEXT NOT NULL,
+	role        TEXT NOT NULL CHECK (role IN ('dm','player','observer')),
+	created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS campaign_invites_campaign ON campaign_invites(campaign_id);
 `
 
 // migrate installs the schema and brings an older database up to date. The
@@ -422,16 +438,26 @@ func checkPassword(password string) error {
 // populated only by CreateInvite — it is what the admin copies and hands out,
 // and what the invites table stores is only a digest of it, so a leaked
 // database copy cannot be replayed to mint an account.
+//
+// CampaignID and CampaignRole carry the campaign binding (MAD-305): an invite
+// minted by a campaign's DM, which writes a campaign_members row for the
+// redeeming account. Both are empty on the plain account invites the keeper
+// mints.
 type Invite struct {
-	ID        string
-	Code      string // the raw secret; only set on CreateInvite
-	CreatedBy string
-	CreatedAt time.Time
-	ExpiresAt time.Time // zero value means no expiry
-	UsedBy    string    // empty until consumed
-	UsedAt    time.Time // zero value until consumed
-	Note      string
+	ID           string
+	Code         string // the raw secret; only set on CreateInvite
+	CreatedBy    string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time // zero value means no expiry
+	UsedBy       string    // empty until consumed
+	UsedAt       time.Time // zero value until consumed
+	Note         string
+	CampaignID   string // set when the invite carries a campaign binding
+	CampaignRole string // dm | player | observer; empty with no binding
 }
+
+// Bound reports whether the invite carries a campaign binding.
+func (i Invite) Bound() bool { return i.CampaignID != "" }
 
 // Used reports whether the invite has already minted an account. A used invite
 // is kept (rather than deleted) so the admin can see who redeemed it and when.
@@ -492,10 +518,13 @@ func (s *Store) CreateInvite(ctx context.Context, createdBy, note string) (*Invi
 
 // ListInvites returns every invite the admin has minted, newest first. The raw
 // code is never present: it was returned once at creation and is not stored.
+// Campaign bindings ride along for the invite manager's campaign rows.
 func (s *Store) ListInvites(ctx context.Context) ([]Invite, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, created_by, created_at, expires_at, used_by, used_at, note
-		   FROM invites ORDER BY created_at DESC, id DESC`)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.id, i.created_by, i.created_at, i.expires_at, i.used_by, i.used_at, i.note,
+		       COALESCE(b.campaign_id, ''), COALESCE(b.role, '')
+		  FROM invites i LEFT JOIN campaign_invites b ON b.invite_id = i.id
+		 ORDER BY i.created_at DESC, i.id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list invites: %w", err)
 	}
@@ -526,53 +555,58 @@ func (s *Store) RevokeInvite(ctx context.Context, id string) error {
 // The WHERE used_by IS NULL guard makes the UPDATE a no-op for a code that was
 // redeemed in the gap between the SELECT and the UPDATE.
 func (s *Store) ConsumeInvite(ctx context.Context, code, userID string) error {
-	_, err := s.consumeInvite(ctx, s.db, code, userID)
+	_, _, _, err := s.consumeInvite(ctx, s.db, code, userID)
 	return err
 }
 
 // consumeInvite is the runner-parametric core of ConsumeInvite; it returns the
-// invite's id on success so RegisterWithInvite can tie the consume to the
-// account creation inside one transaction.
-func (s *Store) consumeInvite(ctx context.Context, q runner, code, userID string) (string, error) {
+// invite's id and campaign binding (both empty strings when unbound) on
+// success, so RegisterWithInvite and the campaign join path can write the
+// campaign_members row against the same transaction.
+func (s *Store) consumeInvite(ctx context.Context, q runner, code, userID string) (string, string, string, error) {
 	if code == "" {
-		return "", ErrInviteInvalid
+		return "", "", "", ErrInviteInvalid
 	}
-	row := q.QueryRowContext(ctx,
-		`SELECT id, expires_at, used_by FROM invites WHERE code_hash = ?`, tokenHash(code))
+	row := q.QueryRowContext(ctx, `
+		SELECT i.id, i.expires_at, i.used_by, COALESCE(b.campaign_id, ''), COALESCE(b.role, '')
+		  FROM invites i LEFT JOIN campaign_invites b ON b.invite_id = i.id
+		 WHERE i.code_hash = ?`, tokenHash(code))
 	var (
-		id       string
-		expires  sql.NullInt64
-		usedByID sql.NullString
+		id         string
+		expires    sql.NullInt64
+		usedByID   sql.NullString
+		campaignID string
+		role       string
 	)
-	if err := row.Scan(&id, &expires, &usedByID); err != nil {
+	if err := row.Scan(&id, &expires, &usedByID, &campaignID, &role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrInviteInvalid
+			return "", "", "", ErrInviteInvalid
 		}
-		return "", fmt.Errorf("consume invite lookup: %w", err)
+		return "", "", "", fmt.Errorf("consume invite lookup: %w", err)
 	}
 	if usedByID.Valid {
-		return "", ErrInviteUsed
+		return "", "", "", ErrInviteUsed
 	}
 	if expires.Valid && time.Now().UTC().UnixMilli() >= expires.Int64 {
-		return "", ErrInviteExpired
+		return "", "", "", ErrInviteExpired
 	}
 	now := time.Now().UTC()
 	res, err := q.ExecContext(ctx,
 		`UPDATE invites SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL`,
 		userID, now.UnixMilli(), id)
 	if err != nil {
-		return "", fmt.Errorf("consume invite update: %w", err)
+		return "", "", "", fmt.Errorf("consume invite update: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return "", fmt.Errorf("consume invite rows: %w", err)
+		return "", "", "", fmt.Errorf("consume invite rows: %w", err)
 	}
 	if n == 0 {
 		// Lost the race: another request redeemed it between the SELECT and
 		// the UPDATE. Read back as used rather than guessing.
-		return "", ErrInviteUsed
+		return "", "", "", ErrInviteUsed
 	}
-	return id, nil
+	return id, campaignID, role, nil
 }
 
 // RegisterWithInvite validates an invite, creates a non-admin account, and
@@ -581,6 +615,15 @@ func (s *Store) consumeInvite(ctx context.Context, q runner, code, userID string
 // admin: invites only exist once the install's admin has been bootstrapped, so
 // a user count above zero already governs createUser's admin rule.
 func (s *Store) RegisterWithInvite(ctx context.Context, username, password, code string) (*User, error) {
+	return s.registerWithInvite(ctx, username, password, code, nil)
+}
+
+// registerWithInvite is the shared core of RegisterWithInvite and
+// RegisterWithCampaignInvite. join, when set, runs inside the same transaction
+// after the invite is consumed — with the invite's campaign binding filled in
+// — so a campaign invite cannot burn itself without also writing the
+// membership row it promised.
+func (s *Store) registerWithInvite(ctx context.Context, username, password, code string, join func(ctx context.Context, tx *sql.Tx, u *User, inv Invite) error) (*User, error) {
 	// Validate the cheap inputs before opening a transaction, so a malformed
 	// request pays nothing for a connection.
 	if _, err := normalizeUsername(username); err != nil {
@@ -607,8 +650,14 @@ func (s *Store) RegisterWithInvite(ctx context.Context, username, password, code
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.consumeInvite(ctx, tx, code, u.ID); err != nil {
+	_, campaignID, role, err := s.consumeInvite(ctx, tx, code, u.ID)
+	if err != nil {
 		return nil, err
+	}
+	if join != nil {
+		if err := join(ctx, tx, u, Invite{CampaignID: campaignID, CampaignRole: role}); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("register commit: %w", err)
@@ -625,14 +674,16 @@ type runner interface {
 
 func scanInvite(r interface{ Scan(...any) error }) (*Invite, error) {
 	var (
-		inv     Invite
-		expires sql.NullInt64
-		usedBy  sql.NullString
-		usedAt  sql.NullInt64
-		created int64
-		note    sql.NullString
+		inv        Invite
+		expires    sql.NullInt64
+		usedBy     sql.NullString
+		usedAt     sql.NullInt64
+		created    int64
+		note       sql.NullString
+		campaignID sql.NullString
+		role       sql.NullString
 	)
-	if err := r.Scan(&inv.ID, &inv.CreatedBy, &created, &expires, &usedBy, &usedAt, &note); err != nil {
+	if err := r.Scan(&inv.ID, &inv.CreatedBy, &created, &expires, &usedBy, &usedAt, &note, &campaignID, &role); err != nil {
 		return nil, err
 	}
 	inv.CreatedAt = time.UnixMilli(created).UTC()
@@ -644,5 +695,7 @@ func scanInvite(r interface{ Scan(...any) error }) (*Invite, error) {
 		inv.UsedAt = time.UnixMilli(usedAt.Int64).UTC()
 	}
 	inv.Note = note.String
+	inv.CampaignID = campaignID.String
+	inv.CampaignRole = role.String
 	return &inv, nil
 }

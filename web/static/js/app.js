@@ -12,6 +12,7 @@ import { initStudy } from "./study.js";
 import { initReader } from "./reader.js";
 import { initEncounter } from "./encounter.js";
 import { initDeck } from "./deck.js";
+import { initCampaign } from "./campaign.js";
 import { initAdmin } from "./admin.js";
 import { initLibrary } from "./library.js";
 import { initShares } from "./shares.js";
@@ -103,6 +104,7 @@ function start() {
 	initReader();
 	initEncounter();
 	initDeck();
+	initCampaign();
 	syncChrome();
 	initAccount();
 	initAdmin();

@@ -55,6 +55,13 @@
 			<span data-ico="chest"></span> Deck
 		</button>
 
+		<!-- The campaign world: the persistent graph of entities, facts,
+		     relationships and the timeline, browsed by DM and player alike —
+		     each at their own scope. -->
+		<button type="button" class="rail-action rail-campaign" id="rail-campaign">
+			<span data-ico="map"></span> Campaign
+		</button>
+
 		<div class="corpus-picker" role="radiogroup" aria-label="Rules corpus">
 				<button type="button" class="corpus-opt is-active" data-corpus="mtg" role="radio" aria-checked="true">
 					<span data-ico="orbBlue"></span> Magic
@@ -340,6 +347,154 @@
 							<button type="button" class="deck-btn danger" id="deck-delete" hidden>Delete</button>
 						</div>
 					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- ---------- Campaign surface ---------- -->
+		<section class="campaign" id="campaign-view" hidden aria-label="Campaign world">
+			<header class="study-head">
+				<h2 class="study-title" id="campaign-title">Campaign</h2>
+				<div class="camp-picker">
+					<select id="camp-select" aria-label="Campaign"><option value="">No campaigns yet…</option></select>
+					<button type="button" class="enc-btn" id="camp-new-toggle" aria-expanded="false" aria-controls="camp-new-form">New</button>
+				</div>
+				<p class="study-meta" id="campaign-meta"></p>
+				<button type="button" class="icon-btn" id="campaign-close" aria-label="Leave the campaign" title="Back to chat" data-gi="close"></button>
+			</header>
+
+			<div class="camp-body" id="camp-body">
+				<!-- The world, one entity at a time. Filter by kind, search the
+				     prose, open one to see everything attached to it. -->
+				<div class="camp-col camp-col-browser">
+					<div class="camp-panel">
+						<h3 class="enc-heading">The world</h3>
+						<form class="camp-search" id="camp-search-form" autocomplete="off">
+							<input id="camp-search" class="enc-field" type="search" placeholder="Search the campaign…" aria-label="Search campaign prose">
+						</form>
+						<div class="camp-kinds" id="camp-kinds" role="group" aria-label="Filter by kind"></div>
+						<div class="camp-entity-list" id="camp-entities" role="listbox" aria-label="Entities"></div>
+						<div class="camp-hits" id="camp-hits" hidden></div>
+					</div>
+					<form class="camp-panel" id="camp-new-entity" autocomplete="off" hidden>
+						<h3 class="enc-heading">New entity</h3>
+						<label class="camp-field"><span>Name</span>
+							<input id="camp-entity-name" class="enc-field" type="text" required aria-label="Entity name">
+						</label>
+						<label class="camp-field"><span>Kind</span>
+							<select id="camp-entity-kind" class="enc-field" aria-label="Entity kind"></select>
+						</label>
+						<label class="camp-field"><span>Summary</span>
+							<input id="camp-entity-summary" class="enc-field" type="text" aria-label="Entity summary">
+						</label>
+						<button type="submit" class="enc-btn">Add to the world</button>
+					</form>
+				</div>
+
+				<!-- The sheet: one entity and everything the caller's scope may
+				     see hanging off it. Content, so parchment. -->
+				<div class="camp-col camp-col-detail">
+					<article class="camp-sheet" id="camp-sheet">
+						<p class="camp-status" id="camp-sheet-status">Choose an entity to open its sheet.</p>
+						<div id="camp-sheet-body"></div>
+					</article>
+					<form class="camp-panel" id="camp-fact-form" autocomplete="off" hidden>
+						<h3 class="enc-heading">Record a fact</h3>
+						<label class="camp-field"><span>Subject</span>
+							<select id="camp-fact-subject" class="enc-field" aria-label="Fact subject"></select>
+						</label>
+						<label class="camp-field"><span>Predicate</span>
+							<input id="camp-fact-predicate" class="enc-field" type="text" placeholder="e.g. rules, secretly_is, lives_in" aria-label="Predicate">
+						</label>
+						<div class="camp-object-kind" role="radiogroup" aria-label="Object kind">
+							<label><input type="radio" name="camp-object" value="literal" checked> Literal</label>
+							<label><input type="radio" name="camp-object" value="entity"> Entity</label>
+						</div>
+						<label class="camp-field" id="camp-fact-literal-row"><span>Object</span>
+							<input id="camp-fact-literal" class="enc-field" type="text" aria-label="Literal object">
+						</label>
+						<label class="camp-field" id="camp-fact-entity-row" hidden><span>Object entity</span>
+							<select id="camp-fact-entity" class="enc-field" aria-label="Object entity"></select>
+						</label>
+						<label class="camp-field"><span>Statement</span>
+							<input id="camp-fact-statement" class="enc-field" type="text" required placeholder="One plain sentence" aria-label="Statement">
+						</label>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Confidence</span>
+								<select id="camp-fact-confidence" class="enc-field" aria-label="Confidence">
+									<option value="canon">canon</option>
+									<option value="derived">derived</option>
+								</select>
+							</label>
+							<label class="camp-field"><span>Visibility</span>
+								<select id="camp-fact-visibility" class="enc-field" aria-label="Visibility">
+									<option value="public">public</option>
+									<option value="secret">secret</option>
+								</select>
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Write it</button>
+					</form>
+				</div>
+
+				<!-- The map and the table. The graph is the connected
+				     neighbourhood of the selected entity — a map drawn on
+				     parchment, not a force-directed blob. -->
+				<div class="camp-col camp-col-side">
+					<div class="camp-panel camp-graph-panel">
+						<h3 class="enc-heading">The map</h3>
+						<div class="camp-graph-controls">
+							<div class="mode-toggle camp-hops" role="radiogroup" aria-label="Hops">
+								<button type="button" class="mode-opt is-active" data-hops="1" role="radio" aria-checked="true">1 hop</button>
+								<button type="button" class="mode-opt" data-hops="2" role="radio" aria-checked="false">2 hops</button>
+							</div>
+						</div>
+						<div class="camp-graph" id="camp-graph" aria-label="Entity neighbourhood graph"></div>
+					</div>
+					<details class="camp-panel camp-members" id="camp-members-panel" hidden>
+						<summary class="enc-heading">The table</summary>
+						<div class="camp-members-body" id="camp-members-body"></div>
+						<form class="camp-invite-form" id="camp-invite-form" autocomplete="off">
+							<label class="camp-field"><span>Invite as</span>
+								<select id="camp-invite-role" class="enc-field" aria-label="Invite role">
+									<option value="player">player</option>
+									<option value="observer">observer</option>
+									<option value="dm">dm</option>
+								</select>
+							</label>
+							<button type="submit" class="enc-btn">Mint invite link</button>
+						</form>
+						<div class="camp-invites" id="camp-invites"></div>
+					</details>
+				</div>
+			</div>
+
+			<!-- The picker's empty state: create the first campaign, or join
+			     one with a code the DM handed over. -->
+			<div class="camp-empty" id="camp-empty" hidden>
+				<div class="camp-panel">
+					<h3 class="enc-heading">Found a campaign</h3>
+					<form class="camp-new-form" id="camp-new-form" autocomplete="off">
+						<label class="camp-field"><span>Name</span>
+							<input id="camp-new-name" class="enc-field" type="text" required placeholder="The Ashen Court" aria-label="Campaign name">
+						</label>
+						<label class="camp-field"><span>System</span>
+							<input id="camp-new-system" class="enc-field" type="text" placeholder="D&D 5e" aria-label="Rules system">
+						</label>
+						<label class="camp-field"><span>Premise</span>
+							<textarea id="camp-new-premise" class="enc-idea-input" rows="3" aria-label="Premise"></textarea>
+						</label>
+						<button type="submit" class="enc-btn primary">Create</button>
+					</form>
+				</div>
+				<div class="camp-panel">
+					<h3 class="enc-heading">Join with an invite code</h3>
+					<form class="camp-new-form" id="camp-join-form" autocomplete="off">
+						<label class="camp-field"><span>Code</span>
+							<input id="camp-join-code" class="enc-field" type="text" required aria-label="Invite code">
+						</label>
+						<button type="submit" class="enc-btn">Take your seat</button>
+					</form>
 				</div>
 			</div>
 		</section>
