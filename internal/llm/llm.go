@@ -189,12 +189,28 @@ func (c *Client) Stream(ctx context.Context, req Request, onDelta func(string) e
 	return c.run(ctx, req, onDelta)
 }
 
+// Usage is the token accounting of one completed exchange, as reported by the
+// provider that answered. Consumers that bill or budget against tokens (the
+// canon engine) read it instead of estimating.
+type Usage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
 // AnswerPrompt runs a single-turn exchange with a caller-supplied system prompt
 // and user message. It is the entry point for features that need their own
 // prompt shape (the interaction resolver) while reusing the same Messages API
 // plumbing, streaming, and not-configured guard as the Q&A chat. onDelta nil
 // reads one JSON body; non-nil asks for SSE.
 func (c *Client) AnswerPrompt(ctx context.Context, system, user string) (string, error) {
+	out, _, err := c.callMessages(ctx, system, []message{{Role: "user", Content: user}}, false, nil)
+	return out, err
+}
+
+// AnswerPromptUsage is AnswerPrompt that also reports the exchange's token
+// usage. Non-streaming by design: usage comes back in the JSON body, and the
+// features that need it (canon-engine batch passes) never stream.
+func (c *Client) AnswerPromptUsage(ctx context.Context, system, user string) (string, Usage, error) {
 	return c.callMessages(ctx, system, []message{{Role: "user", Content: user}}, false, nil)
 }
 
@@ -203,7 +219,8 @@ func (c *Client) StreamPrompt(ctx context.Context, system, user string, onDelta 
 	if onDelta == nil {
 		return c.AnswerPrompt(ctx, system, user)
 	}
-	return c.callMessages(ctx, system, []message{{Role: "user", Content: user}}, true, onDelta)
+	out, _, err := c.callMessages(ctx, system, []message{{Role: "user", Content: user}}, true, onDelta)
+	return out, err
 }
 
 // StreamChat runs a multi-turn exchange with a caller-supplied system prompt.
@@ -217,7 +234,8 @@ func (c *Client) StreamChat(ctx context.Context, system string, turns []Turn, on
 	if len(msgs) == 0 {
 		return "", fmt.Errorf("no message to answer")
 	}
-	return c.callMessages(ctx, system, msgs, onDelta != nil, onDelta)
+	out, _, err := c.callMessages(ctx, system, msgs, onDelta != nil, onDelta)
+	return out, err
 }
 
 // chatMessages normalizes turns into API messages: unknown roles become user
@@ -249,28 +267,31 @@ func chatMessages(turns []Turn) []message {
 // run builds the Q&A exchange from a Request and sends it.
 func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error) (string, error) {
 	streaming := onDelta != nil
-	return c.callMessages(ctx,
+	out, _, err := c.callMessages(ctx,
 		systemPrompt(r.CorpusName, len(r.Cards) > 0, len(r.Entities) > 0, len(r.Rulings) > 0),
 		buildMessages(r), streaming, onDelta)
+	return out, err
 }
 
 // callMessages performs one exchange, walking the provider chain until one
 // answers. A provider that fails for a reason the next one might not share
 // (exhausted quota, bad key, overload, unreachable host) hands off; a failure
 // that would repeat everywhere — a malformed request, a cancelled caller —
-// stops the walk and surfaces as-is.
+// stops the walk and surfaces as-is. Usage is whatever the answering provider
+// reported (zero on the streaming path, which does not read it).
 //
 // Streaming complicates handoff: once the reader has seen text, restarting on
 // another provider would splice two half-answers together. So a stream that
 // already emitted a delta never fails over, and neither does one whose reader
 // went away (a browser closing the connection is not a provider fault).
-func (c *Client) callMessages(ctx context.Context, system string, msgs []message, streaming bool, onDelta func(string) error) (string, error) {
+func (c *Client) callMessages(ctx context.Context, system string, msgs []message, streaming bool, onDelta func(string) error) (string, Usage, error) {
 	providers := c.active()
 	if len(providers) == 0 {
-		return "", ErrNotConfigured
+		return "", Usage{}, ErrNotConfigured
 	}
 
 	var lastOut string
+	var lastUsage Usage
 	var lastErr error
 	for i, p := range providers {
 		emitted, readerGone := false, false
@@ -286,11 +307,11 @@ func (c *Client) callMessages(ctx context.Context, system string, msgs []message
 			}
 		}
 
-		out, err := c.callProvider(ctx, p, system, msgs, streaming, delta)
+		out, usage, err := c.callProvider(ctx, p, system, msgs, streaming, delta)
 		if err == nil {
-			return out, nil
+			return out, usage, nil
 		}
-		lastOut, lastErr = out, err
+		lastOut, lastUsage, lastErr = out, usage, err
 
 		last := i == len(providers)-1
 		if last || emitted || readerGone || ctx.Err() != nil || !shouldFailOver(err) {
@@ -300,13 +321,14 @@ func (c *Client) callMessages(ctx context.Context, system string, msgs []message
 		log.Printf("llm: provider %s (%s) failed, falling back to %s (%s): %v",
 			hostOf(p.BaseURL), p.Model, hostOf(next.BaseURL), next.Model, err)
 	}
-	return lastOut, lastErr
+	return lastOut, lastUsage, lastErr
 }
 
 // callProvider runs one exchange against a single provider. With onDelta nil it
 // reads a single JSON body; otherwise it asks for SSE and decodes the event
-// stream.
-func (c *Client) callProvider(ctx context.Context, cfg Config, system string, msgs []message, streaming bool, onDelta func(string) error) (string, error) {
+// stream. Usage is filled on the JSON path; the SSE path does not read the
+// usage events and reports zero.
+func (c *Client) callProvider(ctx context.Context, cfg Config, system string, msgs []message, streaming bool, onDelta func(string) error) (string, Usage, error) {
 	reqBody := messagesRequest{
 		Model:     cfg.Model,
 		MaxTokens: maxAnswerTokens,
@@ -316,13 +338,13 @@ func (c *Client) callProvider(ctx context.Context, cfg Config, system string, ms
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", Usage{}, err
 	}
 
 	url := strings.TrimRight(cfg.BaseURL, "/") + "/v1/messages"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", Usage{}, err
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -336,25 +358,26 @@ func (c *Client) callProvider(ctx context.Context, cfg Config, system string, ms
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("llm request: %w", err)
+		return "", Usage{}, fmt.Errorf("llm request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", &apiError{status: resp.StatusCode, statusText: resp.Status, body: string(raw)}
+		return "", Usage{}, &apiError{status: resp.StatusCode, statusText: resp.Status, body: string(raw)}
 	}
 	if streaming {
-		return readStream(resp.Body, onDelta)
+		out, err := readStream(resp.Body, onDelta)
+		return out, Usage{}, err
 	}
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", Usage{}, err
 	}
 	var mr messagesResponse
 	if err := json.Unmarshal(raw, &mr); err != nil {
-		return "", fmt.Errorf("decode llm response: %w", err)
+		return "", Usage{}, fmt.Errorf("decode llm response: %w", err)
 	}
 	var b strings.Builder
 	for _, block := range mr.Content {
@@ -364,9 +387,9 @@ func (c *Client) callProvider(ctx context.Context, cfg Config, system string, ms
 	}
 	out := strings.TrimSpace(b.String())
 	if out == "" {
-		return "", fmt.Errorf("llm returned no text")
+		return "", Usage{}, fmt.Errorf("llm returned no text")
 	}
-	return out, nil
+	return out, mr.Usage, nil
 }
 
 // apiError is a non-2xx response from a provider, kept structured so the
@@ -722,6 +745,7 @@ type messagesResponse struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+	Usage Usage `json:"usage"`
 }
 
 // streamEvent is the subset of the Anthropic SSE event shape we consume.

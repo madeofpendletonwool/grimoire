@@ -284,6 +284,23 @@ func TestAnswerPrompt_SendsCustomSystemAndUser(t *testing.T) {
 	}
 }
 
+func TestAnswerPromptUsage_ReportsTokenUsage(t *testing.T) {
+	c := newPromptClient(t, func(req messagesRequest) (int, string) {
+		return http.StatusOK, `{"content":[{"type":"text","text":"extraction payload"}],"usage":{"input_tokens":123,"output_tokens":456}}`
+	})
+
+	out, usage, err := c.AnswerPromptUsage(context.Background(), "sys", "user")
+	if err != nil {
+		t.Fatalf("AnswerPromptUsage: %v", err)
+	}
+	if out != "extraction payload" {
+		t.Errorf("answer = %q", out)
+	}
+	if usage.InputTokens != 123 || usage.OutputTokens != 456 {
+		t.Errorf("usage = %+v, want 123/456", usage)
+	}
+}
+
 func TestStreamPrompt_DecodesDeltas(t *testing.T) {
 	// One content_block_delta event carrying the trace, then stream end.
 	c := newPromptClient(t, func(req messagesRequest) (int, string) {

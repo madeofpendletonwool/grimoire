@@ -75,6 +75,19 @@ The cache key folds in the retrieved source set, so a rules reindex invalidates 
 
 See [Accounts & Invites](accounts.md) for the model: first visitor claims the keeper account, everyone else arrives via single-use invite links.
 
+## Canon engine
+
+The post-session extraction pass — transcripts, DM notes and player journals in, cited candidate facts out for DM review — uses the same `ANTHROPIC_*` endpoint as the chat. Extraction is budget-guarded from day one: a run stops at its soft USD ceiling or candidate cap, and the remainder is deferred and resumable, so a runaway pass over a four-hour transcript cannot become a surprise bill.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `CANON_BUDGET_USD` | `0` | Soft USD spend ceiling per run. Requires both prices below; with prices unset the budget falls back to the candidate cap and cost is tracked in tokens only. |
+| `CANON_MAX_CANDIDATES` | `500` | Hard cap on candidates staged per run. |
+| `CANON_BATCH_SIZE` | `8` | Sources processed per run; the rest stay deferred for the next run. |
+| `CANON_REQUEST_INTERVAL` | `1s` | Minimum spacing between model calls during a run. Any Go duration. |
+| `CANON_PRICE_IN_MTOK` | _(empty)_ | Price per one million input tokens, USD, for the budget estimate. |
+| `CANON_PRICE_OUT_MTOK` | _(empty)_ | Price per one million output tokens, USD. |
+
 ## Data sources & mirrors
 
 The rules corpora are fetched and indexed at first run; the live lookups run at question time. Each can be retargeted at a mirror.
