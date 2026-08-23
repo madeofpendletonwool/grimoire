@@ -3,7 +3,7 @@
 One Go binary, one SQLite file, no frameworks — for the UI or anything else.
 
 ```
-cmd/grimoire      CLI entrypoint: `serve` (default) | `index`
+cmd/grimoire      CLI entrypoint: `serve` (default) | `index` | `migrate status|up|down`
 internal/
   auth/           accounts + server-side sessions (argon2id, same SQLite file)
   cache/          grounded-answer cache: repeat questions skip the model (same SQLite file)
@@ -16,6 +16,7 @@ internal/
   entities/       per-corpus entity resolution into grounding text (MTG cards, D&D via Open5e)
   index/          SQLite + FTS5 store; full-text + rule-number search
   llm/            Anthropic Messages client (configurable base URL), RAG + streaming
+  migrate/        the database schema: embedded goose migrations + the runner
   resolver/       Magic interaction resolver: board + sequence → step-by-step prompt
   rulings/        official MTG card rulings from Scryfall, cached + rate-limited
   server/         HTTP handlers, JSON API, SSE chat endpoint, session gate
@@ -32,6 +33,36 @@ The binary embeds all front-end assets, so the runtime image is just the binary 
 Chat history and accounts live in the **same SQLite file** as the rules index. That is safe: `grimoire index` only clears the document tables, so rebuilding the index never drops a conversation or signs anyone out. Keep the `/data` volume and both survive upgrades.
 
 Also riding along in that file: the grounded-answer cache, the per-user study schedules, saved decks and encounters, and the mirrored SRD bestiary the encounter builder chooses from. Pure-Go SQLite with FTS5 — no CGO, a single static binary.
+
+## Schema migrations
+
+The schema is owned by `internal/migrate/`: numbered `.sql` files embedded in
+the binary with `//go:embed` and applied by [goose](https://github.com/pressly/goose).
+Nothing else imports goose — one seam, one place to change.
+
+`migrate.Up` runs before the server serves a request, and **a failure is fatal**:
+the binary refuses to start rather than serving a half-applied schema. Migration
+`0001` is a baseline that adopts the pre-migration schema with `CREATE TABLE IF
+NOT EXISTS` throughout, so it creates everything on a fresh database and is a
+clean no-op on an existing one — upgrading into migrations loses nothing.
+
+Operators get:
+
+```bash
+grimoire migrate status    # which migrations have been applied
+grimoire migrate up        # apply pending migrations and exit
+grimoire migrate down      # roll back the most recent migration and exit
+```
+
+Adding a migration is adding `internal/migrate/migrations/000N_what_it_does.sql`
+with `-- +goose Up` and `-- +goose Down` sections. Versions start at 1 and
+increase by one: a duplicate or a gap fails `go test`, because a numbering
+collision found in CI is much cheaper than one found mid-upgrade.
+
+The existing packages still declare their own DDL in `New()` for now; a test
+builds the schema both ways and asserts they are identical, so the two cannot
+drift while that duplication lasts. Reasoning and rejected alternatives are in
+[Decisions](../decisions.md#adr-1-presslygoose-is-the-migration-library).
 
 ## The retrieval flow
 
