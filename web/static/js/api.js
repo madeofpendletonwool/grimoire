@@ -203,6 +203,78 @@ export const api = {
 	deleteDeck: (id) =>
 		fetch(`/api/decks/${encodeURIComponent(id)}`, { method: "DELETE" }).then(json),
 
+	// The campaign world. Every read runs at the caller's resolved scope on
+	// the server; writes are DM-only and the server enforces that too.
+	campaignList: () => fetch("/api/campaigns").then(json),
+
+	campaignCreate: (name, system, premise) =>
+		fetch("/api/campaigns", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name, system, premise }),
+		}).then(json),
+
+	campaignJoin: (code) =>
+		fetch("/api/campaigns/join", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ code }),
+		}).then(json),
+
+	campaignEntities: (cid, kind) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/entities` +
+			(kind ? `?kind=${encodeURIComponent(kind)}` : "")).then(json),
+
+	campaignEntity: (cid, eid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/entities/${encodeURIComponent(eid)}`).then(json),
+
+	campaignEntityCreate: (cid, kind, name, summary) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/entities`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ kind, name, summary }),
+		}).then(json),
+
+	campaignFactCreate: (cid, fact) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/facts`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(fact),
+		}).then(json),
+
+	campaignFact: (cid, fid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/facts/${encodeURIComponent(fid)}`).then(json),
+
+	campaignFactSupersede: (cid, fid, fact) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/facts/${encodeURIComponent(fid)}/supersede`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(fact),
+		}).then(json),
+
+	campaignAwarenessSet: (cid, knower, factId, stance) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/awareness`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ knower, fact_id: factId, stance }),
+		}).then(json),
+
+	campaignSearch: (cid, q) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/search?q=${encodeURIComponent(q)}`).then(json),
+
+	campaignGraph: (cid, center, hops) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/graph?center=${encodeURIComponent(center)}&hops=${hops}`).then(json),
+
+	campaignMembers: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/members`).then(json),
+
+	campaignMemberUpdate: (cid, uid, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/members/${encodeURIComponent(uid)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
 	// The campaign session layer: campaigns to hang sessions on, sessions,
 	// verbatim sources, addressable spans, the event log, and the Markdown
 	// export. Sources are immutable; spans are byte offsets into the stored
@@ -232,6 +304,19 @@ export const api = {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(patch),
 		}).then(json),
+
+	campaignMemberRemove: (cid, uid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/members/${encodeURIComponent(uid)}`, { method: "DELETE" }).then(json),
+
+	campaignInviteCreate: (cid, role) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/invites`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ role }),
+		}).then(json),
+
+	campaignInvites: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/invites`).then(json),
 
 	listSources: (campaignID, sessionID) =>
 		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/sources`).then(json),

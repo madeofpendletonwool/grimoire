@@ -16,15 +16,16 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
+	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 )
 
-// newCampaignServer builds a server with accounts, the campaign graph, and
-// the session layer wired, with the keeper signed in. Migrations run
-// explicitly: index.Open applies the legacy schema, the campaign tables come
-// from goose.
-func newCampaignServer(t *testing.T) *Server {
+// newSessionServer builds a server with accounts, the campaign graph, the
+// knowledge layer, and the session layer wired, with the keeper signed in.
+// Migrations run explicitly: index.Open applies the legacy schema, the
+// campaign and session tables come from goose.
+func newSessionServer(t *testing.T) *Server {
 	t.Helper()
 	store, err := index.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -46,11 +47,16 @@ func newCampaignServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("open session store: %v", err)
 	}
+	knowledgeStore, err := knowledge.New(store.DB())
+	if err != nil {
+		t.Fatalf("open knowledge store: %v", err)
+	}
 	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, nil, Auth{Users: users}, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
 	s = s.WithCampaign(campaigns, sessions)
+	s = s.WithCampaigns(campaigns, knowledgeStore)
 	signIn(t, s, "keeper", "a-perfectly-fine-passphrase")
 	return s
 }
@@ -87,7 +93,7 @@ func newSessionAPI(t *testing.T, s *Server, campaignID, name string) string {
 }
 
 func TestCampaignsUnwiredReportUnavailable(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	s.campaigns = nil
 	if code, _ := do(t, s, http.MethodGet, "/api/campaigns", ""); code != http.StatusServiceUnavailable {
 		t.Errorf("unwired list: status %d, want 503", code)
@@ -95,7 +101,7 @@ func TestCampaignsUnwiredReportUnavailable(t *testing.T) {
 }
 
 func TestCampaignListCreateRoundTrip(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	id := newCampaignAPI(t, s, "The Withering Kingdom")
 
 	code, body := do(t, s, http.MethodGet, "/api/campaigns", "")
@@ -107,7 +113,7 @@ func TestCampaignListCreateRoundTrip(t *testing.T) {
 		t.Fatalf("campaigns = %d, want 1", len(list))
 	}
 	got, _ := list[0].(map[string]any)
-	if got["id"] != id || got["role"] != "dm" || got["name"] != "The Withering Kingdom" {
+	if got["id"] != id || got["my_role"] != "dm" || got["name"] != "The Withering Kingdom" {
 		t.Errorf("campaign view = %v", got)
 	}
 
@@ -119,7 +125,7 @@ func TestCampaignListCreateRoundTrip(t *testing.T) {
 }
 
 func TestSessionLifecycleThroughAPI(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	cid := newCampaignAPI(t, s, "one")
 	sid := newSessionAPI(t, s, cid, "The Ambush")
 
@@ -150,7 +156,7 @@ func TestSessionLifecycleThroughAPI(t *testing.T) {
 }
 
 func TestSessionBelongsToItsCampaign(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	one := newCampaignAPI(t, s, "one")
 	two := newCampaignAPI(t, s, "two")
 	sid := newSessionAPI(t, s, one, "The Ambush")
@@ -185,7 +191,7 @@ func addTranscript(t *testing.T, s *Server, cid, sid string) string {
 }
 
 func TestPasteSourceResolveSpanExport(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	cid := newCampaignAPI(t, s, "one")
 	sid := newSessionAPI(t, s, cid, "The Ambush")
 	srcID := addTranscript(t, s, cid, sid)
@@ -231,7 +237,7 @@ func TestPasteSourceResolveSpanExport(t *testing.T) {
 }
 
 func TestExportBodyIsMarkdown(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	cid := newCampaignAPI(t, s, "one")
 	sid := newSessionAPI(t, s, cid, "The Ambush")
 	addTranscript(t, s, cid, sid)
@@ -278,7 +284,7 @@ func uploadSource(t *testing.T, s *Server, cid, sid, filename, kind, content str
 }
 
 func TestUploadSRTProducesTimedSource(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	cid := newCampaignAPI(t, s, "one")
 	sid := newSessionAPI(t, s, cid, "The Crypt")
 
@@ -320,7 +326,7 @@ func TestUploadSRTProducesTimedSource(t *testing.T) {
 }
 
 func TestUploadRejectsNonTextFormats(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	cid := newCampaignAPI(t, s, "one")
 	sid := newSessionAPI(t, s, cid, "one")
 	// A .srt-named file with no cues fails loudly rather than storing junk.
@@ -338,7 +344,7 @@ func TestUploadRejectsNonTextFormats(t *testing.T) {
 /* ---------- events + prior rulings ---------- */
 
 func TestRulingSurfacesPriorRulingOverAPI(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	cid := newCampaignAPI(t, s, "one")
 	first := newSessionAPI(t, s, cid, "The Ambush")
 	later := newSessionAPI(t, s, cid, "The Crypt")
@@ -370,7 +376,7 @@ func TestRulingSurfacesPriorRulingOverAPI(t *testing.T) {
 }
 
 func TestEventLogListsInOrder(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	cid := newCampaignAPI(t, s, "one")
 	sid := newSessionAPI(t, s, cid, "one")
 
@@ -406,7 +412,7 @@ func TestEventLogListsInOrder(t *testing.T) {
 /* ---------- role enforcement ---------- */
 
 func TestPlayerSeesLessThanTheDM(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	cid := newCampaignAPI(t, s, "one")
 	sid := newSessionAPI(t, s, cid, "The Ambush")
 
@@ -489,7 +495,7 @@ func TestPlayerSeesLessThanTheDM(t *testing.T) {
 }
 
 func TestStrangerSeesNoCampaign(t *testing.T) {
-	s := newCampaignServer(t)
+	s := newSessionServer(t)
 	cid := newCampaignAPI(t, s, "one")
 	sid := newSessionAPI(t, s, cid, "one")
 

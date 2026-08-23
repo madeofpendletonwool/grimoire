@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -247,7 +248,9 @@ type registrationRequest struct {
 // requires a valid, unused, unexpired invite — self-service creation stays off
 // — and the new account is never an admin. The whole validate-create-consume
 // run is one transaction in the store, so a taken name or a bad invite leaves
-// nothing behind.
+// nothing behind. When the code carries a campaign binding (MAD-305), the
+// campaign_members row is written inside that same transaction: the account,
+// the burned invite and the seat at the table commit together.
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if !s.authEnabled(w) {
 		return
@@ -257,7 +260,19 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 		return
 	}
-	u, err := s.users.RegisterWithInvite(r.Context(), req.Username, req.Password, req.Invite)
+	var u *auth.User
+	var err error
+	if s.campaigns != nil {
+		u, err = s.users.RegisterWithCampaignInvite(r.Context(), req.Username, req.Password, req.Invite,
+			func(ctx context.Context, tx *sql.Tx, newUser *auth.User, inv auth.Invite) error {
+				if !inv.Bound() {
+					return nil // the keeper's plain account invite
+				}
+				return s.campaigns.AddMemberTx(ctx, tx, inv.CampaignID, newUser.ID, inv.CampaignRole, "")
+			})
+	} else {
+		u, err = s.users.RegisterWithInvite(r.Context(), req.Username, req.Password, req.Invite)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInviteInvalid):
@@ -376,14 +391,16 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (*auth.Use
 // inviteView is the JSON shape for an invite returned to the admin. Code is the
 // raw secret and is present only on creation; the stored list never carries it.
 type inviteView struct {
-	ID        string    `json:"id"`
-	Code      string    `json:"code,omitempty"`
-	URL       string    `json:"url,omitempty"`
-	Status    string    `json:"status"`
-	Note      string    `json:"note,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
-	UsedAt    time.Time `json:"used_at,omitempty"`
+	ID           string    `json:"id"`
+	Code         string    `json:"code,omitempty"`
+	URL          string    `json:"url,omitempty"`
+	Status       string    `json:"status"`
+	Note         string    `json:"note,omitempty"`
+	CampaignID   string    `json:"campaign_id,omitempty"`
+	CampaignRole string    `json:"campaign_role,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+	UsedAt       time.Time `json:"used_at,omitempty"`
 }
 
 func inviteStatus(inv auth.Invite) string {
@@ -463,10 +480,12 @@ func (s *Server) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 
 func toInviteView(r *http.Request, inv auth.Invite) inviteView {
 	v := inviteView{
-		ID:        inv.ID,
-		Status:    inviteStatus(inv),
-		Note:      inv.Note,
-		CreatedAt: inv.CreatedAt,
+		ID:           inv.ID,
+		Status:       inviteStatus(inv),
+		Note:         inv.Note,
+		CampaignID:   inv.CampaignID,
+		CampaignRole: inv.CampaignRole,
+		CreatedAt:    inv.CreatedAt,
 	}
 	// The raw code is only set on a freshly created invite (CreateInvite
 	// populates it; the stored row never does). Build the link once, here.

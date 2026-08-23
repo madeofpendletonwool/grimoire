@@ -2679,6 +2679,23 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 }
 .share-date { flex: none; font-size: var(--fs-xs); opacity: 0.55; }
 
+/* ---------- Campaign world ---------- */
+/* Three jobs, three materials, the same rule the encounter builder follows:
+   the tools (browser, editors, table) are stone panels with pixel labels; the
+   one thing the caller reads at length — an entity's sheet — is parchment.
+   The map is deliberately parchment too: it is the campaign's own map, not
+   an instrument, so ink on parchment rather than chrome. */
+.main.is-campaiging > .transcript,
+.main.is-campaiging > .composer-dock { display: none; }
+
+.campaign {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scroll-behavior: smooth;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+
 /* ---------- Sessions surface ----------
    The campaign session layer. Two columns over the same measure the other
    full-screen surfaces use: the session list left, the open session's
@@ -2690,6 +2707,121 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	overflow-y: auto;
 	scroll-behavior: smooth;
 	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+.camp-picker { display: flex; align-items: center; gap: var(--sp-2); }
+.camp-picker select {
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+	color: var(--parchment);
+	font-size: var(--fs-sm);
+	padding: 0.15rem 0.1rem;
+	max-width: 14rem;
+	cursor: pointer;
+}
+.camp-picker select:focus { outline: none; border-bottom-color: var(--gold); }
+
+.camp-body {
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: minmax(0, 5fr) minmax(0, 7fr) minmax(0, 5fr);
+	gap: var(--sp-4);
+	align-items: start;
+}
+@media (max-width: 70rem) {
+	.camp-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+	.camp-col-side { grid-column: 1 / -1; }
+}
+@media (max-width: 55rem) {
+	.camp-body { grid-template-columns: 1fr; }
+}
+.camp-col { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.camp-panel { padding: var(--sp-3) var(--sp-4) var(--sp-4); box-shadow: var(--shadow-2); }
+
+.camp-empty {
+	max-width: var(--measure, 48rem);
+	margin: var(--sp-5) auto 0;
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: var(--sp-4);
+}
+.camp-new-form { display: flex; flex-direction: column; gap: var(--sp-3); }
+
+.camp-field { display: flex; flex-direction: column; gap: 0.25rem; }
+.camp-field > span {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.04em;
+	opacity: 0.6;
+}
+.camp-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.camp-object-kind {
+	display: flex;
+	gap: var(--sp-3);
+	font-size: var(--fs-xs);
+	font-family: var(--font-pixel);
+	letter-spacing: 0.04em;
+	opacity: 0.75;
+}
+
+.camp-search { margin-bottom: var(--sp-3); }
+.camp-kinds { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.camp-entity-list { display: flex; flex-direction: column; gap: var(--sp-1); max-height: 26rem; overflow-y: auto; }
+.camp-entity {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-2);
+	width: 100%;
+	text-align: left;
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+	color: var(--parchment);
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	padding: 0.3rem 0.2rem;
+	cursor: pointer;
+}
+.camp-entity:hover { color: var(--gold-bright); }
+.camp-entity.is-active { color: var(--gold); }
+.camp-entity-kind {
+	flex: none;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	opacity: 0.5;
+	min-width: 5.5rem;
+}
+.camp-entity-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.camp-hits { margin-top: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-1); }
+.camp-hit { margin: 0; font-size: var(--fs-xs); color: var(--parchment); opacity: 0.8; }
+
+/* The sheet — parchment, like every surface the caller reads. */
+.camp-sheet { padding: var(--sp-4) var(--sp-5) var(--sp-5); box-shadow: var(--shadow-2); }
+.camp-sheet-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.camp-sheet-title {
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: var(--fs-lg);
+	letter-spacing: 0.04em;
+	color: var(--ink);
+}
+.camp-sheet-summary { margin: var(--sp-2) 0 0; color: var(--ink); }
+.camp-aliases { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--ink-soft); font-style: italic; }
+.camp-sheet-section { margin-top: var(--sp-4); }
+.camp-sheet-heading {
+	margin: 0 0 var(--sp-2);
+	font-family: var(--font-prose);
+	font-variant: small-caps;
+	letter-spacing: 0.08em;
+	font-size: var(--fs-sm);
+	color: var(--ink);
+	opacity: 0.8;
+	border-bottom: 1px solid var(--ink-soft);
+	padding-bottom: 0.2rem;
 }
 .main.is-sessioning > .transcript,
 .main.is-sessioning > .composer-dock { display: none; }
@@ -2728,6 +2860,88 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	color: var(--parchment);
 	opacity: 0.8;
 }
+.camp-facts { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-fact-statement { margin: 0; color: var(--ink); }
+.camp-fact-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: 0.2rem; }
+.camp-fact-chips .enc-chip { font-size: var(--fs-xs); }
+.camp-why { margin-top: var(--sp-1); padding: var(--sp-2); border-left: 2px solid var(--ink-soft); }
+.camp-why-line { margin: 0 0 0.2rem; font-size: var(--fs-xs); color: var(--ink-soft); }
+.camp-supersede-banner {
+	margin: 0 0 var(--sp-3);
+	padding: var(--sp-2);
+	font-size: var(--fs-xs);
+	font-family: var(--font-pixel);
+	letter-spacing: 0.04em;
+	color: var(--ink);
+	border-left: 2px solid var(--gold);
+}
+
+.camp-rels { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.camp-rel { color: var(--ink); font-size: var(--fs-sm); }
+.camp-rel b { font-weight: 600; }
+.camp-events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.camp-event { color: var(--ink); font-size: var(--fs-sm); }
+
+/* The map: ink on parchment. Squares, not circles — the pixel art speaks in
+   whole squares, and 1× geometry keeps every edge crisp without any sprite
+   scaling at all. */
+.camp-graph-panel { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-graph { padding: var(--sp-3) var(--sp-4); }
+.camp-graph-controls { display: flex; justify-content: flex-end; }
+.camp-hops .mode-opt {
+	background: transparent;
+	border: none;
+	color: var(--parchment);
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.05em;
+	opacity: 0.55;
+	padding: 0.15rem 0.4rem;
+	cursor: pointer;
+}
+.camp-hops .mode-opt.is-active { opacity: 1; color: var(--gold); }
+.camp-graph-svg { width: 100%; height: auto; display: block; }
+.camp-graph-svg .camp-edge { stroke: var(--ink-soft); stroke-width: 1; }
+.camp-graph-svg .camp-edge-label {
+	font-family: var(--font-pixel);
+	font-size: 8px;
+	fill: var(--ink-soft);
+	text-anchor: middle;
+}
+.camp-graph-svg .camp-node rect { fill: var(--ink); }
+.camp-graph-svg .camp-node.is-center rect { fill: var(--gold); }
+.camp-graph-svg .camp-node:not(.is-center) { cursor: pointer; }
+.camp-graph-svg .camp-node:not(.is-center):hover rect,
+.camp-graph-svg .camp-node:not(.is-center):focus rect { fill: var(--gold); outline: none; }
+.camp-graph-svg .camp-node-label {
+	font-family: var(--font-pixel);
+	font-size: 10px;
+	fill: var(--ink);
+	text-anchor: middle;
+}
+.camp-node:focus { outline: none; }
+
+/* The table: members, roles, invites. */
+.camp-members > summary { cursor: pointer; }
+.camp-members[open] > summary { margin-bottom: var(--sp-3); }
+.camp-members-body { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-member { display: flex; align-items: center; gap: var(--sp-2); }
+.camp-member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.camp-role { max-width: 8rem; }
+.camp-invite-form { display: flex; align-items: flex-end; gap: var(--sp-2); margin-top: var(--sp-3); }
+.camp-invite-link { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin: var(--sp-3) 0 0; }
+.camp-invite-link a { color: var(--gold-bright); font-size: var(--fs-xs); word-break: break-all; }
+.camp-invite-row { margin: var(--sp-1) 0 0; font-size: var(--fs-xs); opacity: 0.6; font-family: var(--font-pixel); }
+
+.camp-status { color: var(--parchment); opacity: 0.6; font-size: var(--fs-sm); }
+.study-meta.warn { color: var(--gold-bright); }
+
+/* Parchment-context text: the sheet and the map carry their status lines in
+   ink-soft, not parchment-on-parchment. */
+.camp-sheet { color: var(--ink); font-family: var(--font-prose); min-height: 12rem; }
+.camp-sheet .camp-status { color: var(--ink-soft); }
+.camp-graph { margin-top: var(--sp-2); }
+
 .sess-new { display: flex; gap: var(--sp-2); }
 .sess-new .sess-field { flex: 1; }
 .sess-field { padding: 0.35rem 0.6rem; min-width: 0; background: transparent; font-family: var(--font-prose); font-size: var(--fs-sm); color: var(--parchment); }

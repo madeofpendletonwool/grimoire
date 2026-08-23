@@ -72,6 +72,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
+	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
@@ -735,6 +736,18 @@ func runServe() error {
 		return err
 	}
 
+	// The campaign graph and the knowledge layer share it as well; the schema
+	// for both is migration-owned (0002, 0003, 0004), applied by openStore
+	// before anything in this function runs.
+	campaigns, err := campaign.New(store.DB())
+	if err != nil {
+		return err
+	}
+	knowledge, err := knowledge.New(store.DB())
+	if err != nil {
+		return err
+	}
+
 	// Spaced-repetition review schedules share that file too: the concept keys
 	// are stable rule numbers, so a reindex never strands a user's progress.
 	studies, err := study.New(store.DB())
@@ -818,13 +831,9 @@ func runServe() error {
 		log.Printf("adopted %d pre-authentication conversations", adopted)
 	}
 
-	// Campaigns and their session layer share the file as well; the session
-	// tables exist only through the migrations, so the store opens straight
+	// The session layer rides on the campaign store: the session tables
+	// exist only through the migrations, so the store opens straight
 	// onto the migrated handle.
-	campaigns, err := campaign.New(store.DB())
-	if err != nil {
-		return err
-	}
 	gameSessions, err := gamesession.New(store.DB())
 	if err != nil {
 		return err
@@ -840,6 +849,7 @@ func runServe() error {
 	srv = srv.WithShares(shares)
 	srv = srv.WithCampaign(campaigns, gameSessions)
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()), bestiary)
+	srv = srv.WithCampaigns(campaigns, knowledge)
 	if cardStore != nil {
 		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)
 	}

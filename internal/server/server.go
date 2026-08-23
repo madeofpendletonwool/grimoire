@@ -28,6 +28,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
+	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
@@ -63,10 +64,12 @@ type Server struct {
 	edhrec     *edhrec.Client
 	shares     *share.Store
 	users      *auth.Store
-	// The campaign graph and its session layer (MAD-303/306). Wired with
-	// WithCampaign; nil disables the campaign endpoints.
+	// The campaign graph with its knowledge layer and its session layer
+	// (MAD-303/305/306). Wired with WithCampaign/WithCampaigns; nil
+	// disables the campaign endpoints.
 	campaigns        *campaign.Store
 	sessions         *gamesession.Store
+	knowledge        *knowledge.Store
 	openRegistration bool
 	tmpl             *template.Template
 	static           fs.FS
@@ -160,8 +163,45 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/shares", s.handleListShares)
 	mux.HandleFunc("DELETE /api/shares/{token}", s.handleRevokeShare)
 	mux.HandleFunc("GET /s/{token}", s.handleSharePage)
+	// The campaign surface: every route below resolves a knowledge.Scope from
+	// the caller's campaign_members row before touching the store.
 	mux.HandleFunc("GET /api/campaigns", s.handleListCampaigns)
 	mux.HandleFunc("POST /api/campaigns", s.handleCreateCampaign)
+	mux.HandleFunc("POST /api/campaigns/join", s.handleJoinCampaign)
+	mux.HandleFunc("GET /api/campaigns/{id}", s.handleGetCampaign)
+	mux.HandleFunc("PATCH /api/campaigns/{id}", s.handleUpdateCampaign)
+	mux.HandleFunc("DELETE /api/campaigns/{id}", s.handleDeleteCampaign)
+	mux.HandleFunc("GET /api/campaigns/{id}/members", s.handleCampaignMembers)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/members/{uid}", s.handleUpdateCampaignMember)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/members/{uid}", s.handleRemoveCampaignMember)
+	mux.HandleFunc("GET /api/campaigns/{id}/invites", s.handleListCampaignInvites)
+	mux.HandleFunc("POST /api/campaigns/{id}/invites", s.handleCreateCampaignInvite)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/invites/{iid}", s.handleRevokeCampaignInvite)
+	mux.HandleFunc("GET /api/campaigns/{id}/entities", s.handleCampaignEntities)
+	mux.HandleFunc("POST /api/campaigns/{id}/entities", s.handleCreateCampaignEntity)
+	mux.HandleFunc("GET /api/campaigns/{id}/entities/{eid}", s.handleCampaignEntity)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/entities/{eid}", s.handleUpdateCampaignEntity)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/entities/{eid}", s.handleDeleteCampaignEntity)
+	mux.HandleFunc("POST /api/campaigns/{id}/entities/{eid}/names", s.handleAddEntityName)
+	mux.HandleFunc("GET /api/campaigns/{id}/facts", s.handleCampaignFacts)
+	mux.HandleFunc("POST /api/campaigns/{id}/facts", s.handleCreateCampaignFact)
+	mux.HandleFunc("GET /api/campaigns/{id}/facts/{fid}", s.handleCampaignFact)
+	mux.HandleFunc("POST /api/campaigns/{id}/facts/{fid}/supersede", s.handleSupersedeFact)
+	mux.HandleFunc("GET /api/campaigns/{id}/timeline", s.handleCampaignTimeline)
+	mux.HandleFunc("POST /api/campaigns/{id}/events", s.handleCreateCampaignEvent)
+	mux.HandleFunc("POST /api/campaigns/{id}/events/{eid}/participants", s.handleAddEventParticipant)
+	mux.HandleFunc("POST /api/campaigns/{id}/events/{eid}/links", s.handleLinkCampaignEvents)
+	mux.HandleFunc("GET /api/campaigns/{id}/relationships", s.handleCampaignRelationships)
+	mux.HandleFunc("POST /api/campaigns/{id}/relationships", s.handleCreateCampaignRelationship)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/relationships/{rid}", s.handleDeleteCampaignRelationship)
+	mux.HandleFunc("GET /api/campaigns/{id}/awareness", s.handleCampaignAwareness)
+	mux.HandleFunc("PUT /api/campaigns/{id}/awareness", s.handleSetCampaignAwareness)
+	mux.HandleFunc("GET /api/campaigns/{id}/quests", s.handleCampaignQuests)
+	mux.HandleFunc("POST /api/campaigns/{id}/quests", s.handleCreateCampaignQuest)
+	mux.HandleFunc("GET /api/campaigns/{id}/quests/{qid}", s.handleCampaignQuest)
+	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/transition", s.handleQuestTransition)
+	mux.HandleFunc("GET /api/campaigns/{id}/graph", s.handleCampaignGraph)
+	mux.HandleFunc("GET /api/campaigns/{id}/search", s.handleCampaignSearch)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions", s.handleCreateSession)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}", s.handleGetSession)

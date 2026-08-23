@@ -32,11 +32,13 @@ func (s *Server) WithCampaign(campaigns *campaign.Store, sessions *gamesession.S
 	return s
 }
 
-// campaignsEnabled reports whether the campaign surface is available, writing
-// the error response when it is not.
-func (s *Server) campaignsEnabled(w http.ResponseWriter) bool {
+// sessionsEnabled reports whether the session layer is wired, writing the
+// error response when it is not. The campaign surface at large (knowledge,
+// members) has its own check in campaign.go; this one gates the session
+// routes, which need the gamesession store.
+func (s *Server) sessionsEnabled(w http.ResponseWriter) bool {
 	if s.campaigns == nil || s.sessions == nil {
-		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("campaigns are not available"))
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("sessions are not available"))
 		return false
 	}
 	return true
@@ -48,7 +50,7 @@ func (s *Server) campaignsEnabled(w http.ResponseWriter) bool {
 // same rule every other ownership check here follows. It writes the response
 // itself and returns false when the request should not proceed.
 func (s *Server) campaignAccess(w http.ResponseWriter, r *http.Request, campaignID string) (string, bool) {
-	if !s.campaignsEnabled(w) {
+	if !s.sessionsEnabled(w) {
 		return "", false
 	}
 	role, ok, err := s.campaigns.Role(r.Context(), campaignID, userID(r))
@@ -90,65 +92,9 @@ func (s *Server) sessionInCampaign(w http.ResponseWriter, r *http.Request, campa
 	return ses, true
 }
 
-/* ---------- campaigns (the minimum the Sessions view needs) ---------- */
-
-type campaignView struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	System    string `json:"system"`
-	Premise   string `json:"premise"`
-	Role      string `json:"role"`
-	UpdatedAt string `json:"updated_at"`
-}
-
-func toCampaignView(c campaign.Campaign, role string) campaignView {
-	return campaignView{
-		ID: c.ID, Name: c.Name, System: c.System, Premise: c.Premise,
-		Role: role, UpdatedAt: c.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-	}
-}
-
-func (s *Server) handleListCampaigns(w http.ResponseWriter, r *http.Request) {
-	if !s.campaignsEnabled(w) {
-		return
-	}
-	list, err := s.campaigns.ListCampaigns(r.Context(), userID(r))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	views := make([]campaignView, 0, len(list))
-	for _, c := range list {
-		role, _, err := s.campaigns.Role(r.Context(), c.ID, userID(r))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		views = append(views, toCampaignView(c, role))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"campaigns": views})
-}
-
-func (s *Server) handleCreateCampaign(w http.ResponseWriter, r *http.Request) {
-	if !s.campaignsEnabled(w) {
-		return
-	}
-	var req struct {
-		Name    string `json:"name"`
-		System  string `json:"system"`
-		Premise string `json:"premise"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
-		return
-	}
-	c, err := s.campaigns.CreateCampaign(r.Context(), userID(r), req.Name, req.System, req.Premise)
-	if err != nil {
-		writeCampaignError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"campaign": toCampaignView(*c, campaign.RoleDM)})
-}
+/* ---------- campaigns (the minimum the Sessions view needs) ----------
+   Listed and created by the handlers in campaign.go, which own the richer
+   campaignView the whole campaign surface shares. */
 
 // writeCampaignError maps the store vocabulary onto HTTP statuses.
 func writeCampaignError(w http.ResponseWriter, err error) {
@@ -486,7 +432,7 @@ func (s *Server) handleResolveSpan(w http.ResponseWriter, r *http.Request) {
 
 /* ---------- events ---------- */
 
-type eventView struct {
+type sessionEventView struct {
 	ID        string         `json:"id"`
 	SessionID string         `json:"session_id"`
 	Seq       int64          `json:"seq"`
@@ -497,8 +443,8 @@ type eventView struct {
 	CreatedAt string         `json:"created_at"`
 }
 
-func toEventView(ev gamesession.Event) eventView {
-	return eventView{
+func toSessionEventView(ev gamesession.Event) sessionEventView {
+	return sessionEventView{
 		ID: ev.ID, SessionID: ev.SessionID, Seq: ev.Seq, Kind: ev.Kind,
 		Summary: ev.Summary, Detail: ev.Detail, Payload: ev.Payload,
 		CreatedAt: ev.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -533,7 +479,7 @@ func (s *Server) handleAddEvent(w http.ResponseWriter, r *http.Request) {
 		writeCampaignError(w, err)
 		return
 	}
-	resp := map[string]any{"event": toEventView(*ev)}
+	resp := map[string]any{"event": toSessionEventView(*ev)}
 	if ev.Kind == gamesession.EventRuling || ev.Kind == gamesession.EventQA {
 		matches, err := s.sessions.MatchPriorRulings(r.Context(), ses.Campaign, ev.Summary, ev.ID, 5)
 		if err == nil && len(matches) > 0 {
@@ -555,9 +501,9 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	views := make([]eventView, 0, len(events))
+	views := make([]sessionEventView, 0, len(events))
 	for i := range events {
-		views = append(views, toEventView(events[i]))
+		views = append(views, toSessionEventView(events[i]))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": views})
 }
