@@ -31,7 +31,7 @@ func TestEventDualOrdering(t *testing.T) {
 	}
 
 	// The listing is play order even though the in-world dates disagree.
-	timeline, err := s.ListEvents(ctx, c.ID)
+	timeline, err := s.ListEvents(ctx, ScopeDM, c.ID)
 	if err != nil || len(timeline) != 3 {
 		t.Fatalf("timeline: %v %v", timeline, err)
 	}
@@ -80,7 +80,7 @@ func TestEventParticipantsAndLinks(t *testing.T) {
 		t.Fatalf("off-vocabulary link must be ErrInvalid, got %v", err)
 	}
 
-	got, err := s.GetEvent(ctx, c.ID, ambush.ID)
+	got, err := s.GetEvent(ctx, ScopeDM, c.ID, ambush.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestQuestTransitionsFollowTheMachine(t *testing.T) {
 		t.Fatalf("the branch not taken is not reachable, got %v", err)
 	}
 
-	moves, err := s.QuestTransitions(ctx, c.ID, q.ID)
+	moves, err := s.QuestTransitions(ctx, ScopeDM, c.ID, q.ID)
 	if err != nil || len(moves) != 2 {
 		t.Fatalf("want two recorded moves: %v %v", moves, err)
 	}
@@ -208,7 +208,7 @@ func TestQuestTransitionsFollowTheMachine(t *testing.T) {
 		t.Fatalf("move must record from, to and the causing event: %+v", moves[0])
 	}
 
-	got, _ := s.GetQuest(ctx, c.ID, q.ID)
+	got, _ := s.GetQuest(ctx, ScopeDM, c.ID, q.ID)
 	if got.CurrentState != "trusted" {
 		t.Fatalf("current state must follow the moves: %s", got.CurrentState)
 	}
@@ -218,7 +218,7 @@ func TestQuestTransitionsFollowTheMachine(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE quests SET state_machine = '{"initial":"x","states":[],"edges":[]}' WHERE id = ?`, q.ID); err != nil {
 		t.Fatalf("break machine: %v", err)
 	}
-	if _, err := s.GetQuest(ctx, c.ID, q.ID); err == nil {
+	if _, err := s.GetQuest(ctx, ScopeDM, c.ID, q.ID); err == nil {
 		t.Fatal("reading a quest with a broken machine must fail")
 	}
 }

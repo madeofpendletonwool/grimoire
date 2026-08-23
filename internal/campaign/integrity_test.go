@@ -391,7 +391,7 @@ func TestIntegrityOverDatabase(t *testing.T) {
 		t.Fatalf("create fact: %v", err)
 	}
 
-	findings, err := Integrity(ctx, s.db, c.ID)
+	findings, err := Integrity(ctx, ScopeDM, s.db, c.ID)
 	if err != nil {
 		t.Fatalf("integrity: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestIntegrityOverDatabase(t *testing.T) {
 	if err := s.DeleteEntity(ctx, c.ID, mines.ID); err != nil {
 		t.Fatalf("delete mines: %v", err)
 	}
-	findings, err = Integrity(ctx, s.db, c.ID)
+	findings, err = Integrity(ctx, ScopeDM, s.db, c.ID)
 	if err != nil || len(findings) != 1 {
 		t.Fatalf("want one dangling reference: %v %+v", err, findings)
 	}
@@ -413,14 +413,14 @@ func TestIntegrityOverDatabase(t *testing.T) {
 
 	// Strip a fact's provenance with raw SQL: the write path would never
 	// allow it, and integrity must catch it.
-	facts, _ := s.ListFacts(ctx, c.ID, FactFilter{})
+	facts, _ := s.ListFacts(ctx, ScopeDM, c.ID, FactFilter{})
 	if len(facts) != 1 {
 		t.Fatalf("want the one fact: %+v", facts)
 	}
 	if _, err := s.db.Exec(`DELETE FROM fact_provenance WHERE fact_id = ?`, facts[0].ID); err != nil {
 		t.Fatalf("strip provenance: %v", err)
 	}
-	findings, err = Integrity(ctx, s.db, c.ID)
+	findings, err = Integrity(ctx, ScopeDM, s.db, c.ID)
 	if err != nil {
 		t.Fatalf("integrity: %v", err)
 	}

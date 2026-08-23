@@ -137,7 +137,12 @@ func scanEvent(row interface{ Scan(...any) error }) (*Event, error) {
 }
 
 // GetEvent returns one event with its participants and links attached.
-func (s *Store) GetEvent(ctx context.Context, campaignID, id string) (*Event, error) {
+// DM-scope reads only: which events a perspective witnessed is awareness,
+// enforced in internal/knowledge.
+func (s *Store) GetEvent(ctx context.Context, scope Scope, campaignID, id string) (*Event, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+eventCols+` FROM events WHERE id = ? AND campaign_id = ?`, id, campaignID)
 	e, err := scanEvent(row)
@@ -186,8 +191,12 @@ func (s *Store) attachEventDetail(ctx context.Context, e *Event) (*Event, error)
 }
 
 // ListEvents returns the campaign timeline in play order (real_ordinal),
-// detail attached.
-func (s *Store) ListEvents(ctx context.Context, campaignID string) ([]Event, error) {
+// detail attached. DM-scope reads only; the scoped timeline a perspective
+// witnessed lives in internal/knowledge.
+func (s *Store) ListEvents(ctx context.Context, scope Scope, campaignID string) ([]Event, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+eventCols+` FROM events WHERE campaign_id = ? ORDER BY real_ordinal`, campaignID)
 	if err != nil {

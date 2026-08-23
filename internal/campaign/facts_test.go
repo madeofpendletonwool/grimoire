@@ -189,7 +189,7 @@ func TestFactProvenanceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	prov, err := s.FactProvenance(ctx, c.ID, f.ID)
+	prov, err := s.FactProvenance(ctx, ScopeDM, c.ID, f.ID)
 	if err != nil || len(prov) != 2 {
 		t.Fatalf("want two provenance rows: %v %v", prov, err)
 	}
@@ -198,7 +198,7 @@ func TestFactProvenanceRoundTrip(t *testing.T) {
 	}
 
 	// Visibility and confidence survive the round trip.
-	got, err := s.GetFact(ctx, c.ID, f.ID)
+	got, err := s.GetFact(ctx, ScopeDM, c.ID, f.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestFactProvenanceRoundTrip(t *testing.T) {
 	}
 
 	// A foreign fact reads as missing.
-	if _, err := s.GetFact(ctx, "other-campaign", f.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetFact(ctx, ScopeDM, "other-campaign", f.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-campaign fact read must be ErrNotFound, got %v", err)
 	}
 }
@@ -230,7 +230,7 @@ func TestSupersedeFactRetconsInPlace(t *testing.T) {
 	if err := s.SupersedeFact(ctx, c.ID, old.ID, replacement.ID); err != nil {
 		t.Fatalf("supersede: %v", err)
 	}
-	got, _ := s.GetFact(ctx, c.ID, old.ID)
+	got, _ := s.GetFact(ctx, ScopeDM, c.ID, old.ID)
 	if got.Confidence != ConfidenceRetconned || got.SupersededBy != replacement.ID {
 		t.Fatalf("superseded fact must stay, retconned and pointing forward: %+v", got)
 	}
@@ -240,7 +240,7 @@ func TestSupersedeFactRetconsInPlace(t *testing.T) {
 	}
 
 	// NotSuperseded filters retconned history out of listings.
-	live, err := s.ListFacts(ctx, c.ID, FactFilter{NotSuperseded: true})
+	live, err := s.ListFacts(ctx, ScopeDM, c.ID, FactFilter{NotSuperseded: true})
 	if err != nil || len(live) != 1 || live[0].ID != replacement.ID {
 		t.Fatalf("live facts should exclude retconned: %v %v", live, err)
 	}
@@ -275,7 +275,7 @@ func TestRegisterContradictionDowngradesMonotonically(t *testing.T) {
 				[]FactVersionSide{{FactID: a.ID, Label: "ledger"}, {FactID: b.ID, Label: "testimony"}}, ""); err != nil {
 				t.Fatalf("register: %v", err)
 			}
-			got, _ := s.GetFact(ctx, c.ID, b.ID)
+			got, _ := s.GetFact(ctx, ScopeDM, c.ID, b.ID)
 			if got.Confidence != tc.wantAfter {
 				t.Fatalf("want %s, got %s", tc.wantAfter, got.Confidence)
 			}
@@ -295,7 +295,7 @@ func TestRegisterContradictionDowngradesMonotonically(t *testing.T) {
 		[]FactVersionSide{{FactID: a.ID, Label: "ledger"}, {FactID: proposed.ID, Label: "the model"}}, ""); err != nil {
 		t.Fatalf("register with proposed side: %v", err)
 	}
-	got, _ := s.GetFact(ctx, c.ID, proposed.ID)
+	got, _ := s.GetFact(ctx, ScopeDM, c.ID, proposed.ID)
 	if got.Confidence != ConfidenceProposed {
 		t.Fatalf("proposed must not be touched: %s", got.Confidence)
 	}
@@ -340,7 +340,7 @@ func TestRegisterContradictionRules(t *testing.T) {
 		t.Fatalf("double register must be ErrAlreadyExists, got %v", err)
 	}
 
-	versions, err := s.FactVersions(ctx, c.ID, con.ID)
+	versions, err := s.FactVersions(ctx, ScopeDM, c.ID, con.ID)
 	if err != nil || len(versions) != 2 {
 		t.Fatalf("want two versions: %v %v", versions, err)
 	}
@@ -359,11 +359,11 @@ func TestRegisterContradictionRules(t *testing.T) {
 	if err := s.ResolveContradiction(ctx, c.ID, con.ID, "the ledger wins"); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	cons, err := s.Contradictions(ctx, c.ID)
+	cons, err := s.Contradictions(ctx, ScopeDM, c.ID)
 	if err != nil || len(cons) != 1 || cons[0].Status != ContradictionResolvedByReview {
 		t.Fatalf("resolved register: %v %v", cons, err)
 	}
-	got, _ := s.GetFact(ctx, c.ID, a.ID)
+	got, _ := s.GetFact(ctx, ScopeDM, c.ID, a.ID)
 	if got.Confidence != ConfidenceContested {
 		t.Fatalf("resolving the register does not pick a fact winner: %s", got.Confidence)
 	}

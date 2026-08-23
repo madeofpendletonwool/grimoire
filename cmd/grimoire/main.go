@@ -449,7 +449,7 @@ func runCampaignCheck(args []string) error {
 			}
 			return err
 		}
-		findings, err := campaign.Integrity(context.Background(), db, id)
+		findings, err := campaign.Integrity(context.Background(), campaign.ScopeDM, db, id)
 		if err != nil {
 			return err
 		}

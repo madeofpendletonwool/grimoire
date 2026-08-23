@@ -123,14 +123,22 @@ func (s *Store) entityInCampaign(ctx context.Context, id, campaignID string) (*E
 }
 
 // GetEntity returns one entity. The campaign scoping makes a foreign id
-// indistinguishable from a missing one.
-func (s *Store) GetEntity(ctx context.Context, campaignID, id string) (*Entity, error) {
+// indistinguishable from a missing one. DM-scope reads only: party, character
+// and npc retrieval lives in internal/knowledge.
+func (s *Store) GetEntity(ctx context.Context, scope Scope, campaignID, id string) (*Entity, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	return s.entityInCampaign(ctx, id, campaignID)
 }
 
 // ListEntities returns a campaign's entities, optionally filtered by kind,
-// ordered by name so browser UIs get a stable list for free.
-func (s *Store) ListEntities(ctx context.Context, campaignID, kind string) ([]Entity, error) {
+// ordered by name so browser UIs get a stable list for free. DM-scope reads
+// only: party, character and npc retrieval lives in internal/knowledge.
+func (s *Store) ListEntities(ctx context.Context, scope Scope, campaignID, kind string) ([]Entity, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	q := `SELECT ` + entityCols + ` FROM entities WHERE campaign_id = ?`
 	args := []any{campaignID}
 	if kind != "" {
@@ -259,7 +267,12 @@ func (s *Store) AddEntityName(ctx context.Context, campaignID, entityID, name, k
 }
 
 // EntityNames lists every name an entity carries, canonical first.
-func (s *Store) EntityNames(ctx context.Context, campaignID, entityID string) ([]EntityName, error) {
+// DM-scope reads only: an entity's aliases are part of what a perspective may
+// not know yet ("Tom the innkeeper" is also "Thomas Vane").
+func (s *Store) EntityNames(ctx context.Context, scope Scope, campaignID, entityID string) ([]EntityName, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	if _, err := s.entityInCampaign(ctx, entityID, campaignID); err != nil {
 		return nil, err
 	}
@@ -288,7 +301,11 @@ func (s *Store) EntityNames(ctx context.Context, campaignID, entityID string) ([
 // ResolveName finds entities in a campaign carrying a name (canonical, alias
 // or epithet), matched case-insensitively. More than one hit is the
 // entity_merge_candidate problem surfacing at lookup time; the caller decides.
-func (s *Store) ResolveName(ctx context.Context, campaignID, name string) ([]Entity, error) {
+// DM-scope reads only: whether a name resolves at all is knowledge.
+func (s *Store) ResolveName(ctx context.Context, scope Scope, campaignID, name string) ([]Entity, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrInvalid)
@@ -411,8 +428,13 @@ func scanRelationship(row interface{ Scan(...any) error }) (*Relationship, error
 	return &r, nil
 }
 
-// ListRelationships returns every edge in a campaign.
-func (s *Store) ListRelationships(ctx context.Context, campaignID string) ([]Relationship, error) {
+// ListRelationships returns every edge in a campaign. DM-scope reads only:
+// which edges a perspective may see depends on awareness, which is
+// internal/knowledge's to enforce.
+func (s *Store) ListRelationships(ctx context.Context, scope Scope, campaignID string) ([]Relationship, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+relationshipCols+` FROM relationships r
 		 WHERE r.from_entity IN (SELECT id FROM entities WHERE campaign_id = ?)
@@ -433,8 +455,11 @@ func (s *Store) ListRelationships(ctx context.Context, campaignID string) ([]Rel
 }
 
 // RelationshipsOf returns the edges touching one entity, both directions,
-// outgoing first.
-func (s *Store) RelationshipsOf(ctx context.Context, campaignID, entityID string) ([]Relationship, error) {
+// outgoing first. DM-scope reads only; see ListRelationships.
+func (s *Store) RelationshipsOf(ctx context.Context, scope Scope, campaignID, entityID string) ([]Relationship, error) {
+	if err := scope.requireDM(); err != nil {
+		return nil, err
+	}
 	if _, err := s.entityInCampaign(ctx, entityID, campaignID); err != nil {
 		return nil, err
 	}
