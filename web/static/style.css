@@ -2678,3 +2678,243 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	pointer-events: none;
 }
 .share-date { flex: none; font-size: var(--fs-xs); opacity: 0.55; }
+
+/* ---------- Sessions surface ----------
+   The campaign session layer. Two columns over the same measure the other
+   full-screen surfaces use: the session list left, the open session's
+   sources and log right. The frames come from pixel.css (stone panels, inset
+   fields, buttons); nothing here sets a background or a radius. */
+.sessions {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scroll-behavior: smooth;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+.main.is-sessioning > .transcript,
+.main.is-sessioning > .composer-dock { display: none; }
+
+.sess-campaign-wrap { display: flex; align-items: center; gap: var(--sp-2); }
+.sess-campaign-wrap select {
+	padding: 0.25rem 0.5rem;
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	color: var(--parchment);
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+}
+.sess-campaign-wrap select:focus { outline: none; border-bottom-color: var(--gold); }
+
+.sess-body {
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+	gap: var(--sp-4);
+	align-items: start;
+}
+@media (max-width: 55rem) {
+	.sess-body { grid-template-columns: 1fr; }
+}
+.sess-col { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.sess-panel { padding: var(--sp-3) var(--sp-4) var(--sp-4); box-shadow: var(--shadow-2); }
+.sess-heading {
+	margin: 0 0 var(--sp-3);
+	font-family: var(--font-prose);
+	font-variant: small-caps;
+	letter-spacing: 0.08em;
+	font-size: var(--fs-sm);
+	color: var(--parchment);
+	opacity: 0.8;
+}
+.sess-new { display: flex; gap: var(--sp-2); }
+.sess-new .sess-field { flex: 1; }
+.sess-field { padding: 0.35rem 0.6rem; min-width: 0; background: transparent; font-family: var(--font-prose); font-size: var(--fs-sm); color: var(--parchment); }
+.sess-field:focus { outline: none; }
+.sess-btn {
+	padding: 0.3rem 0.85rem;
+	align-self: flex-start;
+	color: #1a1208;
+	cursor: pointer;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.04em;
+	filter: brightness(0.94);
+	transition: filter 0.15s ease;
+	background: transparent;
+	border: none;
+}
+.sess-btn:hover { filter: brightness(1.06); }
+.sess-btn:disabled { opacity: 0.5; cursor: default; filter: none; }
+.sess-upload-btn { position: relative; overflow: hidden; }
+
+.sess-empty {
+	font-family: var(--font-prose);
+	font-style: italic;
+	font-size: var(--fs-sm);
+	opacity: 0.6;
+	margin: var(--sp-2) 0;
+}
+
+/* The session list: ordinal, name, status — a shelf of sittings. */
+.sess-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+.sess-row {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-3);
+	width: 100%;
+	padding: 0.4rem 0.6rem;
+	text-align: left;
+	cursor: pointer;
+	color: var(--parchment);
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+}
+.sess-row:hover { background: rgba(255, 255, 255, 0.04); }
+.sess-row.is-active { border-bottom-color: var(--gold); }
+.sess-row-ordinal {
+	flex: none;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.04em;
+	opacity: 0.55;
+}
+.sess-row-main { display: flex; flex-direction: column; min-width: 0; }
+.sess-row-name {
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.sess-row.is-active .sess-row-name { color: var(--gold-bright); }
+.sess-row-sub { font-size: var(--fs-xs); opacity: 0.5; }
+
+/* The open session's header strip. */
+.sess-session-head { display: flex; flex-direction: column; gap: 0.3rem; }
+.sess-session-title { margin: 0; font-family: var(--font-prose); font-size: var(--fs-md, 1.05rem); color: var(--parchment); }
+.sess-session-sub { margin: 0; font-size: var(--fs-xs); opacity: 0.6; font-style: italic; }
+.sess-status-btns { display: flex; gap: var(--sp-2); margin-top: var(--sp-1); }
+
+/* Sources: a paste/upload form, then a stack of disclosure cards. The
+   verbatim text inside is selectable, and the selection shows the span
+   offsets downstream facts will cite. */
+.sess-source-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.sess-source-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.sess-source-row select {
+	padding: 0.3rem 0.5rem;
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	color: var(--parchment);
+	background: transparent;
+	border: 1px solid var(--stone-line);
+}
+.sess-source-row select:focus { outline: none; border-color: var(--gold); }
+.sess-source-row .sess-field { flex: 1; }
+.sess-source-input {
+	width: 100%;
+	resize: vertical;
+	padding: 0.4rem 0.6rem;
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	line-height: 1.45;
+	color: var(--parchment);
+	background: transparent;
+}
+.sess-hint { font-size: var(--fs-xs); opacity: 0.5; font-style: italic; }
+.sess-sources { display: flex; flex-direction: column; gap: var(--sp-2); }
+.sess-source { position: relative; border-bottom: 1px solid var(--stone-line); padding-bottom: var(--sp-2); }
+.sess-source summary {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-2);
+	cursor: pointer;
+	list-style: none;
+	flex-wrap: wrap;
+}
+.sess-source summary::before { content: "▸ "; opacity: 0.6; }
+.sess-source[open] summary::before { content: "▾ "; }
+.sess-source summary:hover { color: var(--gold-bright); }
+.sess-source-kind {
+	flex: none;
+	font-family: var(--font-pixel);
+	font-size: 0.64rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--gold);
+}
+.sess-source-title { font-family: var(--font-prose); font-size: var(--fs-sm); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-source-meta { flex: none; margin-left: auto; font-size: var(--fs-xs); opacity: 0.5; }
+.sess-source-body { display: flex; flex-direction: column; gap: var(--sp-1); margin-top: var(--sp-2); }
+.sess-source-content {
+	margin: 0;
+	padding: var(--sp-2);
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	line-height: 1.5;
+	white-space: pre-wrap;
+	word-break: break-word;
+	color: var(--parchment);
+	background: rgba(0, 0, 0, 0.25);
+	border-left: 2px solid var(--stone-line);
+	max-height: 24rem;
+	overflow-y: auto;
+}
+.sess-source-timing { margin: 0; font-size: var(--fs-xs); opacity: 0.55; font-style: italic; }
+.sess-span-chip {
+	position: absolute;
+	right: 0;
+	bottom: calc(100% + 0.2rem);
+	padding: 0.1rem 0.5rem;
+	font-family: var(--font-pixel);
+	font-size: 0.64rem;
+	letter-spacing: 0.06em;
+	color: var(--gold-bright);
+	background: var(--stone-800, #1c1917);
+	border: 1px solid var(--gold);
+	border-radius: 0;
+	pointer-events: none;
+}
+
+/* The log: quick buttons, the add form, prior-ruling surfacing, the rows. */
+.sess-quick { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.sess-quick-discovery { color: var(--accent-deep, #2a2410); filter: brightness(1.08); }
+.sess-event-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.sess-prior {
+	margin: 0 0 var(--sp-3);
+	padding: var(--sp-2) var(--sp-3);
+	border: 1px dashed var(--gold);
+}
+.sess-prior-head {
+	margin: 0 0 var(--sp-1);
+	font-family: var(--font-pixel);
+	font-size: 0.64rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--gold);
+}
+.sess-prior-match { display: flex; align-items: baseline; gap: var(--sp-2); padding: 0.15rem 0; }
+.sess-prior-ordinal { flex: none; font-family: var(--font-pixel); font-size: 0.64rem; letter-spacing: 0.06em; opacity: 0.6; }
+.sess-prior-text { font-family: var(--font-prose); font-size: var(--fs-sm); }
+.sess-prior-q { color: var(--parchment); }
+.sess-prior-a { opacity: 0.65; }
+.sess-log { display: flex; flex-direction: column; gap: var(--sp-2); }
+.sess-event { padding: var(--sp-2) 0; border-bottom: 1px solid var(--stone-line); }
+.sess-event:last-child { border-bottom: none; }
+.sess-event-head { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
+.sess-event-kind {
+	flex: none;
+	font-family: var(--font-pixel);
+	font-size: 0.64rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--gold);
+}
+.sess-event-kind[data-kind="discovery"] { color: var(--gold-bright); }
+.sess-event-summary { flex: 1 1 auto; min-width: 0; font-family: var(--font-prose); font-size: var(--fs-sm); }
+.sess-event-time { flex: none; font-size: var(--fs-xs); opacity: 0.45; }
+.sess-event-detail { margin: 0.2rem 0 0; font-family: var(--font-prose); font-size: var(--fs-sm); opacity: 0.8; white-space: pre-wrap; }
+.sess-event-payload { margin: 0.2rem 0 0; padding-left: var(--sp-4); font-size: var(--fs-xs); opacity: 0.6; }
+.sess-actions { display: flex; gap: var(--sp-2); }

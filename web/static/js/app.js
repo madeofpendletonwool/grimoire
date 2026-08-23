@@ -11,6 +11,7 @@ import { initVoice } from "./voice.js";
 import { initStudy } from "./study.js";
 import { initReader } from "./reader.js";
 import { initEncounter } from "./encounter.js";
+import { initSessions } from "./sessions.js";
 import { initDeck } from "./deck.js";
 import { initAdmin } from "./admin.js";
 import { initLibrary } from "./library.js";
@@ -102,6 +103,7 @@ function start() {
 	initStudy();
 	initReader();
 	initEncounter();
+	initSessions();
 	initDeck();
 	syncChrome();
 	initAccount();

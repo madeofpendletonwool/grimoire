@@ -117,9 +117,10 @@ provenance row is a bug, and integrity checks it.
 
 | Table | Columns | Notes |
 |---|---|---|
-| `game_sessions` | `id, campaign_id, ordinal, name, started_at, ended_at, status` | **`game_sessions`, never `sessions`** — `auth.sessions` already exists and means login sessions. No exceptions ([ADR 7](../decisions.md#adr-7-mad-286-is-superseded-by-the-stage-3-session-layer)). |
-| `session_sources` | `id, session_id, kind, author, content, checksum` | `transcript \| dm_notes \| player_journal \| chat_log \| live_mark`. Content is stored verbatim so span offsets stay valid forever. The checksum makes extraction runs idempotent. |
-| `session_events` | `id, session_id, kind, payload` | `qa \| ruling \| note \| discovery \| encounter`. MAD-286's ruling log lives here as one `kind`. |
+| `game_sessions` | `id, campaign_id, ordinal, name, started_at, ended_at, status` | **`game_sessions`, never `sessions`** — `auth.sessions` already exists and means login sessions. No exceptions ([ADR 7](../decisions.md#adr-7-mad-286-is-superseded-by-the-stage-3-session-layer)). `status` is `planned \| live \| done`; ordinal is per-campaign, assigned max+1. |
+| `session_sources` | `id, session_id, kind, author, title, content, checksum, timing` | `transcript \| dm_notes \| player_journal \| chat_log \| live_mark`. Content is stored verbatim — BOM/CRLF normalized, otherwise byte-exact — and immutable (no update path exists), so span offsets stay valid forever. The checksum (sha256) makes extraction runs idempotent. `timing` is the parsed cue list for `.srt`/`.vtt` sources, so a span can resolve back to a moment in the recording. `dm_notes` and `live_mark` are filtered out of non-DM reads in SQL. |
+| `session_events` | `id, session_id, seq, kind, summary, detail, payload` | `qa \| ruling \| note \| discovery \| encounter`. MAD-286's ruling log lives here as one `kind`. `seq` is per-session insertion order; `summary` (the question or label) and `detail` (the ruling/answer body) are first-class so the ruling FTS below can index them in plain SQL; `payload` is JSON for the structured remainder. |
+| `ruling_fts` | FTS5 over `ruling`/`qa` events | The prior-ruling surfacing, retained from MAD-286: recording a ruling or question FTS-matches it against the campaign's past rulings — *"you ruled the other way on this three sessions ago."* Maintained by triggers; no LLM involved. |
 
 ### Canon engine
 
