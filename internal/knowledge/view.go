@@ -20,7 +20,8 @@ model downstream of a caller — can be handed one by mistake.
 The shared CTE vocabulary:
 
 	granted(fact_id)   facts a non-DM scope's knowers hold a granting stance
-	                   on; with playerStrict, only non-secret ones. At the DM
+	                   on, and which are live (not proposed, not superseded);
+	                   with playerStrict, only non-secret ones. At the DM
 	                   scope it degenerates to every live fact the DM may read
 	                   (proposed excluded), keeping one query shape.
 	visible_events     events the knower witnessed: own participation, plus —
@@ -176,7 +177,12 @@ func (s *Store) newACL(ctx context.Context, scope Scope, campaignID string, play
 	return a, nil
 }
 
-// grantedCTE renders the granted CTE and its args.
+// grantedCTE renders the granted CTE and its args. Liveness — not proposed,
+// not superseded — is enforced here for every non-DM grant, strict or not:
+// the write path permits awareness rows on facts that are later retconned
+// (learn, then the DM rewrites history) or proposed while an extraction
+// pipeline records who would hold them, and a grant on a dead fact must not
+// surface it anywhere, list or single fetch.
 func (a *acl) grantedCTE() (string, []any) {
 	if a.dm {
 		q := `granted AS (
@@ -189,12 +195,12 @@ func (a *acl) grantedCTE() (string, []any) {
 		return q + `)`, args
 	}
 	q := `granted AS (
-		SELECT DISTINCT a.fact_id FROM awareness a`
+		SELECT DISTINCT a.fact_id FROM awareness a
+		 JOIN facts pf ON pf.id = a.fact_id AND pf.campaign_id = a.campaign_id
+		   AND pf.confidence <> 'proposed' AND pf.superseded_by IS NULL`
 	args := []any{}
 	if a.playerStrict {
-		q += ` JOIN facts pf ON pf.id = a.fact_id AND pf.campaign_id = a.campaign_id
-		        AND pf.confidence <> 'proposed' AND pf.superseded_by IS NULL
-		        AND pf.visibility <> 'secret'`
+		q += ` AND pf.visibility <> 'secret'`
 	}
 	q += `
 		 WHERE a.campaign_id = ? AND a.knower IN ` + grantPlaceholders(len(a.knowers)) + `
@@ -344,9 +350,9 @@ func (s *Store) facts(ctx context.Context, scope Scope, campaignID string, filte
 		  FROM facts f` + join + `
 		 WHERE f.campaign_id = ? AND f.id IN (SELECT fact_id FROM granted)`
 	if !a.dm {
-		// The strict CTE already enforced liveness; the non-strict grant
-		// path has not, and a granted proposal or superseded row must not
-		// surface either.
+		// The granted CTE already enforces liveness on every grant path;
+		// this second filter is kept deliberately, the same defense in
+		// depth the stance filter has at both enforcement points.
 		full += ` AND f.confidence <> 'proposed' AND f.superseded_by IS NULL`
 	}
 	// Placeholder order matches SQL order: CTE args, then the join's
