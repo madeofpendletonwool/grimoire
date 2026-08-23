@@ -831,13 +831,9 @@ func runServe() error {
 		log.Printf("adopted %d pre-authentication conversations", adopted)
 	}
 
-	// Campaigns and their session layer share the file as well; the session
-	// tables exist only through the migrations, so the store opens straight
+	// The session layer rides on the campaign store: the session tables
+	// exist only through the migrations, so the store opens straight
 	// onto the migrated handle.
-	campaigns, err := campaign.New(store.DB())
-	if err != nil {
-		return err
-	}
 	gameSessions, err := gamesession.New(store.DB())
 	if err != nil {
 		return err
