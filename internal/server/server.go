@@ -26,6 +26,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
+	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -47,25 +48,29 @@ type Auth struct {
 
 // Server holds dependencies for serving the app.
 type Server struct {
-	store            *index.Store
-	llm              *llm.Client
-	cards            *cards.Service
-	rulings          *rulings.Service
-	cardDict         *cards.Dictionary
-	chats            *chat.Store
-	answers          *cache.Store
-	study            *study.Store
-	encounters       *encounter.Store
-	bestiary         *encounter.Bestiary
-	catalog          *encounter.Catalog
-	carddb           *carddb.Store
-	decks            *deck.Store
-	edhrec           *edhrec.Client
-	shares           *share.Store
-	users            *auth.Store
-	openRegistration bool
+	store      *index.Store
+	llm        *llm.Client
+	cards      *cards.Service
+	rulings    *rulings.Service
+	cardDict   *cards.Dictionary
+	chats      *chat.Store
+	answers    *cache.Store
+	study      *study.Store
+	encounters *encounter.Store
+	bestiary   *encounter.Bestiary
+	catalog    *encounter.Catalog
+	carddb     *carddb.Store
+	decks      *deck.Store
+	edhrec     *edhrec.Client
+	shares     *share.Store
+	users      *auth.Store
+	// The campaign graph with its knowledge layer and its session layer
+	// (MAD-303/305/306). Wired with WithCampaign/WithCampaigns; nil
+	// disables the campaign endpoints.
 	campaigns        *campaign.Store
+	sessions         *gamesession.Store
 	knowledge        *knowledge.Store
+	openRegistration bool
 	tmpl             *template.Template
 	static           fs.FS
 	// rebuild, when wired, rebuilds the rules index from its sources. It backs
@@ -197,6 +202,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/transition", s.handleQuestTransition)
 	mux.HandleFunc("GET /api/campaigns/{id}/graph", s.handleCampaignGraph)
 	mux.HandleFunc("GET /api/campaigns/{id}/search", s.handleCampaignSearch)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions", s.handleListSessions)
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions", s.handleCreateSession)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}", s.handleGetSession)
+	mux.HandleFunc("PATCH /api/campaigns/{cid}/sessions/{sid}", s.handleUpdateSession)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/sources", s.handleListSources)
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/sources", s.handleAddSource)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/sources/{srcid}", s.handleGetSource)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/span", s.handleResolveSpan)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/events", s.handleListEvents)
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/events", s.handleAddEvent)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/export", s.handleExportSession)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))

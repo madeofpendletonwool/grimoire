@@ -275,6 +275,36 @@ export const api = {
 			body: JSON.stringify(patch),
 		}).then(json),
 
+	// The campaign session layer: campaigns to hang sessions on, sessions,
+	// verbatim sources, addressable spans, the event log, and the Markdown
+	// export. Sources are immutable; spans are byte offsets into the stored
+	// content.
+	listCampaigns: () => fetch("/api/campaigns").then(json),
+
+	createCampaign: (name, system) =>
+		fetch("/api/campaigns", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name, system }),
+		}).then(json),
+
+	listSessions: (campaignID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions`).then(json),
+
+	createSession: (campaignID, name) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name }),
+		}).then(json),
+
+	updateSession: (campaignID, sessionID, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
 	campaignMemberRemove: (cid, uid) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/members/${encodeURIComponent(uid)}`, { method: "DELETE" }).then(json),
 
@@ -287,6 +317,46 @@ export const api = {
 
 	campaignInvites: (cid) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/invites`).then(json),
+
+	listSources: (campaignID, sessionID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/sources`).then(json),
+
+	getSource: (campaignID, sessionID, sourceID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/sources/${encodeURIComponent(sourceID)}`).then(json),
+
+	addSource: (campaignID, sessionID, payload) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/sources`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(payload),
+		}).then(json),
+
+	uploadSource: (campaignID, sessionID, file, kind) => {
+		const body = new FormData();
+		body.set("file", file);
+		body.set("kind", kind || "transcript");
+		return fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/sources`, {
+			method: "POST",
+			body,
+		}).then(json);
+	},
+
+	resolveSpan: (campaignID, sessionID, sourceID, start, end) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}` +
+			`/span?source_id=${encodeURIComponent(sourceID)}&start=${start}&end=${end}`).then(json),
+
+	addEvent: (campaignID, sessionID, event) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/events`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(event),
+		}).then(json),
+
+	listEvents: (campaignID, sessionID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/events`).then(json),
+
+	sessionExportURL: (campaignID, sessionID) =>
+		`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/export`,
 };
 
 /**

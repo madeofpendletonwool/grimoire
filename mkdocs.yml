@@ -95,6 +95,7 @@ nav:
       - Study Mode: features/study.md
       - Deck Builder: features/deck-builder.md
       - Encounter Builder: features/encounter-builder.md
+      - Sessions: features/sessions.md
       - The Tome & Themes: features/tome.md
   - Deployment:
       - Quick Start: deployment/quickstart.md

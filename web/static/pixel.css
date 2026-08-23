@@ -106,6 +106,10 @@
 .deck-field,
 .deck-idea-input,
 .deck-chat-log,
+.sess-panel,
+.sess-field,
+.sess-source-input,
+.sess-btn,
 .gate-submit,
 .new-chat,
 .study-card,
@@ -146,7 +150,8 @@
 .reader-toc,
 .enc-panel,
 .deck-panel,
-.camp-panel {
+.camp-panel,
+.sess-panel {
 	border-width: 6px;
 	border-image-source: var(--frame-stone);
 	border-image-slice: 3 fill;
@@ -162,7 +167,9 @@
 .enc-idea-input,
 .deck-field,
 .deck-idea-input,
-.deck-chat-log {
+.deck-chat-log,
+.sess-field,
+.sess-source-input {
 	border-width: 6px;
 	border-image-source: var(--frame-field);
 	border-image-slice: 3 fill;
@@ -173,7 +180,9 @@
 .enc-field:focus,
 .enc-idea-input:focus,
 .deck-field:focus,
-.deck-idea-input:focus {
+.deck-idea-input:focus,
+.sess-field:focus,
+.sess-source-input:focus {
 	border-image-source: var(--frame-field-focus);
 }
 
@@ -207,7 +216,8 @@
 .new-chat,
 .study-grade,
 .enc-btn,
-.deck-btn {
+.deck-btn,
+.sess-btn {
 	border-width: 6px;
 	border-image-source: url("/static/assets/ui/button.png");
 	border-image-slice: 3 fill;
@@ -219,7 +229,8 @@
 .new-chat:active,
 .study-grade:active:not(:disabled),
 .enc-btn:active:not(:disabled),
-.deck-btn:active:not(:disabled) {
+.deck-btn:active:not(:disabled),
+.sess-btn:active:not(:disabled) {
 	border-image-source: url("/static/assets/ui/button-active.png");
 }
 

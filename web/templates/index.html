@@ -48,6 +48,13 @@
 			<span data-ico="dice"></span> Encounter
 		</button>
 
+		<!-- The campaign session layer: transcripts in, a chronological log
+		     of what was ruled and discovered, spans that resolve back to the
+		     actual words. A sibling destination to Study and Encounter. -->
+		<button type="button" class="rail-action rail-sessions" id="rail-sessions">
+			<span data-ico="hourglass"></span> Sessions
+		</button>
+
 			<!-- The MTG deck builder: describe an idea, pick a commander, draft
 		     the 99 with the model, iterate, analyze a pasted list. A sibling
 		     destination to Study and Encounter. -->
@@ -351,8 +358,8 @@
 			</div>
 		</section>
 
-		<!-- ---------- Campaign surface ---------- -->
-		<section class="campaign" id="campaign-view" hidden aria-label="Campaign world">
+	<!-- ---------- Campaign surface ---------- -->
+	<section class="campaign" id="campaign-view" hidden aria-label="Campaign world">
 			<header class="study-head">
 				<h2 class="study-title" id="campaign-title">Campaign</h2>
 				<div class="camp-picker">
@@ -495,6 +502,98 @@
 						</label>
 						<button type="submit" class="enc-btn">Take your seat</button>
 					</form>
+				</div>
+			</div>
+		</section>
+
+	<!-- ---------- Sessions surface ----------
+		     The campaign session layer: a campaign picker, the sessions of
+		     that campaign, and for each session its sources (pasted or
+		     uploaded, stored verbatim) and the chronological log of rulings,
+		     Q&A, notes, discoveries and encounters. Selecting text inside a
+		     source shows the addressable span — the byte offsets downstream
+		     facts will cite. -->
+		<section class="sessions" id="sessions-view" hidden aria-label="Game sessions">
+			<header class="study-head">
+				<h2 class="study-title" id="sessions-title">Sessions</h2>
+				<div class="sess-campaign-wrap">
+					<select id="sess-campaign" aria-label="Campaign"></select>
+					<button type="button" class="sess-btn" id="sess-new-campaign" title="New campaign">+</button>
+				</div>
+				<p class="study-meta" id="sessions-meta"></p>
+				<button type="button" class="icon-btn" id="sessions-close" aria-label="Leave sessions" title="Back to chat" data-gi="close"></button>
+			</header>
+			<div class="sess-body">
+				<div class="sess-col sess-col-list">
+					<form class="sess-panel sess-new" id="sess-new-form" autocomplete="off">
+						<input id="sess-new-name" class="sess-field" type="text"
+							placeholder="New session name (optional)"
+							aria-label="New session name">
+						<button type="submit" class="sess-btn">Record a session</button>
+					</form>
+					<div class="sess-list" id="sess-list" role="list" aria-label="Sessions"></div>
+				</div>
+				<div class="sess-col sess-col-detail" id="sess-detail">
+					<p class="sess-empty" id="sess-empty">Pick a session to see its sources and log.</p>
+
+					<div class="sess-panel sess-session-head" id="sess-session-head" hidden></div>
+
+					<div class="sess-panel" id="sess-sources-panel" hidden>
+						<h3 class="sess-heading">Sources</h3>
+						<form class="sess-source-form" id="sess-source-form" autocomplete="off">
+							<div class="sess-source-row">
+								<select id="sess-source-kind" aria-label="Source kind">
+									<option value="transcript">Transcript</option>
+									<option value="dm_notes">DM notes</option>
+									<option value="player_journal">Player journal</option>
+									<option value="chat_log">Chat log</option>
+									<option value="live_mark">Live mark</option>
+								</select>
+								<input id="sess-source-author" class="sess-field" type="text"
+									placeholder="Author — who said/wrote this" aria-label="Source author">
+							</div>
+							<textarea id="sess-source-content" class="sess-source-input" rows="4"
+								placeholder="Paste a transcript, notes, a journal… (.txt .md .srt .vtt via upload)"
+								aria-label="Paste source text"></textarea>
+							<div class="sess-source-row">
+								<button type="submit" class="sess-btn">Add source</button>
+								<label class="sess-upload-btn sess-btn">Upload
+									<input type="file" id="sess-source-file" accept=".txt,.md,.srt,.vtt" hidden>
+								</label>
+								<span class="sess-hint" id="sess-source-hint">Stored verbatim and immutable — spans cite these bytes.</span>
+							</div>
+						</form>
+						<div class="sess-sources" id="sess-sources"></div>
+					</div>
+
+					<div class="sess-panel" id="sess-log-panel" hidden>
+						<h3 class="sess-heading">Log</h3>
+						<div class="sess-quick">
+							<button type="button" class="sess-btn sess-quick-discovery" id="sess-quick-discovery">+ Discovery</button>
+						</div>
+						<form class="sess-event-form" id="sess-event-form" autocomplete="off">
+							<div class="sess-source-row">
+								<select id="sess-event-kind" aria-label="Event kind">
+									<option value="ruling">Ruling</option>
+									<option value="qa">Q&amp;A</option>
+									<option value="note">Note</option>
+									<option value="discovery">Discovery</option>
+									<option value="encounter">Encounter</option>
+								</select>
+								<input id="sess-event-summary" class="sess-field" type="text"
+									placeholder="The question or one-line label" aria-label="Event summary">
+							</div>
+							<textarea id="sess-event-detail" class="sess-source-input" rows="2"
+								placeholder="The ruling, answer or note" aria-label="Event detail"></textarea>
+							<button type="submit" class="sess-btn">Log it</button>
+						</form>
+						<div class="sess-prior" id="sess-prior" hidden></div>
+						<div class="sess-log" id="sess-log"></div>
+					</div>
+
+					<div class="sess-panel sess-actions" id="sess-actions" hidden>
+					<button type="button" class="sess-btn" id="sess-export">Export Markdown</button>
+				</div>
 				</div>
 			</div>
 		</section>
