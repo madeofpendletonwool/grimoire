@@ -7,6 +7,7 @@
 //	grimoire migrate status show which schema migrations have been applied
 //	grimoire migrate up     apply pending schema migrations and exit
 //	grimoire migrate down   roll back the most recent migration and exit
+//	grimoire campaign check run the campaign-graph integrity checks
 //	grimoire [-h]           help
 //
 // Configuration is via environment variables (see .env.example):
@@ -45,6 +46,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -57,6 +60,7 @@ import (
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/cache"
+	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/carddb"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
@@ -99,6 +103,10 @@ func main() {
 		if err := runMigrate(os.Args[2:]); err != nil {
 			log.Fatalf("migrate: %v", err)
 		}
+	case "campaign":
+		if err := runCampaign(os.Args[2:]); err != nil {
+			log.Fatalf("campaign: %v", err)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
 		usage()
@@ -113,6 +121,7 @@ Usage:
   grimoire serve     serve the UI + API (builds the index on first run)
   grimoire index     (re)build the search index and exit
   grimoire migrate status|up|down   inspect or move the database schema
+  grimoire campaign check [id]      run campaign integrity checks
 
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
@@ -375,6 +384,90 @@ func runMigrate(args []string) error {
 	default:
 		return fmt.Errorf("unknown migrate subcommand %q (want status, up or down)", sub)
 	}
+}
+
+// runCampaign implements the campaign-graph subcommands. `campaign check`
+// runs the integrity checks over one campaign (or every campaign) and prints
+// the findings; it exits non-zero from the caller's perspective only when a
+// check reports an error-severity finding, so a cron or pre-session ritual
+// can gate on it.
+func runCampaign(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: grimoire campaign check [campaign-id]")
+	}
+	switch args[0] {
+	case "check":
+		return runCampaignCheck(args[1:])
+	default:
+		return fmt.Errorf("unknown campaign subcommand %q (want check)", args[0])
+	}
+}
+
+func runCampaignCheck(args []string) error {
+	if len(args) > 1 {
+		return fmt.Errorf("usage: grimoire campaign check [campaign-id]")
+	}
+	if err := ensureDBDir(); err != nil {
+		return err
+	}
+	db, err := index.OpenDB(dbPath())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := migrate.Up(db); err != nil {
+		return err
+	}
+
+	var ids []string
+	if len(args) == 1 {
+		ids = []string{args[0]}
+	} else {
+		rows, err := db.Query(`SELECT id FROM campaigns ORDER BY name`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+
+	errorCount := 0
+	for _, id := range ids {
+		var name string
+		if err := db.QueryRow(`SELECT name FROM campaigns WHERE id = ?`, id).Scan(&name); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("campaign %s: %w", id, campaign.ErrNotFound)
+			}
+			return err
+		}
+		findings, err := campaign.Integrity(context.Background(), db, id)
+		if err != nil {
+			return err
+		}
+		if len(findings) == 0 {
+			log.Printf("%s (%s): clean", name, id)
+			continue
+		}
+		for _, f := range findings {
+			if f.Severity == campaign.SeverityError {
+				errorCount++
+			}
+			log.Printf("%s (%s): [%s/%s] %s", name, id, f.Severity, f.Check, f.Message)
+		}
+	}
+	if errorCount > 0 {
+		return fmt.Errorf("%d error-severity finding(s); the graph contradicts itself", errorCount)
+	}
+	return nil
 }
 
 // ensureIndexed builds the index if the store is empty.
