@@ -12,9 +12,13 @@ import (
 
 /* ---------- run records ---------- */
 
-// Run is one extraction run, with its full stats payload. The stats are the
-// run's accountability: every unit, chunk, request, token, staged candidate
-// and drop reason is counted here, exactly as Arda's pipeline_runs stats do.
+// Run is one canon-engine run — extraction or validation — with its full
+// stats payload. The stats are the run's accountability: every unit, chunk,
+// request, token, staged candidate and drop reason is counted here, exactly
+// as Arda's pipeline_runs stats do. For validation runs the fields map over
+// (units are candidates; "staged" counts applied verdicts by outcome;
+// "dropped" counts rejections, unparseable responses and low-agreement
+// coercions by reason); see adversarial.go.
 type Run struct {
 	ID            string
 	CampaignID    string
@@ -305,12 +309,28 @@ type CandidateFilter struct {
 	RunID    string
 }
 
+// candidateCols and scanCandidate are the one scan path for canon_candidates
+// rows, shared by the queue read and the validation pass's item loader.
+const candidateCols = `id, run_id, campaign_id, session_id, source_id, chunk_index, kind, payload, confidence, span_start, span_end, quote, checksum, created_at`
+
+func scanCandidate(row interface{ Scan(...any) error }) (Candidate, error) {
+	var (
+		c            Candidate
+		createdMilli int64
+	)
+	if err := row.Scan(&c.ID, &c.RunID, &c.CampaignID, &c.SessionID, &c.SourceID, &c.ChunkIndex,
+		&c.Kind, &c.Payload, &c.Confidence, &c.SpanStart, &c.SpanEnd, &c.Quote, &c.Checksum, &createdMilli); err != nil {
+		return c, err
+	}
+	c.CreatedAt = time.UnixMilli(createdMilli).UTC()
+	return c, nil
+}
+
 // ListCandidates returns staged candidates for a campaign, oldest first.
 // Queue material for the review screen (MAD-310); no graph read path ever
 // touches this table.
 func (s *Store) ListCandidates(ctx context.Context, campaignID string, filter CandidateFilter) ([]Candidate, error) {
-	q := `SELECT id, run_id, campaign_id, session_id, source_id, chunk_index, kind, payload, confidence, span_start, span_end, quote, checksum, created_at
-		FROM canon_candidates WHERE campaign_id = ?`
+	q := `SELECT ` + candidateCols + ` FROM canon_candidates WHERE campaign_id = ?`
 	args := []any{campaignID}
 	if filter.Kind != "" {
 		q += ` AND kind = ?`
@@ -332,13 +352,10 @@ func (s *Store) ListCandidates(ctx context.Context, campaignID string, filter Ca
 	defer rows.Close()
 	var out []Candidate
 	for rows.Next() {
-		var c Candidate
-		var createdMilli int64
-		if err := rows.Scan(&c.ID, &c.RunID, &c.CampaignID, &c.SessionID, &c.SourceID, &c.ChunkIndex,
-			&c.Kind, &c.Payload, &c.Confidence, &c.SpanStart, &c.SpanEnd, &c.Quote, &c.Checksum, &createdMilli); err != nil {
+		c, err := scanCandidate(rows)
+		if err != nil {
 			return nil, err
 		}
-		c.CreatedAt = time.UnixMilli(createdMilli).UTC()
 		out = append(out, c)
 	}
 	return out, rows.Err()

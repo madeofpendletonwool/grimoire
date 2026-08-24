@@ -128,6 +128,17 @@ type llmModel struct{ c *llm.Client }
 // ModelClient. The client's own provider failover applies underneath.
 func NewLLMModel(c *llm.Client) ModelClient { return llmModel{c: c} }
 
+// NewLLMValidator adapts the shared client for the adversarial pass with the
+// model CANON_VALIDATE_MODEL names (cfg.ValidateModel). An empty model
+// returns the same adapter as NewLLMModel — the two passes then share a
+// model, which the configuration docs warn is not adversarial validation.
+func NewLLMValidator(c *llm.Client, model string) ModelClient {
+	if strings.TrimSpace(model) == "" {
+		return NewLLMModel(c)
+	}
+	return NewLLMModel(c.WithModel(model))
+}
+
 func (m llmModel) ModelName() string { return m.c.Model() }
 
 func (m llmModel) Complete(ctx context.Context, system, user string) (Completion, error) {
@@ -139,6 +150,12 @@ func (m llmModel) Complete(ctx context.Context, system, user string) (Completion
 }
 
 /* ---------- configuration ---------- */
+
+// DefaultAgreementThreshold is the score at or above which the adversarial
+// pass counts as agreement (CANON_AGREEMENT_THRESHOLD). Arda's default,
+// kept: below it the checker could not decide, and the candidate is flagged
+// for review rather than confirmed or downgraded.
+const DefaultAgreementThreshold = 0.8
 
 // Config carries the budget guards (epistemics.md § "Cost"). Every knob has a
 // default that errs small: self-hosters pay for their own tokens, and a
@@ -165,15 +182,28 @@ type Config struct {
 	// budget cannot be enforced.
 	PriceInMTok  float64
 	PriceOutMTok float64
+	// AgreementThreshold is the score at or above which a verdict counts as
+	// agreement; below it the checker could not decide and the candidate is
+	// flagged for review. Read by the adversarial pass only.
+	AgreementThreshold float64
+	// ValidateModel names the model the adversarial pass should run
+	// (CANON_VALIDATE_MODEL). Empty means the shared client's own model —
+	// the degenerate configuration where both passes are the same model,
+	// which is not adversarial validation. Carried for the wiring layer:
+	// the store takes its clients by constructor, and this is the knob that
+	// makes the two passes genuinely two different models.
+	ValidateModel string
 }
 
 // DefaultConfig is the conservative built-in configuration: no USD budget
-// (prices unknown), 500 candidates, 8 sources per run, one call per second.
+// (prices unknown), 500 candidates, 8 sources per run, one call per second,
+// agreement at 0.8.
 func DefaultConfig() Config {
 	return Config{
-		MaxCandidates: 500,
-		BatchSize:     8,
-		Interval:      time.Second,
+		MaxCandidates:      500,
+		BatchSize:          8,
+		Interval:           time.Second,
+		AgreementThreshold: DefaultAgreementThreshold,
 	}
 }
 
@@ -191,20 +221,34 @@ const (
 // Store is the canon engine on the shared database handle. The schema must
 // already be applied (migrate.Up runs before anything serves).
 type Store struct {
-	db    *sql.DB
-	model ModelClient
-	cfg   Config
-	now   func() time.Time
+	db        *sql.DB
+	model     ModelClient
+	validator ModelClient
+	cfg       Config
+	now       func() time.Time
 }
 
 // New builds a canon store on an open, migrated database handle with the
-// given model client and configuration.
+// given model client and configuration. The adversarial pass falls back to
+// the same client — allowed, but two passes of the same model is not
+// adversarial validation; see NewWithValidator.
 func New(db *sql.DB, model ModelClient, cfg Config) (*Store, error) {
+	return NewWithValidator(db, model, nil, cfg)
+}
+
+// NewWithValidator builds a canon store whose adversarial pass runs on its
+// own model client, so extraction and validation can genuinely be two
+// different models (CANON_VALIDATE_MODEL). A nil validator falls back to the
+// extractor's client.
+func NewWithValidator(db *sql.DB, model, validator ModelClient, cfg Config) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("canon: nil database handle")
 	}
 	if model == nil {
 		return nil, errors.New("canon: nil model client")
+	}
+	if validator == nil {
+		validator = model
 	}
 	if cfg.MaxCandidates <= 0 {
 		cfg.MaxCandidates = 500
@@ -215,7 +259,10 @@ func New(db *sql.DB, model ModelClient, cfg Config) (*Store, error) {
 	if cfg.Interval < 0 {
 		cfg.Interval = 0
 	}
-	return &Store{db: db, model: model, cfg: cfg, now: time.Now().UTC}, nil
+	if cfg.AgreementThreshold <= 0 || cfg.AgreementThreshold > 1 {
+		cfg.AgreementThreshold = DefaultAgreementThreshold
+	}
+	return &Store{db: db, model: model, validator: validator, cfg: cfg, now: time.Now().UTC}, nil
 }
 
 // ConfigFromEnv reads the CANON_* budget guards from the environment, the
@@ -245,6 +292,12 @@ func ConfigFromEnv(getenv func(string) string) Config {
 	}
 	if v, ok := envFloat(getenv, "CANON_PRICE_OUT_MTOK"); ok {
 		cfg.PriceOutMTok = v
+	}
+	if v, ok := envFloat(getenv, "CANON_AGREEMENT_THRESHOLD"); ok && v > 0 && v <= 1 {
+		cfg.AgreementThreshold = v
+	}
+	if v := strings.TrimSpace(getenv("CANON_VALIDATE_MODEL")); v != "" {
+		cfg.ValidateModel = v
 	}
 	return cfg
 }

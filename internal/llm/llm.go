@@ -102,6 +102,23 @@ func (c *Client) FallbackModels() []string {
 	return models
 }
 
+// WithModel returns a client over the same provider chain with the model
+// replaced on every provider. It exists for features that check a first
+// model's work with a genuinely different one (the canon engine's adversarial
+// pass): two passes of the same model in the same conversation is not
+// adversarial validation. An empty model returns the receiver unchanged.
+func (c *Client) WithModel(model string) *Client {
+	if strings.TrimSpace(model) == "" {
+		return c
+	}
+	providers := make([]Config, len(c.providers))
+	for i, p := range c.providers {
+		p.Model = model
+		providers[i] = p
+	}
+	return &Client{providers: providers, http: c.http}
+}
+
 // ErrNotConfigured is returned when no API key is set.
 type errNotConfigured struct{}
 

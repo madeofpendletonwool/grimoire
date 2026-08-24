@@ -126,8 +126,8 @@ provenance row is a bug, and integrity checks it.
 
 | Table | Columns | Notes |
 |---|---|---|
-| `canon_runs` | `id, campaign_id, session_id, kind, prompt_version, stats` | One row per pipeline run, with the token and cost stats the budget guard reads. |
-| `canon_verdicts` | `candidate_id, prompt_version, checksum, verdict, agreement, rationale, raw_output_id` | Keyed by candidate + prompt version + content checksum, so re-runs are idempotent and resumable and **nothing is billed twice**. |
+| `canon_runs` | `id, campaign_id, session_id, kind, prompt_version, stats` | One row per pipeline run (`extract` or `validate`), with the token and cost stats the budget guard reads. |
+| `canon_verdicts` | `candidate_id, prompt_version, input_checksum, verdict, status, agreement, rationale, proposed_confidence, confidence_before, confidence_after, rejection_reason, model, tokens, raw` | The adversarial pass's ledger. Keyed UNIQUE by candidate + prompt version + content checksum, so re-runs are idempotent and resumable and **nothing is billed twice**. `verdict` is `agree \| downgrade \| flag_review`; `status` records what the machine did (`applied`, `rejected` — the monotonicity rule refusing an upgrade in disguise — or `unparseable`, which conservatively flags); the raw validator response lives on the row with its model and tokens. |
 | `canon_flags` | `check_code, record_kind, record_id, severity, status` | Deterministic-engine findings. `status` is `open \| accepted \| dismissed \| cleared`. |
 | `canon_reviews` | `id, kind, payload, status, decision, note, decided_at` | The DM's queue. `open → accepted \| dismissed`; a re-run refreshes findings but **never clobbers a human decision**; a finding the engine stops reporting is marked `cleared`; a decided item never resurrects — the same finding reappearing opens as a *new* item. |
 | `model_outputs` | `run_id, prompt_version, model, tokens, raw` | Raw model responses stored verbatim. Prompts are versioned code, never edited in place. |
