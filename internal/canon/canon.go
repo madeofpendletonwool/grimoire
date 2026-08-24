@@ -265,6 +265,23 @@ func NewWithValidator(db *sql.DB, model, validator ModelClient, cfg Config) (*St
 	return &Store{db: db, model: model, validator: validator, cfg: cfg, now: time.Now().UTC}, nil
 }
 
+// NewOffline builds a canon store with no model at all: the deterministic
+// engine and its flag ledger only. This is the constructor behind
+// `grimoire canon check` and the check API — the consistency engine needs no
+// key configured, and saying so at construction (rather than crashing in a
+// model call) is what makes the offline guarantee real. The extraction and
+// adversarial entry points refuse with a clear error on this store.
+func NewOffline(db *sql.DB) (*Store, error) {
+	if db == nil {
+		return nil, errors.New("canon: nil database handle")
+	}
+	return &Store{db: db, cfg: DefaultConfig(), now: time.Now().UTC}, nil
+}
+
+// errOffline is the error the model-driven stages return on a store built by
+// NewOffline.
+var errOffline = errors.New("canon: no model configured (offline store; extraction and validation need a model client)")
+
 // ConfigFromEnv reads the CANON_* budget guards from the environment, the
 // same one-key-one-knob shape the rest of the configuration uses. Empty or
 // absent values fall back to DefaultConfig's value for that knob.

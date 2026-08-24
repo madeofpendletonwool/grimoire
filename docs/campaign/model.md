@@ -198,6 +198,31 @@ it is **free** — it is a join, not a model call.
 feature, delivered deterministically: no tokens, no hallucination, runs in
 milliseconds. The LLM version of that feature is strictly worse.
 
+The engine ships in `internal/canon/engine.go` (MAD-309): pure rules over a
+snapshot, the flag ledger in `canon_flags` with Arda's exact semantics
+(refresh, never clobber a decision, clear what stops reporting), a
+`grimoire canon check` CLI subcommand, and a DM-only API endpoint — all
+offline, no key configured. The definitions the table leaves implicit:
+
+- **player-visible surface** — the party and character scopes; a fact renders
+  on one when it is live and a granting awareness row exists for the scope's
+  knowers, the same join `internal/knowledge` enforces in SQL. `spoiler_leak`
+  fires when the party row explicitly says `unaware` while a pc's grant
+  renders the fact on that character's surface.
+- **thread** — a secret-visibility fact: hooks, secrets and clues are what the
+  visibility column is for. A thread orphans when the session that introduced
+  it (its earliest session-cited provenance) is ≥ 3 sessions back and nothing
+  — no awareness row of any stance, no discovery, no contradiction — has ever
+  touched it.
+- **reachable** — a secret someone holds, or one carrying even a deliberate
+  `unaware` marker (a modeled clue opportunity), is reachable; a secret with
+  no awareness row at all has no path anyone can reach.
+- **planned encounter** — an `encounter` session event on a `planned` session
+  whose payload carries `{"party": [levels], "monsters": [{name, cr, count}]}`;
+  the current party's levels are read from pc entity payloads' `level` key.
+  `stat_block_unresolved` is skipped while the bestiary mirror is empty —
+  "cannot resolve" must not become "does not exist".
+
 ## Migrations
 
 All campaign schema ships as goose migrations under
