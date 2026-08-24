@@ -945,11 +945,14 @@ func runServe() error {
 	// The canon engine's deterministic checks run on the same handle with no
 	// model wired: the consistency engine is deliberately usable on a box
 	// with no key configured at all. The extraction and adversarial passes
-	// are CLI/worker concerns until the review queue lands (MAD-310).
+	// are CLI/worker concerns; the review queue (MAD-310) is wired onto the
+	// graph stores so accepting a finding writes canon through the same
+	// campaign and knowledge paths the DM-facing API uses.
 	canonEngine, err := canon.NewOffline(store.DB())
 	if err != nil {
 		return err
 	}
+	canonEngine = canonEngine.WithGraphStores(campaigns, knowledge)
 
 	chatClient := llmClient()
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,

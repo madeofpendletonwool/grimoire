@@ -55,6 +55,13 @@
 			<span data-ico="hourglass"></span> Sessions
 		</button>
 
+		<!-- The canon engine's human gate: the review queue where proposed
+		     facts, events and discoveries become canon only when the DM says
+		     so. The post-session ritual. -->
+		<button type="button" class="rail-action rail-review" id="rail-review">
+			<span data-ico="shield"></span> Review
+		</button>
+
 			<!-- The MTG deck builder: describe an idea, pick a commander, draft
 		     the 99 with the model, iterate, analyze a pasted list. A sibling
 		     destination to Study and Encounter. -->
@@ -513,6 +520,30 @@
 		     Q&A, notes, discoveries and encounters. Selecting text inside a
 		     source shows the addressable span — the byte offsets downstream
 		     facts will cite. -->
+		<section class="sessions" id="review-view" hidden aria-label="Canon review queue">
+			<header class="study-head">
+				<h2 class="study-title" id="review-title">Review queue</h2>
+				<div class="sess-campaign-wrap">
+					<select id="review-campaign" aria-label="Campaign"></select>
+				</div>
+				<p class="study-meta" id="review-meta"></p>
+				<button type="button" class="icon-btn" id="review-close" aria-label="Leave review" title="Back to chat" data-gi="close"></button>
+			</header>
+			<div class="review-body">
+				<div class="review-toolbar">
+					<button type="button" class="sess-btn" id="review-build">Build queue</button>
+					<div class="review-filters" id="review-filters" role="tablist" aria-label="Queue filter">
+						<button type="button" class="review-filter is-active" data-status="open" role="tab">Open</button>
+						<button type="button" class="review-filter" data-status="accepted" role="tab">Accepted</button>
+						<button type="button" class="review-filter" data-status="modified" role="tab">Modified</button>
+						<button type="button" class="review-filter" data-status="dismissed" role="tab">Dismissed</button>
+					</div>
+					<button type="button" class="sess-btn" id="review-export">Export applied</button>
+				</div>
+				<div class="review-list" id="review-list" aria-label="Review items"></div>
+			</div>
+		</section>
+
 		<section class="sessions" id="sessions-view" hidden aria-label="Game sessions">
 			<header class="study-head">
 				<h2 class="study-title" id="sessions-title">Sessions</h2>

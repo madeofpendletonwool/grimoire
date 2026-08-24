@@ -173,3 +173,180 @@ func (s *Server) handleCanonFlagDecision(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"flags": views})
 }
+
+/* ---------- the review queue (MAD-310) ---------- */
+
+// reviewView is one queue item as the API renders it. The rendering material
+// (payload, span context, adversarial verdict) rides along so the review
+// screen draws a whole item from one response.
+type reviewView struct {
+	ID            string         `json:"id"`
+	Kind          string         `json:"kind"`
+	Status        string         `json:"status"`
+	CandidateID   string         `json:"candidate_id,omitempty"`
+	FlagID        string         `json:"flag_id,omitempty"`
+	Subject       string         `json:"subject"`
+	Summary       string         `json:"summary"`
+	Detail        string         `json:"detail,omitempty"`
+	ResultRef     string         `json:"result_ref,omitempty"`
+	DecisionNote  string         `json:"decision_note,omitempty"`
+	DecidedBy     string         `json:"decided_by,omitempty"`
+	DecidedAt     *int64         `json:"decided_at,omitempty"`
+	CreatedAt     int64          `json:"created_at"`
+	Payload       map[string]any `json:"payload,omitempty"`
+	Quote         string         `json:"quote,omitempty"`
+	SpanStart     int64          `json:"span_start,omitempty"`
+	SpanEnd       int64          `json:"span_end,omitempty"`
+	SourceKind    string         `json:"source_kind,omitempty"`
+	SourceAuthor  string         `json:"source_author,omitempty"`
+	SourceTitle   string         `json:"source_title,omitempty"`
+	ContextBefore string         `json:"context_before,omitempty"`
+	ContextAfter  string         `json:"context_after,omitempty"`
+	Agreement     float64        `json:"agreement,omitempty"`
+	Rationale     string         `json:"rationale,omitempty"`
+	Verdict       string         `json:"verdict,omitempty"`
+	Confidence    float64        `json:"confidence,omitempty"`
+}
+
+func toReviewView(r canon.Review) reviewView {
+	v := reviewView{
+		ID: r.ID, Kind: r.Kind, Status: r.Status, CandidateID: r.CandidateID,
+		FlagID: r.FlagID, Subject: r.Subject, Summary: r.Summary, Detail: r.Detail,
+		ResultRef: r.ResultRef, DecisionNote: r.DecisionNote, DecidedBy: r.DecidedBy,
+		CreatedAt: r.CreatedAt.UnixMilli(), Payload: r.Payload, Quote: r.Quote,
+		SpanStart: r.SpanStart, SpanEnd: r.SpanEnd, SourceKind: r.SourceKind,
+		SourceAuthor: r.SourceAuthor, SourceTitle: r.SourceTitle,
+		ContextBefore: r.ContextBefore, ContextAfter: r.ContextAfter,
+		Agreement: r.Agreement, Rationale: r.Rationale, Verdict: r.Verdict,
+		Confidence: r.Confidence,
+	}
+	if !r.DecidedAt.IsZero() {
+		ms := r.DecidedAt.UnixMilli()
+		v.DecidedAt = &ms
+	}
+	return v
+}
+
+// handleCanonReviewsBuild rebuilds the queue from the three upstream passes
+// and returns it. Idempotent: a re-run mints items only for findings that
+// have never been queued.
+func (s *Server) handleCanonReviewsBuild(w http.ResponseWriter, r *http.Request) {
+	if !s.canonEnabled(w) {
+		return
+	}
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	reviews, err := s.canon.BuildQueue(r.Context(), a.campaign.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeReviews(w, reviews)
+}
+
+// handleCanonReviews lists the queue, optionally narrowed by ?status=.
+func (s *Server) handleCanonReviews(w http.ResponseWriter, r *http.Request) {
+	if !s.canonEnabled(w) {
+		return
+	}
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	status := r.URL.Query().Get("status")
+	if status != "" && status != canon.ReviewOpen && status != canon.ReviewAccepted &&
+		status != canon.ReviewModified && status != canon.ReviewDismissed {
+		writeError(w, http.StatusBadRequest, errors.New("status must be open, accepted, modified or dismissed"))
+		return
+	}
+	reviews, err := s.canon.Reviews(r.Context(), a.campaign.ID, status)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeReviews(w, reviews)
+}
+
+// handleCanonReviewDecision records the DM's decision on one open item:
+// accept, modify then accept (with a replacement payload), or dismiss. The
+// accept path is the only thing that writes canon.
+func (s *Server) handleCanonReviewDecision(w http.ResponseWriter, r *http.Request) {
+	if !s.canonEnabled(w) {
+		return
+	}
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	var req struct {
+		Decision string          `json:"decision"`
+		Note     string          `json:"note"`
+		Payload  json.RawMessage `json:"payload"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	rev, err := s.canon.DecideReview(r.Context(), a.campaign.ID, r.PathValue("rid"),
+		req.Decision, req.Note, userID(r), req.Payload)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"review": toReviewView(*rev)})
+}
+
+// handleCanonReviewsExport renders a session's applied changes as Markdown
+// (default) or JSON (?format=json) — the DM's record of what the machine
+// changed. ?session_id= narrows to one session; without it every applied
+// change in the campaign is exported.
+func (s *Server) handleCanonReviewsExport(w http.ResponseWriter, r *http.Request) {
+	if !s.canonEnabled(w) {
+		return
+	}
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	sessionID := r.URL.Query().Get("session_id")
+	if r.URL.Query().Get("format") == "json" {
+		reviews, err := s.canon.AppliedReviews(r.Context(), a.campaign.ID, sessionID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeReviews(w, reviews)
+		return
+	}
+	md, err := s.canon.ExportApplied(r.Context(), a.campaign.ID, sessionID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.Header().Set("content-type", "text/markdown; charset=utf-8")
+	w.Header().Set("content-disposition", "attachment; filename=\"canon-changes.md\"")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(md))
+}
+
+func writeReviews(w http.ResponseWriter, reviews []canon.Review) {
+	views := make([]reviewView, 0, len(reviews))
+	for _, r := range reviews {
+		views = append(views, toReviewView(r))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reviews": views})
+}

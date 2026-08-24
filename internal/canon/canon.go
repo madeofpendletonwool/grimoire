@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 )
 
@@ -226,6 +227,11 @@ type Store struct {
 	validator ModelClient
 	cfg       Config
 	now       func() time.Time
+	// The graph and knowledge stores the review queue (MAD-310) writes into
+	// on accept. Wired with WithGraphStores; nil keeps the deterministic and
+	// queue-read surfaces working while accepting is refused.
+	campaigns *campaign.Store
+	knowledge *knowledge.Store
 }
 
 // New builds a canon store on an open, migrated database handle with the

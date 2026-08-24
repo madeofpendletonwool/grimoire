@@ -2971,6 +2971,88 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	margin: var(--sp-2) 0;
 }
 
+/* The canon review queue: the post-session human gate. Each card is a
+   proposed change plus its evidence, with the DM's three decisions. */
+.review-body {
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-3);
+}
+.review-toolbar {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-3);
+	flex-wrap: wrap;
+	padding: 0 var(--sp-1);
+}
+.review-filters { display: flex; gap: var(--sp-1); }
+.review-filter {
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+	color: var(--parchment);
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.05em;
+	opacity: 0.55;
+	padding: 0.15rem 0.4rem;
+	cursor: pointer;
+}
+.review-filter.is-active { opacity: 1; color: var(--gold); border-bottom-color: var(--gold); }
+.review-list { display: flex; flex-direction: column; gap: var(--sp-3); }
+.review-card {
+	padding: var(--sp-3) var(--sp-4);
+	box-shadow: var(--shadow-2);
+	color: var(--parchment);
+}
+.review-card-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.review-kind {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.05em;
+	color: var(--gold);
+}
+.review-kind[data-kind="engine_flag"],
+.review-kind[data-kind="contradiction"] { color: var(--gold-bright); }
+.review-status {
+	margin-left: auto;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.05em;
+	opacity: 0.55;
+}
+.review-status[data-status="open"] { opacity: 1; color: var(--gold); }
+.review-summary { margin: 0 0 var(--sp-2); font-family: var(--font-prose); font-size: var(--fs-sm); color: var(--parchment); }
+.review-quote {
+	margin: 0 0 var(--sp-2);
+	padding: var(--sp-2);
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	line-height: 1.5;
+	border-left: 2px solid var(--gold-dim);
+	color: var(--parchment-2);
+}
+.review-quote mark.review-span {
+	background: rgba(255, 215, 168, 0.18);
+	color: var(--parchment);
+}
+.review-source { margin: 0 0 var(--sp-2); font-size: var(--fs-xs); opacity: 0.7; }
+.review-rationale { margin: 0 0 var(--sp-2); font-size: var(--fs-xs); line-height: 1.5; }
+.review-verdict {
+	font-family: var(--font-pixel);
+	letter-spacing: 0.04em;
+	color: var(--gold);
+	margin-right: var(--sp-1);
+}
+.review-actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-2); }
+.review-note { flex: 1; min-width: 12rem; border-bottom: 1px solid var(--stone-line); }
+.review-modify { flex-basis: 100%; display: flex; flex-direction: column; gap: var(--sp-2); }
+.review-modify-input { width: 100%; }
+.review-decision { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); opacity: 0.7; }
+.study-meta.is-error { color: var(--gold-bright); opacity: 1; }
+
 /* The session list: ordinal, name, status — a shelf of sittings. */
 .sess-list { display: flex; flex-direction: column; gap: var(--sp-2); }
 .sess-row {

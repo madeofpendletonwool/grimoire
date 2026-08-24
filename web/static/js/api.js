@@ -355,6 +355,27 @@ export const api = {
 	listEvents: (campaignID, sessionID) =>
 		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/events`).then(json),
 
+	// The canon review queue (MAD-310): the DM's human gate. Build refreshes
+	// the queue from the three upstream passes; decide accepts, modifies or
+	// dismisses one open item; export downloads the applied changes.
+	reviewBuild: (campaignID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/canon/reviews/build`, { method: "POST" }).then(json),
+
+	reviews: (campaignID, status) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/canon/reviews` +
+			(status ? `?status=${encodeURIComponent(status)}` : "")).then(json),
+
+	reviewDecide: (campaignID, reviewID, decision, note, payload) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/canon/reviews/${encodeURIComponent(reviewID)}/decision`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ decision, note, payload }),
+		}).then(json),
+
+	reviewExportURL: (campaignID, sessionID) =>
+		`/api/campaigns/${encodeURIComponent(campaignID)}/canon/reviews/export` +
+		(sessionID ? `?session_id=${encodeURIComponent(sessionID)}` : ""),
+
 	sessionExportURL: (campaignID, sessionID) =>
 		`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/export`,
 };

@@ -39,6 +39,12 @@ type ProvenanceInput struct {
 	SpanEnd   int64
 	Quote     string
 	Method    string
+	// AcceptedBy / AcceptedAt record the human who accepted an extracted
+	// fact as canon and when. They are set only by the canon engine's review
+	// queue (MAD-310): a human decision is the one path that writes an
+	// extracted fact at a non-proposed confidence.
+	AcceptedBy string
+	AcceptedAt time.Time
 }
 
 // Provenance is a stored origin record.
@@ -90,12 +96,19 @@ func (s *Store) createFact(ctx context.Context, tx *sql.Tx, campaignID, subject,
 	}
 	// Staging rule (ADR 3): only a human decision writes canon. Machine
 	// methods may only stage proposals; human methods may assert canon or
-	// derived but never stage.
+	// derived but never stage. The one exception is the review queue's
+	// acceptance of an extracted fact: it carries AcceptedBy, the human who
+	// made the decision, and that is what makes a canon-confidence extracted
+	// fact legal.
 	for _, p := range provenance {
 		switch p.Method {
-		case MethodAIProposed, MethodExtracted:
+		case MethodAIProposed:
 			if confidence != ConfidenceProposed {
 				return nil, fmt.Errorf("%w: a %s fact lands as proposed and needs a human decision before it is canon", ErrInvalid, p.Method)
+			}
+		case MethodExtracted:
+			if confidence != ConfidenceProposed && strings.TrimSpace(p.AcceptedBy) == "" {
+				return nil, fmt.Errorf("%w: an extracted fact lands as proposed unless a human accepts it through the review queue", ErrInvalid)
 			}
 		case MethodDMAuthored, MethodImported:
 			if confidence != ConfidenceCanon && confidence != ConfidenceDerived {
@@ -136,11 +149,16 @@ func (s *Store) createFact(ctx context.Context, tx *sql.Tx, campaignID, subject,
 		return nil, fmt.Errorf("insert fact: %w", err)
 	}
 	for _, p := range provenance {
+		var acceptedAt any
+		if !p.AcceptedAt.IsZero() {
+			acceptedAt = p.AcceptedAt.UnixMilli()
+		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO fact_provenance (id, fact_id, session_id, source_id, span_start, span_end, quote, method, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			INSERT INTO fact_provenance (id, fact_id, session_id, source_id, span_start, span_end, quote, method, accepted_by, accepted_at, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			uuid.NewString(), f.ID, nullString(p.SessionID), nullString(p.SourceID),
-			nullInt64(p.SpanStart), nullInt64(p.SpanEnd), p.Quote, p.Method, now.UnixMilli())
+			nullInt64(p.SpanStart), nullInt64(p.SpanEnd), p.Quote, p.Method,
+			p.AcceptedBy, acceptedAt, now.UnixMilli())
 		if err != nil {
 			return nil, fmt.Errorf("insert provenance: %w", err)
 		}

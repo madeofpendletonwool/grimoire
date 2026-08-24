@@ -151,7 +151,8 @@
 .enc-panel,
 .deck-panel,
 .camp-panel,
-.sess-panel {
+.sess-panel,
+.review-card {
 	border-width: 6px;
 	border-image-source: var(--frame-stone);
 	border-image-slice: 3 fill;
