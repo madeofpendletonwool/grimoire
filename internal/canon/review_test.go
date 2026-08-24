@@ -165,6 +165,9 @@ func TestReview_AcceptFactWritesCanon(t *testing.T) {
 	if p.Method != campaign.MethodExtracted || p.SessionID == "" || p.SourceID == "" {
 		t.Fatalf("provenance = %+v", p)
 	}
+	if p.AcceptedBy != "keeper" || p.AcceptedAt.IsZero() {
+		t.Fatalf("acceptance not recorded on provenance: %+v", p)
+	}
 	if p.SpanStart != fact.SpanStart || p.SpanEnd != fact.SpanEnd || p.Quote != fact.Quote {
 		t.Fatalf("provenance span = %d..%d %q, want %d..%d %q",
 			p.SpanStart, p.SpanEnd, p.Quote, fact.SpanStart, fact.SpanEnd, fact.Quote)
@@ -425,22 +428,50 @@ func TestReview_AcceptContradictionRegistersPair(t *testing.T) {
 }
 
 // insertFactCandidate stages a fact candidate row directly, for contradiction
-// tests that need two conflicting sources.
+// tests that need two conflicting sources. The predicate is 'visited'.
 func insertFactCandidate(t *testing.T, s *Store, fx *campaign.Fixture, sessionID, objectLiteral, statement string, confidence float64) string {
+	t.Helper()
+	return insertFactCandidateAbout(t, s, fx, sessionID, "cand-"+objectLiteral, fx.Duke, "visited", objectLiteral, statement, confidence)
+}
+
+// insertFactCandidateAbout stages a fact candidate with an explicit id,
+// subject and predicate, so tests can point a fact at a staged entity's
+// local_id and stay clear of the seed fixture's own predicates.
+func insertFactCandidateAbout(t *testing.T, s *Store, fx *campaign.Fixture, sessionID, id, subject, predicate, objectLiteral, statement string, confidence float64) string {
 	t.Helper()
 	src := lookupSourceID(t, s.db, sessionID)
 	payload, _ := json.Marshal(map[string]any{
-		"local_id":       "fact-" + objectLiteral,
+		"local_id":       "fact-" + id,
 		"statement":      statement,
-		"subject":        fx.Duke,
-		"predicate":      "visited",
+		"subject":        subject,
+		"predicate":      predicate,
 		"object_entity":  "",
 		"object_literal": objectLiteral,
 		"visibility":     "public",
 	})
-	id := "cand-" + objectLiteral
-	// The candidate's run row must exist for the foreign key; one shared
-	// 'run' row covers both sides.
+	insertCandidateRow(t, s, fx, sessionID, src, id, "fact", payload, confidence)
+	return id
+}
+
+// insertEntityCandidate stages an entity candidate whose local_id other
+// staged candidates can reference.
+func insertEntityCandidate(t *testing.T, s *Store, fx *campaign.Fixture, sessionID, localID string) string {
+	t.Helper()
+	src := lookupSourceID(t, s.db, sessionID)
+	payload, _ := json.Marshal(map[string]any{
+		"local_id": localID,
+		"kind":     "faction",
+		"name":     "The " + localID,
+		"summary":  "Staged entity " + localID,
+	})
+	insertCandidateRow(t, s, fx, sessionID, src, "ent-"+localID, "entity", payload, 0.9)
+	return "ent-" + localID
+}
+
+// insertCandidateRow is the shared insert behind the staged-candidate
+// helpers; the run row must exist for the foreign key.
+func insertCandidateRow(t *testing.T, s *Store, fx *campaign.Fixture, sessionID, src, id, kind string, payload []byte, confidence float64) {
+	t.Helper()
 	if _, err := s.db.Exec(`
 		INSERT INTO canon_runs (id, campaign_id, session_id, kind, prompt_version, model, status, stop_reason, stats, error, created_at, updated_at)
 		VALUES ('run', ?, ?, 'extract', 'test', 'test', 'completed', '', '{}', '', 0, 0)
@@ -449,11 +480,331 @@ func insertFactCandidate(t *testing.T, s *Store, fx *campaign.Fixture, sessionID
 	}
 	if _, err := s.db.Exec(`
 		INSERT INTO canon_candidates (id, run_id, campaign_id, session_id, source_id, chunk_index, kind, payload, confidence, span_start, span_end, quote, checksum, created_at)
-		VALUES (?, 'run', ?, ?, ?, 0, 'fact', ?, ?, 0, 10, 'verbatim', ?, 0)`,
-		id, fx.Campaign.ID, sessionID, src, string(payload), confidence, "checksum-"+objectLiteral); err != nil {
-		t.Fatalf("insert fact candidate: %v", err)
+		VALUES (?, 'run', ?, ?, ?, 0, ?, ?, ?, 0, 10, 'verbatim', ?, 0)`,
+		id, fx.Campaign.ID, sessionID, src, kind, string(payload), confidence, "checksum-"+id); err != nil {
+		t.Fatalf("insert candidate: %v", err)
 	}
-	return id
+}
+
+// TestReview_BuildQueueGroupsContradictions exercises the real grouping pass:
+// two agree-verdicted fact candidates that assert different objects for the
+// same subject and predicate are claimed by a single contradiction item and
+// never get individual proposed_fact items.
+func TestReview_BuildQueueGroupsContradictions(t *testing.T) {
+	db, fx, sessionID := seeded(t)
+	ctx := context.Background()
+	addSource(t, db, sessionID, "transcript", fixtureTranscript)
+	s := reviewStore(t, db, &fakeModel{}, &uniformVerdictModel{})
+
+	candA := insertFactCandidateAbout(t, s, fx, sessionID, "cand-mines", fx.Duke, "traveled_to", "the mines", "The Duke traveled to the mines.", 0.9)
+	candB := insertFactCandidateAbout(t, s, fx, sessionID, "cand-nowhere", fx.Duke, "traveled_to", "nowhere", "The Duke traveled to nowhere.", 0.9)
+	// A third fact on the same subject but a different predicate must NOT be
+	// grouped with the conflicting pair.
+	candC := insertFactCandidateAbout(t, s, fx, sessionID, "cand-other", fx.Duke, "signed", "the ledger", "The Duke signed the ledger.", 0.9)
+	for _, id := range []string{candA, candB, candC} {
+		if err := s.commitVerdictDirect(ctx, id, VerdictAgree, VerdictApplied, 0.9); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reviews, err := s.BuildQueue(ctx, fx.Campaign.ID)
+	if err != nil {
+		t.Fatalf("BuildQueue: %v", err)
+	}
+	var contra *Review
+	factItems := 0
+	for i := range reviews {
+		switch reviews[i].Kind {
+		case ReviewContradiction:
+			contra = &reviews[i]
+		case ReviewProposedFact:
+			factItems++
+		}
+	}
+	if contra == nil {
+		t.Fatalf("no contradiction item in %v", kinds(reviews))
+	}
+	if factItems != 1 {
+		t.Fatalf("proposed_fact items = %d, want 1 (the non-conflicting third fact)", factItems)
+	}
+	var detail struct {
+		Subject   string   `json:"subject"`
+		Predicate string   `json:"predicate"`
+		Sides     []string `json:"sides"`
+	}
+	if err := json.Unmarshal([]byte(contra.Detail), &detail); err != nil {
+		t.Fatalf("contradiction detail: %v", err)
+	}
+	if len(detail.Sides) != 2 || detail.Predicate != "traveled_to" {
+		t.Fatalf("contradiction sides = %+v", detail)
+	}
+
+	// Rebuilding mints nothing new: the dedup keys are already seen.
+	again, err := s.BuildQueue(ctx, fx.Campaign.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != len(reviews) {
+		t.Fatalf("rebuild minted new items: %d then %d", len(reviews), len(again))
+	}
+}
+
+// TestReview_ContradictionAcceptReusesDecidedSide covers the cross-run case:
+// a fact accepted on its own item, then a conflicting candidate staged later.
+// Accepting the contradiction must reuse the already-canon fact, not mint a
+// duplicate of it.
+func TestReview_ContradictionAcceptReusesDecidedSide(t *testing.T) {
+	db, fx, sessionID := seeded(t)
+	ctx := context.Background()
+	addSource(t, db, sessionID, "transcript", fixtureTranscript)
+	s := reviewStore(t, db, &fakeModel{}, &uniformVerdictModel{})
+
+	candA := insertFactCandidateAbout(t, s, fx, sessionID, "cand-mines", fx.Duke, "traveled_to", "the mines", "The Duke traveled to the mines.", 0.9)
+	if err := s.commitVerdictDirect(ctx, candA, VerdictAgree, VerdictApplied, 0.9); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.BuildQueue(ctx, fx.Campaign.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	itemA := reviewByKind(first, ReviewProposedFact)
+	if itemA == nil {
+		t.Fatalf("first build had no proposed_fact: %v", kinds(first))
+	}
+	acceptedA, err := s.DecideReview(ctx, fx.Campaign.ID, itemA.ID, DecisionAccept, "", "keeper", nil)
+	if err != nil {
+		t.Fatalf("accept A: %v", err)
+	}
+
+	// A later run stages the conflicting account. The new build claims both
+	// sides into one contradiction item and does not re-offer B on its own.
+	candB := insertFactCandidateAbout(t, s, fx, sessionID, "cand-nowhere", fx.Duke, "traveled_to", "nowhere", "The Duke traveled to nowhere.", 0.9)
+	if err := s.commitVerdictDirect(ctx, candB, VerdictAgree, VerdictApplied, 0.9); err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.BuildQueue(ctx, fx.Campaign.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contra := reviewByKind(second, ReviewContradiction)
+	if contra == nil {
+		t.Fatalf("second build had no contradiction: %v", kinds(second))
+	}
+	var openFactItems int
+	for _, r := range second {
+		if r.Kind == ReviewProposedFact && r.Status == ReviewOpen {
+			openFactItems++
+		}
+	}
+	if openFactItems != 0 {
+		t.Fatalf("conflicting side was also offered individually (%d open proposed_fact)", openFactItems)
+	}
+
+	accepted, err := s.DecideReview(ctx, fx.Campaign.ID, contra.ID, DecisionAccept, "", "keeper", nil)
+	if err != nil {
+		t.Fatalf("accept contradiction: %v", err)
+	}
+
+	// Exactly one new fact was written: A's accepted fact is reused, not
+	// duplicated, and both sides land contested.
+	cs, err := campaign.New(s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := cs.ListFacts(ctx, campaign.ScopeDM, fx.Campaign.ID, campaign.FactFilter{Predicate: "traveled_to"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 2 {
+		t.Fatalf("traveled_to facts = %d, want 2 (reuse, not duplicate)", len(facts))
+	}
+	seenA := false
+	for _, f := range facts {
+		if f.Confidence != campaign.ConfidenceContested {
+			t.Fatalf("side fact %s confidence = %q, want contested", f.ID, f.Confidence)
+		}
+		if f.ID == acceptedA.ResultRef {
+			seenA = true
+		}
+	}
+	if !seenA {
+		t.Fatal("the originally accepted fact is not part of the contradiction")
+	}
+
+	// The register's versions for the accepted contradiction include the
+	// reused fact.
+	versions, err := cs.FactVersions(ctx, campaign.ScopeDM, fx.Campaign.ID, accepted.ResultRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundA := false
+	for _, v := range versions {
+		if v.FactID == acceptedA.ResultRef {
+			foundA = true
+		}
+	}
+	if len(versions) != 2 || !foundA {
+		t.Fatalf("contradiction versions = %+v, want 2 including the reused fact", versions)
+	}
+}
+
+// TestReview_AcceptResolvesStagedEntityReference: a fact about an entity the
+// same extraction proposed can be accepted once the entity is — the staged
+// local_id resolves to the created entity id. Accepting out of order fails
+// with instructions instead of an opaque not-found.
+func TestReview_AcceptResolvesStagedEntityReference(t *testing.T) {
+	db, fx, sessionID := seeded(t)
+	ctx := context.Background()
+	addSource(t, db, sessionID, "transcript", fixtureTranscript)
+	s := reviewStore(t, db, &fakeModel{}, &uniformVerdictModel{})
+
+	entCand := insertEntityCandidate(t, s, fx, sessionID, "robed-folk")
+	factCand := insertFactCandidateAbout(t, s, fx, sessionID, "cand-robed", "robed-folk", "came_from", "Greyfall", "The robed folk came from Greyfall.", 0.9)
+	for _, id := range []string{entCand, factCand} {
+		if err := s.commitVerdictDirect(ctx, id, VerdictAgree, VerdictApplied, 0.95); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reviews, err := s.BuildQueue(ctx, fx.Campaign.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ent := reviewByKind(reviews, ReviewProposedEntity)
+	fact := reviewByKind(reviews, ReviewProposedFact)
+	if ent == nil || fact == nil {
+		t.Fatalf("queue = %v, want entity + fact", kinds(reviews))
+	}
+
+	// Out of order: the reference cannot resolve yet.
+	if _, err := s.DecideReview(ctx, fx.Campaign.ID, fact.ID, DecisionAccept, "", "keeper", nil); err == nil ||
+		!strings.Contains(err.Error(), "accept the entity") {
+		t.Fatalf("accept before the entity must fail with instructions, got %v", err)
+	}
+	// The failed accept left the item open (claim rolled back).
+	still, err := s.getReview(ctx, fx.Campaign.ID, fact.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if still.Status != ReviewOpen {
+		t.Fatalf("failed accept left the item %s, want open", still.Status)
+	}
+
+	acceptedEnt, err := s.DecideReview(ctx, fx.Campaign.ID, ent.ID, DecisionAccept, "", "keeper", nil)
+	if err != nil {
+		t.Fatalf("accept entity: %v", err)
+	}
+	acceptedFact, err := s.DecideReview(ctx, fx.Campaign.ID, fact.ID, DecisionAccept, "", "keeper", nil)
+	if err != nil {
+		t.Fatalf("accept fact: %v", err)
+	}
+	cs, err := campaign.New(s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := cs.GetFact(ctx, campaign.ScopeDM, fx.Campaign.ID, acceptedFact.ResultRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.SubjectEntity != acceptedEnt.ResultRef {
+		t.Fatalf("fact subject = %q, want the accepted entity %q", f.SubjectEntity, acceptedEnt.ResultRef)
+	}
+}
+
+// TestReview_ModifyWritesReplacementPayload covers the modify-then-accept
+// path: the DM's replacement payload is what lands as canon, and the item
+// records 'modified'. An empty replacement payload is refused.
+func TestReview_ModifyWritesReplacementPayload(t *testing.T) {
+	s, campaignID, reviews := queueFixture(t)
+	ctx := context.Background()
+
+	fact := reviewByKind(reviews, ReviewProposedFact)
+	modified := map[string]any{}
+	for k, v := range fact.Payload {
+		modified[k] = v
+	}
+	modified["statement"] = "The Duke's men came through once this month."
+	raw, _ := json.Marshal(modified)
+
+	rev, err := s.DecideReview(ctx, campaignID, fact.ID, DecisionModify, "Tom said twice, but the ledger says once", "keeper", raw)
+	if err != nil {
+		t.Fatalf("modify accept: %v", err)
+	}
+	if rev.Status != ReviewModified || rev.ResultRef == "" {
+		t.Fatalf("modified review = %+v", rev)
+	}
+	cs, err := campaign.New(s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := cs.GetFact(ctx, campaign.ScopeDM, campaignID, rev.ResultRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Statement != "The Duke's men came through once this month." {
+		t.Fatalf("canon fact statement = %q, want the DM's replacement", f.Statement)
+	}
+
+	// Modify with no replacement payload is refused.
+	rel := reviewByKind(reviews, ReviewProposedRelationship)
+	if _, err := s.DecideReview(ctx, campaignID, rel.ID, DecisionModify, "", "keeper", nil); err == nil {
+		t.Fatal("modify without a payload must fail")
+	}
+}
+
+// TestReview_AcceptAgreementBatch covers the queue's one batch affordance:
+// open proposed_* items the checker agreed with at or above the threshold
+// are accepted in reference order (entities first); everything else stays
+// open for an individual decision.
+func TestReview_AcceptAgreementBatch(t *testing.T) {
+	db, fx, sessionID := seeded(t)
+	ctx := context.Background()
+	addSource(t, db, sessionID, "transcript", fixtureTranscript)
+	s := reviewStore(t, db, &fakeModel{}, &uniformVerdictModel{})
+
+	// An entity and a fact about it, both agreed: the batch must accept the
+	// entity first or the fact's reference cannot resolve.
+	entCand := insertEntityCandidate(t, s, fx, sessionID, "robed-folk")
+	factCand := insertFactCandidateAbout(t, s, fx, sessionID, "cand-robed-batch", "robed-folk", "came_from", "Greyfall", "The robed folk came from Greyfall.", 0.9)
+	// A downgrade-verdicted candidate is not 'agree' and must be skipped.
+	downCand := insertFactCandidate(t, s, fx, sessionID, "the mines", "The Duke visited the mines.", 0.9)
+	for _, id := range []string{entCand, factCand} {
+		if err := s.commitVerdictDirect(ctx, id, VerdictAgree, VerdictApplied, 0.95); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.commitVerdictDirect(ctx, downCand, VerdictDowngrade, VerdictApplied, 0.9); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BuildQueue(ctx, fx.Campaign.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := s.AcceptAgreement(ctx, fx.Campaign.ID, 0.8, "keeper")
+	if err != nil {
+		t.Fatalf("AcceptAgreement: %v", err)
+	}
+	if res.Accepted != 2 || len(res.Failed) != 0 {
+		t.Fatalf("batch = %+v, want 2 accepted and no failures", res)
+	}
+	open, err := s.Reviews(ctx, fx.Campaign.ID, ReviewOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 || open[0].CandidateID != downCand {
+		t.Fatalf("open after batch = %+v, want only the downgrade-verdicted fact", open)
+	}
+
+	// A threshold above the verdicts accepts nothing.
+	if _, err := s.DecideReview(ctx, fx.Campaign.ID, open[0].ID, DecisionDismiss, "", "keeper", nil); err != nil {
+		t.Fatal(err)
+	}
+	res, err = s.AcceptAgreement(ctx, fx.Campaign.ID, 0.99, "keeper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Accepted != 0 {
+		t.Fatalf("batch at 0.99 accepted %d, want 0", res.Accepted)
+	}
 }
 
 /* ---------- helpers ---------- */

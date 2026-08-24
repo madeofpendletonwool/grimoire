@@ -538,6 +538,12 @@
 						<button type="button" class="review-filter" data-status="modified" role="tab">Modified</button>
 						<button type="button" class="review-filter" data-status="dismissed" role="tab">Dismissed</button>
 					</div>
+					<div class="review-batch">
+						<input id="review-threshold" class="sess-field" type="number" min="0" max="1" step="0.05"
+							value="0.8" aria-label="Agreement threshold">
+						<button type="button" class="sess-btn" id="review-accept-agree"
+							title="Accept every open proposal the checker agreed with at or above the threshold">Accept agreed ≥</button>
+					</div>
 					<button type="button" class="sess-btn" id="review-export">Export applied</button>
 				</div>
 				<div class="review-list" id="review-list" aria-label="Review items"></div>

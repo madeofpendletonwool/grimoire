@@ -372,6 +372,16 @@ export const api = {
 			body: JSON.stringify({ decision, note, payload }),
 		}).then(json),
 
+	// The queue's one batch affordance: accept every open proposed_* item the
+	// adversarial pass agreed on at or above the given threshold. There is
+	// deliberately no "accept everything".
+	reviewAcceptAgree: (campaignID, minAgreement) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/canon/reviews/accept-agree`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ min_agreement: minAgreement }),
+		}).then(json),
+
 	reviewExportURL: (campaignID, sessionID) =>
 		`/api/campaigns/${encodeURIComponent(campaignID)}/canon/reviews/export` +
 		(sessionID ? `?session_id=${encodeURIComponent(sessionID)}` : ""),

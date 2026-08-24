@@ -12,6 +12,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/madeofpendletonwool/grimoire/internal/canon"
@@ -341,6 +342,37 @@ func (s *Server) handleCanonReviewsExport(w http.ResponseWriter, r *http.Request
 	w.Header().Set("content-disposition", "attachment; filename=\"canon-changes.md\"")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(md))
+}
+
+// handleCanonReviewsAcceptAgree batch-accepts every open proposed_* item
+// whose adversarial verdict is 'agree' at or above the requested threshold —
+// the queue's one batch affordance. low_agreement, contradiction and
+// engine_flag items always need an individual decision, and "accept
+// everything" is deliberately not offered.
+func (s *Server) handleCanonReviewsAcceptAgree(w http.ResponseWriter, r *http.Request) {
+	if !s.canonEnabled(w) {
+		return
+	}
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	req := struct {
+		MinAgreement float64 `json:"min_agreement"`
+	}{MinAgreement: 0.8}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	res, err := s.canon.AcceptAgreement(r.Context(), a.campaign.ID, req.MinAgreement, userID(r))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func writeReviews(w http.ResponseWriter, reviews []canon.Review) {

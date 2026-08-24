@@ -32,6 +32,7 @@ export function initReview() {
 	});
 	$("review-build").addEventListener("click", onBuild);
 	$("review-export").addEventListener("click", onExport);
+	$("review-accept-agree").addEventListener("click", onAcceptAgree);
 	$("review-filters").addEventListener("click", (e) => {
 		const chip = e.target.closest("[data-status]");
 		if (!chip) return;
@@ -83,16 +84,19 @@ async function loadQueue() {
 	if (!campaignID) return;
 	let data;
 	try {
-		data = await api.reviews(campaignID, status === "open" ? "" : status);
+		// Always fetch the whole queue and filter here: the meta line needs
+		// the true open/total counts regardless of the active tab.
+		data = await api.reviews(campaignID, "");
 	} catch (err) {
 		renderMeta(err.message, true);
 		return;
 	}
-	const reviews = data.reviews || [];
+	const all = data.reviews || [];
+	const reviews = all.filter((r) => r.status === status);
 	const wrap = clear($("review-list"));
 	for (const r of reviews) wrap.append(reviewCard(r));
-	const open = reviews.filter((r) => r.status === "open").length;
-	renderMeta(reviews.length ? `${open} open · ${reviews.length} total` : "Queue is clear.");
+	const open = all.filter((r) => r.status === "open").length;
+	renderMeta(all.length ? `${open} open · ${all.length} total` : "Queue is clear.");
 }
 
 function renderMeta(text, isError) {
@@ -113,6 +117,26 @@ async function onBuild() {
 function onExport() {
 	if (!campaignID) return;
 	window.location.assign(api.reviewExportURL(campaignID, ""));
+}
+
+// The one batch affordance: accept every open proposal the adversarial pass
+// agreed with at or above the threshold in the input. Low-agreement items,
+// contradictions and engine flags still need an individual decision.
+async function onAcceptAgree() {
+	if (!campaignID) return;
+	const threshold = parseFloat($("review-threshold").value);
+	if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
+		renderMeta("Threshold must be a number between 0 and 1.", true);
+		return;
+	}
+	try {
+		const res = await api.reviewAcceptAgree(campaignID, threshold);
+		const failed = (res.failed || []).length;
+		renderMeta(`Batch accepted ${res.accepted}${failed ? ` · ${failed} failed (still open)` : ""}`);
+		await loadQueue();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
 }
 
 /* ---------- rendering ---------- */
