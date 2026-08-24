@@ -87,6 +87,8 @@ The post-session extraction pass — transcripts, DM notes and player journals i
 | `CANON_REQUEST_INTERVAL` | `1s` | Minimum spacing between model calls during a run. Any Go duration. |
 | `CANON_PRICE_IN_MTOK` | _(empty)_ | Price per one million input tokens, USD, for the budget estimate. |
 | `CANON_PRICE_OUT_MTOK` | _(empty)_ | Price per one million output tokens, USD. |
+| `CANON_AGREEMENT_THRESHOLD` | `0.8` | Adversarial pass: agreement score at or above which a verdict counts as agreement; below it the candidate is flagged for review. |
+| `CANON_VALIDATE_MODEL` | _(empty)_ | Adversarial pass: the model the validator runs. Same endpoint, key and fallbacks as the chat — only the model name differs. Two passes of the same model is not adversarial validation, so set this to a genuinely different model. |
 
 ## Data sources & mirrors
 

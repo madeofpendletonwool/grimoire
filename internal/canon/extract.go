@@ -738,6 +738,7 @@ type campaignContext struct {
 	RelTypes []string
 
 	knownEntities map[string]string
+	entityByID    map[string]promptEntity
 }
 
 func (c campaignContext) relTypeSet() map[string]bool {
@@ -760,7 +761,7 @@ func (s *Store) loadTaskContext(ctx context.Context, campaignID string) (*campai
 		return nil, fmt.Errorf("load entities: %w", err)
 	}
 	defer rows.Close()
-	tctx := &campaignContext{knownEntities: map[string]string{}}
+	tctx := &campaignContext{knownEntities: map[string]string{}, entityByID: map[string]promptEntity{}}
 	type ent struct{ id, kind, name string }
 	var ents []ent
 	for rows.Next() {
@@ -799,6 +800,7 @@ func (s *Store) loadTaskContext(ctx context.Context, campaignID string) (*campai
 	for _, e := range ents {
 		pe := promptEntity{ID: e.id, Kind: e.kind, Name: e.name, Aliases: aliases[e.id]}
 		tctx.Entities = append(tctx.Entities, pe)
+		tctx.entityByID[e.id] = pe
 		if e.kind == "pc" {
 			tctx.Roster = append(tctx.Roster, pe)
 		}
