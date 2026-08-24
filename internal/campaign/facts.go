@@ -57,7 +57,12 @@ type Provenance struct {
 	SpanEnd   int64 // 0 when unset
 	Quote     string
 	Method    string
-	CreatedAt time.Time
+	// AcceptedBy / AcceptedAt record the human who accepted an extracted
+	// fact as canon through the review queue, and when. Empty/zero for
+	// human-authored and imported facts, which need no acceptance.
+	AcceptedBy string
+	AcceptedAt time.Time
+	CreatedAt  time.Time
 }
 
 // createFact validates and inserts one fact plus its provenance rows inside
@@ -345,7 +350,8 @@ func (s *Store) FactProvenance(ctx context.Context, scope Scope, campaignID, fac
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, fact_id, session_id, source_id, span_start, span_end, quote, method, created_at
+		SELECT id, fact_id, session_id, source_id, span_start, span_end, quote, method,
+		       accepted_by, accepted_at, created_at
 		  FROM fact_provenance WHERE fact_id = ? ORDER BY rowid`, factID)
 	if err != nil {
 		return nil, fmt.Errorf("list provenance: %w", err)
@@ -354,21 +360,25 @@ func (s *Store) FactProvenance(ctx context.Context, scope Scope, campaignID, fac
 	var out []Provenance
 	for rows.Next() {
 		var (
-			p         Provenance
-			sessionID sql.NullString
-			sourceID  sql.NullString
-			spanStart sql.NullInt64
-			spanEnd   sql.NullInt64
-			created   int64
+			p          Provenance
+			sessionID  sql.NullString
+			sourceID   sql.NullString
+			spanStart  sql.NullInt64
+			spanEnd    sql.NullInt64
+			acceptedAt sql.NullInt64
+			created    int64
 		)
 		if err := rows.Scan(&p.ID, &p.FactID, &sessionID, &sourceID, &spanStart, &spanEnd,
-			&p.Quote, &p.Method, &created); err != nil {
+			&p.Quote, &p.Method, &p.AcceptedBy, &acceptedAt, &created); err != nil {
 			return nil, err
 		}
 		p.SessionID = sessionID.String
 		p.SourceID = sourceID.String
 		p.SpanStart = spanStart.Int64
 		p.SpanEnd = spanEnd.Int64
+		if acceptedAt.Valid {
+			p.AcceptedAt = time.UnixMilli(acceptedAt.Int64).UTC()
+		}
 		p.CreatedAt = time.UnixMilli(created).UTC()
 		out = append(out, p)
 	}

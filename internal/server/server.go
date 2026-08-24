@@ -224,6 +224,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/flags/decision", s.handleCanonFlagDecision)
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/reviews/build", s.handleCanonReviewsBuild)
 	mux.HandleFunc("GET /api/campaigns/{id}/canon/reviews", s.handleCanonReviews)
+	mux.HandleFunc("POST /api/campaigns/{id}/canon/reviews/accept-agree", s.handleCanonReviewsAcceptAgree)
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/reviews/{rid}/decision", s.handleCanonReviewDecision)
 	mux.HandleFunc("GET /api/campaigns/{id}/canon/reviews/export", s.handleCanonReviewsExport)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))

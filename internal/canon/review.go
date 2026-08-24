@@ -553,6 +553,9 @@ func (s *Store) DecideReview(ctx context.Context, campaignID, reviewID, decision
 	if decision == DecisionModify && (rev.Kind == ReviewContradiction || rev.Kind == ReviewEngineFlag) {
 		return nil, fmt.Errorf("%w: %s items cannot be modified", ErrInvalid, rev.Kind)
 	}
+	if decision == DecisionModify && len(modifiedPayload) == 0 {
+		return nil, fmt.Errorf("%w: a modify decision needs the replacement payload", ErrInvalid)
+	}
 
 	// Dismiss is the one decision that never touches the graph or the flag
 	// ledger's decision fields beyond the note.
@@ -560,16 +563,16 @@ func (s *Store) DecideReview(ctx context.Context, campaignID, reviewID, decision
 		return s.finalizeReview(ctx, rev, ReviewDismissed, note, decidedBy, "")
 	}
 
-	if rev.Kind == ReviewEngineFlag {
-		return s.decideEngineFlag(ctx, rev, decision, note, decidedBy)
+	// Validate everything validatable BEFORE claiming: payload shape and the
+	// graph wiring are static, so failing here leaves the item open without
+	// a claim/rollback round trip.
+	if rev.Kind != ReviewEngineFlag {
+		if err := s.requireGraphStores(); err != nil {
+			return nil, err
+		}
 	}
-
-	if err := s.requireGraphStores(); err != nil {
-		return nil, err
-	}
-
 	var payload map[string]any
-	if decision == DecisionModify && len(modifiedPayload) > 0 {
+	if decision == DecisionModify {
 		if err := json.Unmarshal(modifiedPayload, &payload); err != nil {
 			return nil, fmt.Errorf("%w: modified payload is not valid JSON: %v", ErrInvalid, err)
 		}
@@ -584,15 +587,77 @@ func (s *Store) DecideReview(ctx context.Context, campaignID, reviewID, decision
 		}
 	}
 
-	resultRef, err := s.applyReview(ctx, rev, payload, decidedBy)
-	if err != nil {
-		return nil, err
-	}
+	// Claim the item BEFORE any canon is written: the guarded flip to its
+	// terminal status is what makes a second concurrent decision fail instead
+	// of writing the same canon twice. If the apply step then fails, the
+	// claim rolls back and the item reopens rather than stranding decided
+	// with nothing written.
 	status := ReviewAccepted
 	if decision == DecisionModify {
 		status = ReviewModified
 	}
-	return s.finalizeReview(ctx, rev, status, note, decidedBy, resultRef)
+	if err := s.claimReview(ctx, rev, status, note, decidedBy); err != nil {
+		return nil, err
+	}
+
+	if rev.Kind == ReviewEngineFlag {
+		if err := s.applyFlagDecision(ctx, rev, decision, note, decidedBy); err != nil {
+			s.unclaimReview(ctx, rev)
+			return nil, err
+		}
+		return s.setResultRef(ctx, rev, rev.FlagID)
+	}
+
+	resultRef, err := s.applyReview(ctx, rev, payload, decidedBy)
+	if err != nil {
+		s.unclaimReview(ctx, rev)
+		return nil, err
+	}
+	return s.setResultRef(ctx, rev, resultRef)
+}
+
+// claimReview flips one open item to its terminal status, guarded so only
+// the first decision ever lands. The graph write happens after the claim, so
+// a concurrent decider loses the race before it can write duplicate canon.
+func (s *Store) claimReview(ctx context.Context, rev *Review, status, note, decidedBy string) error {
+	now := s.now()
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE canon_reviews SET status = ?, decision_note = ?, decided_by = ?, decided_at = ?, updated_at = ?
+		 WHERE id = ? AND campaign_id = ? AND status = ?`,
+		status, note, decidedBy, now.UnixMilli(), now.UnixMilli(), rev.ID, rev.CampaignID, ReviewOpen)
+	if err != nil {
+		return fmt.Errorf("claim review: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: review %s was already decided", ErrInvalid, rev.ID)
+	}
+	return nil
+}
+
+// unclaimReview rolls a claim back to open after the apply step failed, so a
+// failed accept does not strand the item decided with nothing written. A
+// crash between claim and apply can still leave an item terminal with an
+// empty result_ref — that direction was chosen deliberately: the alternative
+// (apply first) leaves canon written under an open item, and a retry then
+// writes it again.
+func (s *Store) unclaimReview(ctx context.Context, rev *Review) {
+	_, _ = s.db.ExecContext(ctx, `
+		UPDATE canon_reviews SET status = ?, decision_note = '', decided_by = '', decided_at = NULL, updated_at = ?
+		 WHERE id = ? AND campaign_id = ?`,
+		ReviewOpen, s.now().UnixMilli(), rev.ID, rev.CampaignID)
+}
+
+// setResultRef records the graph object an accepted item wrote and returns
+// the item as it now stands.
+func (s *Store) setResultRef(ctx context.Context, rev *Review, resultRef string) (*Review, error) {
+	if resultRef != "" {
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE canon_reviews SET result_ref = ?, updated_at = ? WHERE id = ? AND campaign_id = ?`,
+			resultRef, s.now().UnixMilli(), rev.ID, rev.CampaignID); err != nil {
+			return nil, fmt.Errorf("record result: %w", err)
+		}
+	}
+	return s.getReview(ctx, rev.CampaignID, rev.ID)
 }
 
 // getReview loads one item, scoped to its campaign.
@@ -628,13 +693,13 @@ func (s *Store) finalizeReview(ctx context.Context, rev *Review, status, note, d
 	return s.getReview(ctx, rev.CampaignID, rev.ID)
 }
 
-// decideEngineFlag maps an engine_flag item's decision onto the underlying
+// applyFlagDecision maps an engine_flag item's decision onto the underlying
 // flag: accept the finding (the DM owns the fix) or dismiss it (not a
-// problem). Modify is refused earlier.
-func (s *Store) decideEngineFlag(ctx context.Context, rev *Review, decision, note, decidedBy string) (*Review, error) {
+// problem). The review item itself is already claimed by the caller.
+func (s *Store) applyFlagDecision(ctx context.Context, rev *Review, decision, note, decidedBy string) error {
 	flag, err := s.getFlag(ctx, rev.CampaignID, rev.FlagID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	flagDecision := DecisionAccepted
 	if decision == DecisionDismiss {
@@ -646,14 +711,10 @@ func (s *Store) decideEngineFlag(ctx context.Context, rev *Review, decision, not
 		// review item's own decision still stands; the queue is the DM's
 		// surface, not the ledger's gatekeeper.
 		if !strings.Contains(err.Error(), "not open") {
-			return nil, err
+			return err
 		}
 	}
-	status := ReviewAccepted
-	if decision == DecisionDismiss {
-		status = ReviewDismissed
-	}
-	return s.finalizeReview(ctx, rev, status, note, decidedBy, flag.ID)
+	return nil
 }
 
 // getFlag loads one ledger row.
@@ -729,16 +790,26 @@ func (s *Store) lowAgreementCandidateKind(ctx context.Context, rev *Review) (str
 
 // applyFact creates the accepted fact as canon with extracted provenance
 // carrying the decision (who and when). The span quadruple comes from the
-// staged candidate.
+// staged candidate. Entity references in the payload may be staged local_ids;
+// they resolve through the entity candidate's accepted review item.
 func (s *Store) applyFact(ctx context.Context, rev *Review, p map[string]any, decidedBy string) (string, error) {
 	statement := str(p, "statement")
-	subject := str(p, "subject")
 	predicate := str(p, "predicate")
-	objectEntity := str(p, "object_entity")
 	objectLiteral := str(p, "object_literal")
 	visibility := str(p, "visibility")
 	if visibility == "" {
 		visibility = campaign.VisibilityPublic
+	}
+	subject, err := s.resolveEntityRef(ctx, rev.CampaignID, str(p, "subject"))
+	if err != nil {
+		return "", err
+	}
+	objectEntity := str(p, "object_entity")
+	if objectEntity != "" {
+		objectEntity, err = s.resolveEntityRef(ctx, rev.CampaignID, objectEntity)
+		if err != nil {
+			return "", err
+		}
 	}
 	c, err := s.getCandidate(ctx, rev.CampaignID, rev.CandidateID)
 	if err != nil {
@@ -761,13 +832,46 @@ func (s *Store) applyFact(ctx context.Context, rev *Review, p map[string]any, de
 	return fact.ID, nil
 }
 
-// applyEvent creates the accepted event and its participants.
+// applyEvent creates the accepted event and its participants. Every entity
+// reference (location, participants) is resolved BEFORE the event exists, so
+// a bad reference fails the accept with nothing half-written; a duplicate
+// participant in the payload is dropped rather than failing the add.
 func (s *Store) applyEvent(ctx context.Context, rev *Review, p map[string]any, decidedBy string) (string, error) {
 	summary := str(p, "summary")
-	location := str(p, "location")
 	c, err := s.getCandidate(ctx, rev.CampaignID, rev.CandidateID)
 	if err != nil {
 		return "", err
+	}
+	location := str(p, "location")
+	if location != "" {
+		location, err = s.resolveEntityRef(ctx, rev.CampaignID, location)
+		if err != nil {
+			return "", err
+		}
+	}
+	type participant struct{ entity, role string }
+	var parts []participant
+	seen := map[string]bool{}
+	if arr, ok := p["participants"].([]any); ok {
+		for _, part := range arr {
+			pm, ok := part.(map[string]any)
+			if !ok {
+				continue
+			}
+			entity := str(pm, "entity")
+			if entity == "" {
+				continue
+			}
+			id, err := s.resolveEntityRef(ctx, rev.CampaignID, entity)
+			if err != nil {
+				return "", err
+			}
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			parts = append(parts, participant{id, str(pm, "role")})
+		}
 	}
 	var clockAt *int64
 	if v, ok := intField(p["clock_at"]); ok {
@@ -777,14 +881,9 @@ func (s *Store) applyEvent(ctx context.Context, rev *Review, p map[string]any, d
 	if err != nil {
 		return "", fmt.Errorf("accept event: %w", err)
 	}
-	if parts, ok := p["participants"].([]any); ok {
-		for _, part := range parts {
-			if pm, ok := part.(map[string]any); ok {
-				if entity := str(pm, "entity"); entity != "" {
-					role := str(pm, "role")
-					_ = s.campaigns.AddParticipant(ctx, rev.CampaignID, ev.ID, entity, role)
-				}
-			}
+	for _, part := range parts {
+		if err := s.campaigns.AddParticipant(ctx, rev.CampaignID, ev.ID, part.entity, part.role); err != nil {
+			return "", fmt.Errorf("accept event participant: %w", err)
 		}
 	}
 	return ev.ID, nil
@@ -803,6 +902,12 @@ func (s *Store) applyDiscovery(ctx context.Context, rev *Review, p map[string]an
 		return "", err
 	}
 	discoveredBy := str(p, "discovered_by")
+	if discoveredBy != "" && discoveredBy != campaign.PartyKnower {
+		discoveredBy, err = s.resolveEntityRef(ctx, rev.CampaignID, discoveredBy)
+		if err != nil {
+			return "", err
+		}
+	}
 	stance := str(p, "stance")
 	method := str(p, "method")
 	c, err := s.getCandidate(ctx, rev.CampaignID, rev.CandidateID)
@@ -829,11 +934,18 @@ func (s *Store) applyDiscovery(ctx context.Context, rev *Review, p map[string]an
 	return d.ID, nil
 }
 
-// applyRelationship creates the accepted edge.
+// applyRelationship creates the accepted edge. Both ends may be staged
+// local_ids; they resolve through the entity candidate's accepted review.
 func (s *Store) applyRelationship(ctx context.Context, rev *Review, p map[string]any, decidedBy string) (string, error) {
-	from := str(p, "from_entity")
 	relType := str(p, "rel_type")
-	to := str(p, "to_entity")
+	from, err := s.resolveEntityRef(ctx, rev.CampaignID, str(p, "from_entity"))
+	if err != nil {
+		return "", err
+	}
+	to, err := s.resolveEntityRef(ctx, rev.CampaignID, str(p, "to_entity"))
+	if err != nil {
+		return "", err
+	}
 	r, err := s.campaigns.CreateRelationship(ctx, rev.CampaignID, from, relType, to, 0, "", "")
 	if err != nil {
 		return "", fmt.Errorf("accept relationship: %w", err)
@@ -855,7 +967,10 @@ func (s *Store) applyEntity(ctx context.Context, rev *Review, p map[string]any, 
 
 // applyContradiction accepts both sides of a staged contradiction as canon and
 // registers the pair — never picking a winner. Both facts land 'contested'
-// through RegisterContradiction's downgrade.
+// through RegisterContradiction's downgrade. A side whose own review item was
+// already accepted reuses the fact that accept wrote (accepting must never
+// mint a duplicate of it); a side that was individually dismissed refuses the
+// whole contradiction rather than resurrecting a rejected claim.
 func (s *Store) applyContradiction(ctx context.Context, rev *Review, decidedBy string) (string, error) {
 	var sides struct {
 		Subject   string   `json:"subject"`
@@ -872,13 +987,26 @@ func (s *Store) applyContradiction(ctx context.Context, rev *Review, decidedBy s
 		if err != nil {
 			return "", err
 		}
-		payload := map[string]any{}
-		if len(c.Payload) > 0 {
-			_ = json.Unmarshal(c.Payload, &payload)
-		}
 		label, err := s.candidateSourceLabel(ctx, c)
 		if err != nil {
 			return "", err
+		}
+		resultRef, status, err := s.decidedReviewForCandidate(ctx, candID)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case status == ReviewDismissed:
+			return "", fmt.Errorf("%w: contradiction side %s was dismissed on its own item; "+
+				"it cannot be accepted as part of a contradiction", ErrInvalid, candID)
+		case (status == ReviewAccepted || status == ReviewModified) && resultRef != "":
+			// Already canon from its own accept — reuse it, do not duplicate.
+			createdSides = append(createdSides, created{id: resultRef, label: label})
+			continue
+		}
+		payload := map[string]any{}
+		if len(c.Payload) > 0 {
+			_ = json.Unmarshal(c.Payload, &payload)
 		}
 		sub := &Review{ID: rev.ID, CampaignID: rev.CampaignID, Kind: ReviewProposedFact, CandidateID: candID}
 		id, err := s.applyFact(ctx, sub, payload, decidedBy)
@@ -891,11 +1019,74 @@ func (s *Store) applyContradiction(ctx context.Context, rev *Review, decidedBy s
 	for _, c := range createdSides {
 		factSides = append(factSides, campaign.FactVersionSide{FactID: c.id, Label: c.label})
 	}
-	con, err := s.campaigns.RegisterContradiction(ctx, rev.CampaignID, sides.Subject, sides.Predicate, factSides, "")
+	// The register keys on the subject entity id; a staged local_id subject
+	// resolves the same way applyFact resolved it for the side facts.
+	subject, err := s.resolveEntityRef(ctx, rev.CampaignID, sides.Subject)
+	if err != nil {
+		return "", err
+	}
+	con, err := s.campaigns.RegisterContradiction(ctx, rev.CampaignID, subject, sides.Predicate, factSides, "")
 	if err != nil {
 		return "", fmt.Errorf("register contradiction: %w", err)
 	}
 	return con.ID, nil
+}
+
+// decidedReviewForCandidate returns the result_ref and status of the most
+// recently decided review item for a candidate, or empty strings when the
+// candidate has no decided item. Contradiction accepts and reference
+// resolution both consult it: reusing what an earlier accept wrote is how
+// accepting never duplicates canon.
+func (s *Store) decidedReviewForCandidate(ctx context.Context, candID string) (resultRef, status string, err error) {
+	err = s.db.QueryRowContext(ctx, `
+		SELECT result_ref, status FROM canon_reviews
+		 WHERE candidate_id = ? AND status <> 'open'
+		 ORDER BY updated_at DESC, id LIMIT 1`, candID).Scan(&resultRef, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("lookup decided review: %w", err)
+	}
+	return resultRef, status, nil
+}
+
+// resolveEntityRef turns a payload's entity reference into a real entity id:
+// a campaign entity id passes through, and a staged local_id resolves through
+// the entity candidate's accepted review item — the same shape as
+// resolveFactRef. A reference to an entity that has not been accepted yet
+// fails with instructions, since the graph only stores real ids.
+func (s *Store) resolveEntityRef(ctx context.Context, campaignID, ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("%w: entity reference is empty", ErrInvalid)
+	}
+	var one int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM entities WHERE id = ? AND campaign_id = ?`, ref, campaignID).Scan(&one); err != nil {
+		return "", fmt.Errorf("resolve entity: %w", err)
+	}
+	if one > 0 {
+		return ref, nil
+	}
+	var candID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id FROM canon_candidates
+		 WHERE campaign_id = ? AND kind = 'entity' AND json_extract(payload, '$.local_id') = ?
+		 ORDER BY created_at, id LIMIT 1`, campaignID, ref).Scan(&candID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: entity reference %q resolves to no staged entity and no campaign entity", ErrInvalid, ref)
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve entity candidate: %w", err)
+	}
+	resultRef, status, err := s.decidedReviewForCandidate(ctx, candID)
+	if err != nil {
+		return "", err
+	}
+	if (status != ReviewAccepted && status != ReviewModified) || resultRef == "" {
+		return "", fmt.Errorf("%w: entity %q has not been accepted yet — accept the entity before anything that references it", ErrInvalid, ref)
+	}
+	return resultRef, nil
 }
 
 // resolveFactRef turns a discovery's fact reference into a real fact id: a
@@ -921,18 +1112,14 @@ func (s *Store) resolveFactRef(ctx context.Context, campaignID, factRef string) 
 	if err != nil {
 		return "", fmt.Errorf("resolve fact candidate: %w", err)
 	}
-	var ref string
-	err = s.db.QueryRowContext(ctx, `
-		SELECT result_ref FROM canon_reviews
-		 WHERE candidate_id = ? AND status IN ('accepted','modified') AND result_ref <> ''
-		 ORDER BY updated_at DESC LIMIT 1`, candID).Scan(&ref)
-	if errors.Is(err, sql.ErrNoRows) {
+	resultRef, status, err := s.decidedReviewForCandidate(ctx, candID)
+	if err != nil {
+		return "", err
+	}
+	if (status != ReviewAccepted && status != ReviewModified) || resultRef == "" {
 		return "", fmt.Errorf("%w: fact %q has not been accepted yet — accept the fact before its discovery", ErrInvalid, factRef)
 	}
-	if err != nil {
-		return "", fmt.Errorf("resolve accepted fact: %w", err)
-	}
-	return ref, nil
+	return resultRef, nil
 }
 
 /* ---------- rendering helpers ---------- */
@@ -1029,6 +1216,84 @@ func intField(v any) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+/* ---------- batch decisions ---------- */
+
+// acceptPriority orders a batch acceptance so references resolve: entities
+// before the facts, relationships and events about them, and discoveries
+// (which reference facts) last.
+var acceptPriority = map[string]int{
+	ReviewProposedEntity:       0,
+	ReviewProposedFact:         1,
+	ReviewProposedRelationship: 2,
+	ReviewProposedEvent:        3,
+	ReviewProposedDiscovery:    4,
+}
+
+// BatchFailure is one item a batch accept could not apply.
+type BatchFailure struct {
+	ReviewID string `json:"review_id"`
+	Subject  string `json:"subject"`
+	Err      string `json:"error"`
+}
+
+// BatchResult summarizes an AcceptAgreement run.
+type BatchResult struct {
+	Accepted int            `json:"accepted"`
+	Failed   []BatchFailure `json:"failed,omitempty"`
+}
+
+// AcceptAgreement accepts every open proposed_* item whose adversarial
+// verdict is 'agree' with an agreement score at or above minAgreement — the
+// one batch affordance the queue offers. low_agreement, contradiction and
+// engine_flag items always need an individual decision, and "accept
+// everything" is deliberately not offered. An item that fails to apply is
+// reported and the batch moves on; it stays open for an individual look.
+func (s *Store) AcceptAgreement(ctx context.Context, campaignID string, minAgreement float64, decidedBy string) (*BatchResult, error) {
+	if strings.TrimSpace(campaignID) == "" {
+		return nil, fmt.Errorf("%w: campaign id is required", ErrInvalid)
+	}
+	if minAgreement < 0 || minAgreement > 1 {
+		return nil, fmt.Errorf("%w: min agreement must be between 0 and 1", ErrInvalid)
+	}
+	if err := s.requireGraphStores(); err != nil {
+		return nil, err
+	}
+	reviews, err := s.Reviews(ctx, campaignID, ReviewOpen)
+	if err != nil {
+		return nil, err
+	}
+	var eligible []Review
+	for _, r := range reviews {
+		if _, ok := acceptPriority[r.Kind]; !ok {
+			continue
+		}
+		if r.Verdict != VerdictAgree || r.Agreement < minAgreement {
+			continue
+		}
+		eligible = append(eligible, r)
+	}
+	sort.SliceStable(eligible, func(i, j int) bool {
+		pi, pj := acceptPriority[eligible[i].Kind], acceptPriority[eligible[j].Kind]
+		if pi != pj {
+			return pi < pj
+		}
+		if !eligible[i].CreatedAt.Equal(eligible[j].CreatedAt) {
+			return eligible[i].CreatedAt.Before(eligible[j].CreatedAt)
+		}
+		return eligible[i].ID < eligible[j].ID
+	})
+	res := &BatchResult{}
+	note := fmt.Sprintf("batch accept: agree at or above %.2f", minAgreement)
+	for _, r := range eligible {
+		if _, err := s.DecideReview(ctx, campaignID, r.ID, DecisionAccept, note, decidedBy, nil); err != nil {
+			res.Failed = append(res.Failed, BatchFailure{ReviewID: r.ID, Subject: r.Subject + " — " + r.Summary, Err: err.Error()})
+			continue
+		}
+		res.Accepted++
+	}
+	return res, nil
 }
 
 /* ---------- export ---------- */

@@ -2988,6 +2988,8 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	padding: 0 var(--sp-1);
 }
 .review-filters { display: flex; gap: var(--sp-1); }
+.review-batch { display: flex; align-items: center; gap: var(--sp-2); }
+.review-batch .sess-field { width: 5.5ch; }
 .review-filter {
 	background: transparent;
 	border: none;
