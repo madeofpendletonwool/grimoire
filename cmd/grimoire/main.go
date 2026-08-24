@@ -8,6 +8,7 @@
 //	grimoire migrate up     apply pending schema migrations and exit
 //	grimoire migrate down   roll back the most recent migration and exit
 //	grimoire campaign check run the campaign-graph integrity checks
+//	grimoire canon check    run the canon engine's deterministic checks
 //	grimoire [-h]           help
 //
 // Configuration is via environment variables (see .env.example):
@@ -61,6 +62,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/cache"
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/canon"
 	"github.com/madeofpendletonwool/grimoire/internal/carddb"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
@@ -109,6 +111,10 @@ func main() {
 		if err := runCampaign(os.Args[2:]); err != nil {
 			log.Fatalf("campaign: %v", err)
 		}
+	case "canon":
+		if err := runCanon(os.Args[2:]); err != nil {
+			log.Fatalf("canon: %v", err)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
 		usage()
@@ -124,6 +130,7 @@ Usage:
   grimoire index     (re)build the search index and exit
   grimoire migrate status|up|down   inspect or move the database schema
   grimoire campaign check [id]      run campaign integrity checks
+  grimoire canon check [id]         run the deterministic canon checks
 
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
@@ -468,6 +475,102 @@ func runCampaignCheck(args []string) error {
 	}
 	if errorCount > 0 {
 		return fmt.Errorf("%d error-severity finding(s); the graph contradicts itself", errorCount)
+	}
+	return nil
+}
+
+// runCanon implements the canon-engine subcommands. `canon check` runs the
+// deterministic consistency engine over one campaign (or every campaign) —
+// no model, no key, pure offline — refreshes the flag ledger, and prints the
+// flags. It exits non-zero when an open error-severity flag remains, so a
+// pre-session ritual can gate on it; accepted and dismissed findings never
+// fail the run, because a human already ruled on them.
+func runCanon(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: grimoire canon check [campaign-id]")
+	}
+	switch args[0] {
+	case "check":
+		return runCanonCheck(args[1:])
+	default:
+		return fmt.Errorf("unknown canon subcommand %q (want check)", args[0])
+	}
+}
+
+func runCanonCheck(args []string) error {
+	if len(args) > 1 {
+		return fmt.Errorf("usage: grimoire canon check [campaign-id]")
+	}
+	if err := ensureDBDir(); err != nil {
+		return err
+	}
+	db, err := index.OpenDB(dbPath())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := migrate.Up(db); err != nil {
+		return err
+	}
+	store, err := canon.NewOffline(db)
+	if err != nil {
+		return err
+	}
+
+	var ids []string
+	if len(args) == 1 {
+		ids = []string{args[0]}
+	} else {
+		rows, err := db.Query(`SELECT id FROM campaigns ORDER BY name`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+
+	errorCount := 0
+	for _, id := range ids {
+		var name string
+		if err := db.QueryRow(`SELECT name FROM campaigns WHERE id = ?`, id).Scan(&name); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("campaign %s: %w", id, campaign.ErrNotFound)
+			}
+			return err
+		}
+		flags, err := store.CheckCampaign(context.Background(), id, canon.DefaultCheckOptions())
+		if err != nil {
+			return err
+		}
+		open := 0
+		for _, f := range flags {
+			if f.Status == canon.FlagOpen {
+				open++
+				if f.Severity == string(campaign.SeverityError) {
+					errorCount++
+				}
+			}
+		}
+		if open == 0 && len(flags) == 0 {
+			log.Printf("%s (%s): clean", name, id)
+			continue
+		}
+		log.Printf("%s (%s): %d flag(s)", name, id, len(flags))
+		for _, f := range flags {
+			log.Printf("  [%s/%s] %s — %s", f.Severity, f.CheckCode, f.Status, f.Message)
+		}
+	}
+	if errorCount > 0 {
+		return fmt.Errorf("%d open error-severity flag(s); the campaign contradicts itself", errorCount)
 	}
 	return nil
 }
@@ -839,6 +942,15 @@ func runServe() error {
 		return err
 	}
 
+	// The canon engine's deterministic checks run on the same handle with no
+	// model wired: the consistency engine is deliberately usable on a box
+	// with no key configured at all. The extraction and adversarial passes
+	// are CLI/worker concerns until the review queue lands (MAD-310).
+	canonEngine, err := canon.NewOffline(store.DB())
+	if err != nil {
+		return err
+	}
+
 	chatClient := llmClient()
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
@@ -850,6 +962,7 @@ func runServe() error {
 	srv = srv.WithCampaign(campaigns, gameSessions)
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()), bestiary)
 	srv = srv.WithCampaigns(campaigns, knowledge)
+	srv = srv.WithCanon(canonEngine)
 	if cardStore != nil {
 		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)
 	}

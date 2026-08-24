@@ -487,6 +487,9 @@ type ExtractInput struct {
 // Guards stop the run between chunk calls: the USD budget (when prices are
 // configured) and the candidate cap; the remainder stays deferred.
 func (s *Store) Extract(ctx context.Context, in ExtractInput) (*Run, error) {
+	if s.model == nil {
+		return nil, errOffline
+	}
 	if strings.TrimSpace(in.CampaignID) == "" {
 		return nil, fmt.Errorf("%w: campaign id is required", ErrInvalid)
 	}

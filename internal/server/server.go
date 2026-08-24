@@ -18,6 +18,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/cache"
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/canon"
 	"github.com/madeofpendletonwool/grimoire/internal/carddb"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
@@ -67,9 +68,12 @@ type Server struct {
 	// The campaign graph with its knowledge layer and its session layer
 	// (MAD-303/305/306). Wired with WithCampaign/WithCampaigns; nil
 	// disables the campaign endpoints.
-	campaigns        *campaign.Store
-	sessions         *gamesession.Store
-	knowledge        *knowledge.Store
+	campaigns *campaign.Store
+	sessions  *gamesession.Store
+	knowledge *knowledge.Store
+	// The canon engine's deterministic surface (MAD-309): the offline
+	// consistency checks and the flag ledger. Wired with WithCanon.
+	canon            *canon.Store
 	openRegistration bool
 	tmpl             *template.Template
 	static           fs.FS
@@ -213,6 +217,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/events", s.handleListEvents)
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/events", s.handleAddEvent)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/export", s.handleExportSession)
+	// The canon engine's deterministic surface: run the checks (offline, no
+	// model), read the flag ledger, decide a flag. DM-only.
+	mux.HandleFunc("POST /api/campaigns/{id}/canon/check", s.handleCanonCheck)
+	mux.HandleFunc("GET /api/campaigns/{id}/canon/flags", s.handleCanonFlags)
+	mux.HandleFunc("POST /api/campaigns/{id}/canon/flags/decision", s.handleCanonFlagDecision)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))

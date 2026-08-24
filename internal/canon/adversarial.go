@@ -505,6 +505,9 @@ type ValidateInput struct {
 // counts rejections, unparseable responses and low-agreement coercions by
 // reason; chunks is extraction-only and stays zero.
 func (s *Store) Validate(ctx context.Context, in ValidateInput) (*Run, error) {
+	if s.validator == nil {
+		return nil, errOffline
+	}
 	if strings.TrimSpace(in.CampaignID) == "" {
 		return nil, fmt.Errorf("%w: campaign id is required", ErrInvalid)
 	}
