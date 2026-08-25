@@ -58,6 +58,13 @@ const (
 	CheckUnreachableSecret        = "unreachable_secret"
 	CheckStatBlockUnresolved      = "stat_block_unresolved"
 	CheckPartyLevelDrift          = "party_level_drift"
+	// The campaign-health checks (MAD-312): the deterministic half of the
+	// "what did we forget?" report. All joins, all warning severity — they
+	// are memory aids, not contradictions.
+	CheckDormantClue           = "dormant_clue"
+	CheckUnusedNPC             = "unused_npc"
+	CheckDormantRegion         = "dormant_region"
+	CheckUnfoundedRelationship = "unfounded_relationship"
 )
 
 // DefaultOrphanSessions is how many sessions a hook, secret or clue may sit
@@ -464,6 +471,9 @@ func CheckSnapshot(snap *Snapshot, opts CheckOptions) []campaign.Finding {
 	out = append(out, checkOrphanThread(snap, opts)...)
 	out = append(out, checkUnreachableSecret(snap)...)
 	out = append(out, checkEncounters(snap)...)
+	out = append(out, checkDormantClue(snap, opts)...)
+	out = append(out, checkUnusedEntities(snap)...)
+	out = append(out, checkUnfoundedRelationship(snap)...)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Check != out[j].Check {
 			return out[i].Check < out[j].Check
@@ -771,4 +781,209 @@ func checkEncounters(snap *Snapshot) []campaign.Finding {
 		}
 	}
 	return out
+}
+
+/* ---------- the campaign-health checks (MAD-312) ---------- */
+
+// checkDormantClue: a secret the party learned that nothing has developed
+// since. The brainstorm's "clues discovered and never followed": a clue is
+// followed when the campaign grows around it — another discovery on the same
+// thread, a registered contradiction, any movement at all. A secret whose
+// party discovery is OrphanSessions behind the table and untouched since is a
+// lead the DM dropped. Dating rides the party's earliest session-dated
+// discovery on the fact; secrets learned outside any session cannot be aged
+// and are skipped, the same way orphan_thread skips undated provenance.
+func checkDormantClue(snap *Snapshot, opts CheckOptions) []campaign.Finding {
+	ordinal := map[string]int64{}
+	var maxOrdinal int64
+	for _, s := range snap.Sessions {
+		ordinal[s.ID] = s.Ordinal
+		if s.Ordinal > maxOrdinal {
+			maxOrdinal = s.Ordinal
+		}
+	}
+	isPC := map[string]bool{}
+	for _, e := range snap.Entities {
+		if e.Kind == campaign.KindPC && e.Status != campaign.StatusDeleted {
+			isPC[e.ID] = true
+		}
+	}
+	// The party holds the secret, and the session they first learned it in.
+	learnedAt := map[string]int64{} // fact id -> ordinal of earliest party/pc discovery
+	var held []string
+	for _, d := range snap.Discoveries {
+		if !isPC[d.DiscoveredBy] && d.DiscoveredBy != campaign.PartyKnower {
+			continue
+		}
+		if o, ok := ordinal[d.SessionID]; ok {
+			if prev, seen := learnedAt[d.FactID]; !seen || o < prev {
+				learnedAt[d.FactID] = o
+			}
+		}
+	}
+	developed := map[string]bool{} // facts with a later discovery on the thread
+	for _, d := range snap.Discoveries {
+		if intro, ok := learnedAt[d.FactID]; ok {
+			if o, ok := ordinal[d.SessionID]; ok && o > intro {
+				developed[d.FactID] = true
+			}
+		}
+	}
+	facts := map[string]campaign.Fact{}
+	for _, f := range snap.Facts {
+		facts[f.ID] = f
+	}
+	for _, a := range snap.Awareness {
+		if !isPC[a.Knower] && a.Knower != campaign.PartyKnower {
+			continue
+		}
+		if !grantingStance(a.Stance) {
+			continue
+		}
+		if _, ok := learnedAt[a.FactID]; ok {
+			held = append(held, a.FactID)
+		}
+	}
+	seen := map[string]bool{}
+	var out []campaign.Finding
+	for _, id := range held {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		f, ok := facts[id]
+		if !ok || f.Visibility != campaign.VisibilitySecret || f.SupersededBy != "" {
+			continue
+		}
+		if f.Confidence != campaign.ConfidenceCanon && f.Confidence != campaign.ConfidenceDerived {
+			continue
+		}
+		if snap.CoveredFacts[id] {
+			continue // an open contradiction is development
+		}
+		if developed[id] {
+			continue // something discovered on the thread after the party learned it
+		}
+		intro := learnedAt[id]
+		if age := maxOrdinal - intro; age < int64(opts.OrphanSessions) {
+			continue
+		}
+		out = append(out, campaign.Finding{
+			Check: CheckDormantClue, Severity: campaign.SeverityWarn,
+			RecordKind: "fact", RecordID: id,
+			Message: fmt.Sprintf("the party learned %q in session %d and nothing has developed it since",
+				f.Statement, intro),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RecordID < out[j].RecordID })
+	return out
+}
+
+// checkUnusedEntities runs the two "nothing live references it" checks:
+// unused_npc (an npc nothing touches — introduced and never used) and
+// dormant_region (a location with no live storyline). Both are gated on the
+// campaign having sessions at all: on a campaign with no table history
+// "unused" describes every entity and flags nothing but the empty calendar.
+// pcs are never unused — the party knows itself.
+func checkUnusedEntities(snap *Snapshot) []campaign.Finding {
+	if len(snap.Sessions) == 0 {
+		return nil
+	}
+	inFacts := map[string]bool{}
+	for _, f := range snap.Facts {
+		if f.SupersededBy != "" {
+			continue
+		}
+		inFacts[f.SubjectEntity] = true
+		if f.ObjectEntity != "" {
+			inFacts[f.ObjectEntity] = true
+		}
+	}
+	inRels := map[string]bool{}
+	for _, r := range snap.Relationships {
+		inRels[r.FromEntity] = true
+		inRels[r.ToEntity] = true
+	}
+	inEvents := map[string]bool{}
+	for _, e := range snap.Events {
+		if e.LocationEntity != "" {
+			inEvents[e.LocationEntity] = true
+		}
+		for _, p := range e.Participants {
+			inEvents[p.EntityID] = true
+		}
+	}
+	var out []campaign.Finding
+	for _, e := range snap.Entities {
+		if e.Status != campaign.StatusActive {
+			continue
+		}
+		var check string
+		switch e.Kind {
+		case campaign.KindNPC:
+			check = CheckUnusedNPC
+		case campaign.KindLocation:
+			check = CheckDormantRegion
+		default:
+			continue
+		}
+		if inFacts[e.ID] || inRels[e.ID] || inEvents[e.ID] {
+			continue
+		}
+		msg := fmt.Sprintf("npc %q is introduced and unused — no live fact, relationship or event touches them", e.Name)
+		if check == CheckDormantRegion {
+			msg = fmt.Sprintf("region %q has no live storyline — no live fact, relationship or event touches it", e.Name)
+		}
+		out = append(out, campaign.Finding{
+			Check: check, Severity: campaign.SeverityWarn,
+			RecordKind: "entity", RecordID: e.ID, Message: msg,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Check != out[j].Check {
+			return out[i].Check < out[j].Check
+		}
+		return out[i].RecordID < out[j].RecordID
+	})
+	return out
+}
+
+// checkUnfoundedRelationship: a typed edge whose justifying fact is gone or
+// was never set — the graph's version of an unfounded assertion. The edge
+// still draws (relationships render by entity), but nothing in canon backs
+// it, and "why does Grimoire think Elara controls the Duke?" has no answer.
+// Deliberately severity warning, not review: the DM may keep unbacked edges
+// by choice, and the health report is where they surface.
+func checkUnfoundedRelationship(snap *Snapshot) []campaign.Finding {
+	live := map[string]bool{}
+	for _, f := range snap.Facts {
+		if f.SupersededBy == "" {
+			live[f.ID] = true
+		}
+	}
+	var out []campaign.Finding
+	for _, r := range snap.Relationships {
+		if r.JustifiedByFact != "" && live[r.JustifiedByFact] {
+			continue
+		}
+		out = append(out, campaign.Finding{
+			Check: CheckUnfoundedRelationship, Severity: campaign.SeverityWarn,
+			RecordKind: "relationship", RecordID: r.ID,
+			Message: fmt.Sprintf("relationship %s %s %s has no live fact behind it",
+				entityName(snap, r.FromEntity), r.RelType, entityName(snap, r.ToEntity)),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RecordID < out[j].RecordID })
+	return out
+}
+
+// entityName resolves an entity id to its name for messages, falling back to
+// the id when the entity is gone.
+func entityName(snap *Snapshot, id string) string {
+	for _, e := range snap.Entities {
+		if e.ID == id {
+			return e.Name
+		}
+	}
+	return id
 }

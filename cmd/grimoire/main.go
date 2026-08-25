@@ -53,8 +53,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -137,7 +139,12 @@ Usage:
   grimoire index     (re)build the search index and exit
   grimoire migrate status|up|down   inspect or move the database schema
   grimoire campaign check [id]      run campaign integrity checks
-  grimoire canon check [id]         run the deterministic canon checks
+  grimoire canon check [id]                 run the deterministic canon checks
+  grimoire canon continuity [flags] <id> <prep.json>   pre-session continuity check
+  grimoire canon entail [flags] <id> <prose.txt>       entailment pass over prose
+  grimoire canon health [flags] [id]          the campaign health report
+
+  continuity/entail/health flags: --offline  skip the model pass, deterministic only
 
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
@@ -568,16 +575,236 @@ func runCampaignCheck(args []string) error {
 // flags. It exits non-zero when an open error-severity flag remains, so a
 // pre-session ritual can gate on it; accepted and dismissed findings never
 // fail the run, because a human already ruled on them.
+//
+// `canon continuity`, `canon entail` and `canon health` (MAD-312) are the
+// Stage 4 surfaces: deterministic cores with an optional model pass, which
+// runs when a key is configured unless --offline says otherwise.
 func runCanon(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: grimoire canon check [campaign-id]")
+		return fmt.Errorf("usage: grimoire canon check|continuity|entail|health ...")
 	}
 	switch args[0] {
 	case "check":
 		return runCanonCheck(args[1:])
+	case "continuity":
+		return runCanonContinuity(args[1:])
+	case "entail":
+		return runCanonEntail(args[1:])
+	case "health":
+		return runCanonHealth(args[1:])
 	default:
-		return fmt.Errorf("unknown canon subcommand %q (want check)", args[0])
+		return fmt.Errorf("unknown canon subcommand %q (want check, continuity, entail or health)", args[0])
 	}
+}
+
+// canonFlagArgs splits --offline out of a subcommand's arguments.
+func canonFlagArgs(args []string) (offline bool, rest []string) {
+	for _, a := range args {
+		if a == "--offline" {
+			offline = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return offline, rest
+}
+
+// canonStoreFor opens the canon store the Stage 4 subcommands share: the
+// model client is wired when chat is configured (and not forced offline), so
+// the residue/narrative passes run; otherwise the store is offline and the
+// deterministic passes answer alone.
+func canonStoreFor(db *sql.DB, offline bool) (*canon.Store, error) {
+	if !offline {
+		if client := llmClient(); client != nil && client.Configured() {
+			cfg := canon.ConfigFromEnv(os.Getenv)
+			return canon.NewWithValidator(db, canon.NewLLMModel(client),
+				canon.NewLLMValidator(client, cfg.ValidateModel), cfg)
+		}
+		log.Printf("no model configured — running the deterministic passes only")
+	}
+	return canon.NewOffline(db)
+}
+
+// runCanonContinuity checks a prep document against campaign state:
+// grimoire canon continuity [--offline] <campaign-id> <prep.json>, where
+// prep.json is the Prep JSON ({"title": ..., "scenes": [...]}) and "-" reads
+// it from stdin.
+func runCanonContinuity(args []string) error {
+	offline, args := canonFlagArgs(args)
+	if len(args) != 2 {
+		return fmt.Errorf("usage: grimoire canon continuity [--offline] <campaign-id> <prep.json|->")
+	}
+	id, prepPath := args[0], args[1]
+	raw, err := readInput(prepPath)
+	if err != nil {
+		return err
+	}
+	var prep canon.Prep
+	if err := json.Unmarshal(raw, &prep); err != nil {
+		return fmt.Errorf("prep %s: %w", prepPath, err)
+	}
+	db, store, err := openCanonStore(offline)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	rep, err := store.CheckContinuity(context.Background(), id, &prep)
+	if err != nil {
+		return err
+	}
+	log.Printf("%s: %d deterministic finding(s)%s", id, len(rep.Findings), canonMode(rep.Offline))
+	for _, f := range rep.Findings {
+		log.Printf("  [%s/%s] %s — %s", f.Severity, f.Check, f.RecordID, f.Message)
+	}
+	for _, f := range rep.ModelFindings {
+		log.Printf("  [review/%s] (model) %s — %s", f.Check, f.RecordID, f.Message)
+	}
+	for _, p := range rep.Problems {
+		log.Printf("  problem: %s", p)
+	}
+	return nil
+}
+
+// runCanonEntail runs the entailment pass over prose before the DM sees it:
+// grimoire canon entail [--offline] <campaign-id> <prose.txt|->.
+func runCanonEntail(args []string) error {
+	offline, args := canonFlagArgs(args)
+	if len(args) != 2 {
+		return fmt.Errorf("usage: grimoire canon entail [--offline] <campaign-id> <prose.txt|->")
+	}
+	id, prosePath := args[0], args[1]
+	raw, err := readInput(prosePath)
+	if err != nil {
+		return err
+	}
+	db, store, err := openCanonStore(offline)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	rep, err := store.CheckEntailment(context.Background(), id, canon.EntailInput{Prose: string(raw)})
+	if err != nil {
+		return err
+	}
+	log.Printf("%s: judged against %d record(s)%s", id, len(rep.Records), canonMode(rep.Offline))
+	for _, f := range rep.Findings {
+		log.Printf("  [%s/%s] %s", f.Severity, f.Check, f.Message)
+	}
+	for _, c := range rep.Claims {
+		log.Printf("  %s: %s — %s", c.Verdict, c.Claim, c.Reason)
+	}
+	for _, p := range rep.Problems {
+		log.Printf("  problem: %s", p)
+	}
+	return nil
+}
+
+// runCanonHealth prints the campaign health report:
+// grimoire canon health [--offline] [campaign-id] (every campaign when
+// omitted).
+func runCanonHealth(args []string) error {
+	offline, args := canonFlagArgs(args)
+	if len(args) > 1 {
+		return fmt.Errorf("usage: grimoire canon health [--offline] [campaign-id]")
+	}
+	db, store, err := openCanonStore(offline)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	var ids []string
+	if len(args) == 1 {
+		ids = []string{args[0]}
+	} else {
+		rows, err := db.Query(`SELECT id FROM campaigns ORDER BY name`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	for _, id := range ids {
+		rep, err := store.HealthReport(context.Background(), id, canon.DefaultHealthOptions())
+		if err != nil {
+			return err
+		}
+		log.Printf("%s (%s): %d thread(s), %d clue(s), %d unused npc(s), %d stalled region(s), %d unfounded relationship(s), %d open flag(s)%s",
+			rep.CampaignName, id, len(rep.Threads), len(rep.Clues), len(rep.UnusedNPCs),
+			len(rep.DormantRegions), len(rep.Unresolved), rep.OpenFlagCount, canonMode(rep.Offline))
+		for _, th := range rep.Threads {
+			log.Printf("  [%s] %s", th.Kind, th.Message)
+		}
+		for _, th := range rep.Clues {
+			log.Printf("  [%s] %s", th.Kind, th.Message)
+		}
+		for _, n := range rep.UnusedNPCs {
+			log.Printf("  [%s] %s", n.CheckCode, n.Message)
+		}
+		for _, r := range rep.DormantRegions {
+			log.Printf("  [%s] %s", r.CheckCode, r.Message)
+		}
+		for _, r := range rep.Unresolved {
+			log.Printf("  [%s] %s", r.CheckCode, r.Message)
+		}
+		for _, p := range rep.Pacing {
+			log.Printf("  pacing: session %d (%s): %d encounter(s), %d discovery/ies, %d qa, %d ruling(s), %d note(s)",
+				p.Ordinal, p.Name, p.Encounters, p.Discoveries, p.QA, p.Rulings, p.Notes)
+		}
+		if rep.Narrative != "" {
+			log.Printf("  narrative: %s", rep.Narrative)
+		}
+		for _, p := range rep.Problems {
+			log.Printf("  problem: %s", p)
+		}
+	}
+	return nil
+}
+
+// canonMode renders the offline/model suffix for the Stage 4 subcommands.
+func canonMode(offline bool) string {
+	if offline {
+		return " (offline)"
+	}
+	return ""
+}
+
+// openCanonStore opens and migrates the database and builds the canon store.
+func openCanonStore(offline bool) (*sql.DB, *canon.Store, error) {
+	if err := ensureDBDir(); err != nil {
+		return nil, nil, err
+	}
+	db, err := index.OpenDB(dbPath())
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := migrate.Up(db); err != nil {
+		db.Close()
+		return nil, nil, err
+	}
+	store, err := canonStoreFor(db, offline)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
+	return db, store, nil
+}
+
+// readInput reads a file, or stdin when the path is "-".
+func readInput(path string) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
 }
 
 func runCanonCheck(args []string) error {
@@ -1025,19 +1252,28 @@ func runServe() error {
 		return err
 	}
 
-	// The canon engine's deterministic checks run on the same handle with no
-	// model wired: the consistency engine is deliberately usable on a box
-	// with no key configured at all. The extraction and adversarial passes
-	// are CLI/worker concerns; the review queue (MAD-310) is wired onto the
-	// graph stores so accepting a finding writes canon through the same
-	// campaign and knowledge paths the DM-facing API uses.
-	canonEngine, err := canon.NewOffline(store.DB())
+	// The canon engine's deterministic checks need no model and work on a
+	// box with no key configured at all. When chat IS configured, the same
+	// store also carries the model client so the Stage 4 surfaces
+	// (MAD-312: continuity residue, entailment, the health narrative) can
+	// run in-process; extraction and adversarial validation stay
+	// CLI/worker concerns, and the review queue (MAD-310) is wired onto
+	// the graph stores so accepting a finding writes canon through the
+	// same campaign and knowledge paths the DM-facing API uses.
+	var canonEngine *canon.Store
+	chatClient := llmClient()
+	if chatClient.Configured() {
+		canonCfg := canon.ConfigFromEnv(os.Getenv)
+		canonEngine, err = canon.NewWithValidator(store.DB(),
+			canon.NewLLMModel(chatClient), canon.NewLLMValidator(chatClient, canonCfg.ValidateModel), canonCfg)
+	} else {
+		canonEngine, err = canon.NewOffline(store.DB())
+	}
 	if err != nil {
 		return err
 	}
 	canonEngine = canonEngine.WithGraphStores(campaigns, knowledge)
 
-	chatClient := llmClient()
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
 		func(ctx context.Context) error { return buildIndex(ctx, store) })

@@ -241,6 +241,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/reviews/accept-agree", s.handleCanonReviewsAcceptAgree)
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/reviews/{rid}/decision", s.handleCanonReviewDecision)
 	mux.HandleFunc("GET /api/campaigns/{id}/canon/reviews/export", s.handleCanonReviewsExport)
+	// The canon engine's continuity, entailment and health surfaces
+	// (MAD-312): deterministic cores with optional model passes. DM-only.
+	mux.HandleFunc("POST /api/campaigns/{id}/canon/continuity", s.handleCanonContinuity)
+	mux.HandleFunc("POST /api/campaigns/{id}/canon/entail", s.handleCanonEntail)
+	mux.HandleFunc("POST /api/campaigns/{id}/canon/health", s.handleCanonHealth)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))

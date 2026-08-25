@@ -188,6 +188,10 @@ itself, every rule unit-testable, run on every save and before every session.
 | `unreachable_secret` | warning | a secret with no clue path any character can currently reach |
 | `stat_block_unresolved` | warning | an encounter monster with no bestiary entry |
 | `party_level_drift` | warning | a planned encounter budget that no longer matches the party |
+| `dormant_clue` | warning | a secret the party learned N sessions ago that nothing has developed since |
+| `unused_npc` | warning | an npc no live fact, relationship or event touches |
+| `dormant_region` | warning | a location with no live storyline — nothing references it |
+| `unfounded_relationship` | warning | a typed edge whose justifying fact is gone or was never set |
 
 Two are worth calling out.
 
@@ -222,6 +226,55 @@ offline, no key configured. The definitions the table leaves implicit:
   the current party's levels are read from pc entity payloads' `level` key.
   `stat_block_unresolved` is skipped while the bestiary mirror is empty —
   "cannot resolve" must not become "does not exist".
+- **developed** (dormant_clue) — a party-learned secret is developed when a
+  later discovery lands on the same thread or an open contradiction covers
+  it; otherwise it orphans on the same session threshold as `orphan_thread`.
+
+## Continuity, entailment, and campaign health
+
+Stage 4 (MAD-312) points Arda's fact-check stage forward instead of backward:
+the same entailment mechanism, run before the session instead of after the
+book. Three surfaces, all in `internal/canon`, all with deterministic cores
+that answer offline with no key configured:
+
+- **Pre-session continuity check** (`CheckContinuity`,
+  `POST /api/campaigns/{id}/canon/continuity`, `grimoire canon continuity`).
+  The DM's prep (scenes, cast, items, reveals — refs by id or name) is
+  checked against campaign state by joins first: `prep_dead_on_stage` (an
+  npc the campaign records dead walks in, error; one the party merely
+  *believes* dead, review — the twist question), `prep_unheard_name` (a
+  resolvable entity no character has ever heard a fact about), and
+  `prep_item_misplaced` (an item assumed somewhere the party-known holding
+  fact contradicts). Only the residue — scene prose, motives, dates — goes
+  to a model, whose conflicts must quote the prep and the records verbatim
+  (`prep_model_conflict`). Findings are ephemeral: prep changes every edit,
+  so reports return to the caller and never touch the flag ledger.
+- **Entailment pass** (`CheckEntailment`, `POST .../canon/entail`,
+  `grimoire canon entail`). AI-generated campaign prose is checked before
+  the DM sees it: every proper name must appear in the records the prose
+  was given (`unbacked_name`, deterministic), and a model checker in the
+  Arda stance verdicts every factual claim — with the quote discipline
+  enforced on both sides, and an "entailed" verdict whose cited support is
+  not verbatim in the records downgraded to `unsupported`
+  (`unentailed_claim`). Connective tissue, atmosphere and pacing are
+  legitimate; new names, dates, deeds, motives or causal links are not.
+  Advisory only: nothing lands in the ledger, nothing is mutated.
+- **Campaign health report** (`HealthReport`, `POST .../canon/health`,
+  `grimoire canon health`) — the "🧠 What did we forget?" button. The
+  deterministic engine runs and refreshes the flag ledger; the report
+  assembles dangling threads with the session they went quiet, dormant
+  clues, unused npcs, stalled regions, unfounded relationships, and the
+  event-kind pacing mix over the last N done sessions. A model, when
+  configured, writes a short narrative **summary** of those findings and
+  nothing else — it has no channel to add, remove or alter a finding. The
+  LLM version of "what did we forget" is strictly worse; the model is a
+  coat of paint over joins.
+
+The model passes reuse the extraction budget guards (`CANON_*` in
+`.env.example`) and carry their own prompt versions (`canon-continuity-001`,
+`canon-entail-001`, `canon-health-001`): prompts are code, and changing one
+in a way that affects output means bumping its version. All three surfaces
+are DM-only — they walk every fact, secrets and proposals included.
 
 ## Migrations
 

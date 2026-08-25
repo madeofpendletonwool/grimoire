@@ -14,7 +14,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
+	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/canon"
 )
 
@@ -381,4 +383,160 @@ func writeReviews(w http.ResponseWriter, reviews []canon.Review) {
 		views = append(views, toReviewView(r))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"reviews": views})
+}
+
+/* ---------- continuity, entailment, and health (MAD-312) ---------- */
+
+// findingView is one continuity finding as the API renders it.
+type findingView struct {
+	Check      string `json:"check"`
+	Severity   string `json:"severity"`
+	RecordKind string `json:"record_kind"`
+	RecordID   string `json:"record_id"`
+	Message    string `json:"message"`
+}
+
+func toFindingView(f campaign.Finding) findingView {
+	return findingView{
+		Check: f.Check, Severity: string(f.Severity), RecordKind: f.RecordKind,
+		RecordID: f.RecordID, Message: f.Message,
+	}
+}
+
+// handleCanonContinuity runs the pre-session continuity check over the DM's
+// prep: the deterministic joins always, the model residue pass only when a
+// model client is wired. DM-only, and never mutates anything.
+func (s *Server) handleCanonContinuity(w http.ResponseWriter, r *http.Request) {
+	if !s.canonEnabled(w) {
+		return
+	}
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	var prep canon.Prep
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&prep); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	rep, err := s.canon.CheckContinuity(r.Context(), a.campaign.ID, &prep)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	findings := make([]findingView, 0, len(rep.Findings))
+	for _, f := range rep.Findings {
+		findings = append(findings, toFindingView(f))
+	}
+	modelFindings := make([]findingView, 0, len(rep.ModelFindings))
+	for _, f := range rep.ModelFindings {
+		modelFindings = append(modelFindings, toFindingView(f))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"campaign_id":    rep.CampaignID,
+		"offline":        rep.Offline,
+		"prompt_version": rep.PromptVersion,
+		"findings":       findings,
+		"model_findings": modelFindings,
+		"names":          rep.Names,
+		"problems":       rep.Problems,
+		"input_tokens":   rep.InputTokens,
+		"output_tokens":  rep.OutputTokens,
+		"cost_usd":       rep.CostUSD,
+	})
+}
+
+// handleCanonEntail runs the entailment pass over one piece of prose before
+// the DM sees it: the deterministic name sweep always, the model checker only
+// when a model client is wired. Advisory — no mutation, no ledger writes.
+func (s *Server) handleCanonEntail(w http.ResponseWriter, r *http.Request) {
+	if !s.canonEnabled(w) {
+		return
+	}
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	var req struct {
+		Prose    string   `json:"prose"`
+		FactIDs  []string `json:"fact_ids"`
+		EventIDs []string `json:"event_ids"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Prose) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("prose is required"))
+		return
+	}
+	rep, err := s.canon.CheckEntailment(r.Context(), a.campaign.ID, canon.EntailInput{
+		Prose: req.Prose, FactIDs: req.FactIDs, EventIDs: req.EventIDs,
+	})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	findings := make([]findingView, 0, len(rep.Findings))
+	for _, f := range rep.Findings {
+		findings = append(findings, toFindingView(f))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"campaign_id":    rep.CampaignID,
+		"offline":        rep.Offline,
+		"prompt_version": rep.PromptVersion,
+		"records":        rep.Records,
+		"findings":       findings,
+		"claims":         rep.Claims,
+		"problems":       rep.Problems,
+		"input_tokens":   rep.InputTokens,
+		"output_tokens":  rep.OutputTokens,
+		"cost_usd":       rep.CostUSD,
+	})
+}
+
+// handleCanonHealth is the "what did we forget?" button: the deterministic
+// engine over the whole campaign, its ledger refreshed, the sections
+// assembled, and a narrative summary when a model client is wired.
+func (s *Server) handleCanonHealth(w http.ResponseWriter, r *http.Request) {
+	if !s.canonEnabled(w) {
+		return
+	}
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	rep, err := s.canon.HealthReport(r.Context(), a.campaign.ID, canon.DefaultHealthOptions())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"campaign_id":              rep.CampaignID,
+		"campaign_name":            rep.CampaignName,
+		"generated_at":             rep.GeneratedAtMS,
+		"offline":                  rep.Offline,
+		"prompt_version":           rep.PromptVersion,
+		"threads":                  rep.Threads,
+		"clues":                    rep.Clues,
+		"unused_npcs":              rep.UnusedNPCs,
+		"dormant_regions":          rep.DormantRegions,
+		"unresolved_relationships": rep.Unresolved,
+		"pacing":                   rep.Pacing,
+		"open_flags":               rep.OpenFlagCount,
+		"narrative":                rep.Narrative,
+		"problems":                 rep.Problems,
+		"input_tokens":             rep.InputTokens,
+		"output_tokens":            rep.OutputTokens,
+		"cost_usd":                 rep.CostUSD,
+	})
 }
