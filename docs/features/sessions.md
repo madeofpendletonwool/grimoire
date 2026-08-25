@@ -28,6 +28,18 @@ Selecting text inside an open source shows the span — the byte offsets a downs
 
 Author attribution is first-class: a player journal and a DM note can contradict each other on purpose, and which one said a thing is part of the record. DM notes and live marks are visible to the DM only; the filter is applied in the query, not after it.
 
+## Audio transcription (optional)
+
+With a transcription endpoint configured (`TRANSCRIBE_BASE_URL` + `TRANSCRIBE_MODEL`, see [Configuration](../deployment/configuration.md#session-transcription-optional-openai-compatible-audio-api)), the sources panel grows an **Audio** button: upload a session recording (mp3, wav, ogg/opus, flac, aac, m4a, webm) and a background job transcribes it into an ordinary timed transcript source — the same shape an `.srt` upload produces, so every span can resolve back to a timestamp in the recording.
+
+The flow is built for the real case, a four-hour session:
+
+- The upload answers immediately; the job runs in the background and reports progress (`chunk 3/10`).
+- Long recordings are split into chunks and transcribed sequentially; each chunk's result is persisted as it returns, so a server restart resumes where the job left off and a failed job retries only what it never finished.
+- The recording is **deleted once the transcript exists** (configurable) — session recordings of real people are the most sensitive data Grimoire will ever hold. Only the text and its timings are kept, checksummed like any source.
+
+Unset endpoint means the button is simply not there — no degraded path, no warning.
+
 ## The log
 
 Five kinds of entry, in play order: **rulings**, **Q&A**, **notes**, **discoveries** and **encounters**. The `+ Discovery` button is the in-play shortcut — one prompt while the table waits, one log entry.

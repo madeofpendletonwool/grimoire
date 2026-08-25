@@ -33,6 +33,11 @@
 //	EMBEDDINGS_BASE_URL OpenAI-compatible embeddings endpoint (default https://api.openai.com/v1)
 //	EMBEDDINGS_API_KEY  embeddings secret key (enables semantic retrieval when set with EMBEDDINGS_MODEL)
 //	EMBEDDINGS_MODEL    embeddings model name (e.g. text-embedding-3-small)
+//	TRANSCRIBE_BASE_URL OpenAI-compatible transcription endpoint (default https://api.openai.com/v1;
+//	                    a local whisper server, e.g. the compose "transcribe" profile, works too)
+//	TRANSCRIBE_API_KEY  transcription secret key — optional, local backends need none
+//	TRANSCRIBE_MODEL    transcription model name — required; unset means the audio
+//	                    upload affordance is simply not there (no degraded path)
 //	SCRYFALL_BASE_URL   MTG card lookup endpoint (default https://api.scryfall.com; no key needed)
 //	MTG_RULES_URL       override MTG comp rules source
 //	MTGJSON_URL         override MTGJSON AtomicCards source (card-name dictionary)
@@ -55,6 +60,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -81,6 +87,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/server"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
+	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 )
 
 func main() {
@@ -137,6 +144,7 @@ Env (see .env.example):
   GRIMOIRE_INVITE_TTL, GRIMOIRE_ANSWER_CACHE_TTL, ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
   ANTHROPIC_FALLBACK_BASE_URL, ANTHROPIC_FALLBACK_API_KEY, ANTHROPIC_FALLBACK_MODEL (and _2_, _3_, ...),
   EMBEDDINGS_BASE_URL, EMBEDDINGS_API_KEY, EMBEDDINGS_MODEL,
+  TRANSCRIBE_BASE_URL, TRANSCRIBE_API_KEY, TRANSCRIBE_MODEL,
   SCRYFALL_BASE_URL, MTG_RULES_URL, MTGJSON_URL, OPEN5E_BASE_URL, DND_REPO, DND_REF, DND_DOCS_DIR,
   GRIMOIRE_EDHREC, GRIMOIRE_EDHREC_CACHE_DIR`)
 }
@@ -273,6 +281,81 @@ func embeddingsClient() *embeddings.Client {
 		return nil
 	}
 	return c
+}
+
+// transcribeConfig reads the OpenAI-compatible transcription endpoint
+// settings. The model is the switch (the base URL defaults, the key is
+// optional because local backends authenticate nobody); unset model means
+// the audio→transcript affordance is not there, exactly how embeddings
+// behaves.
+func transcribeConfig() transcribe.Config {
+	return transcribe.Config{
+		BaseURL: env("TRANSCRIBE_BASE_URL", transcribe.DefaultBaseURL),
+		APIKey:  os.Getenv("TRANSCRIBE_API_KEY"),
+		Model:   env("TRANSCRIBE_MODEL", ""),
+		Timeout: transcribeTimeout(),
+	}
+}
+
+// transcribeClient returns a configured transcription client, or nil when
+// transcription is not configured (the default).
+func transcribeClient() *transcribe.Client {
+	c := transcribe.New(transcribeConfig())
+	if !c.Configured() {
+		return nil
+	}
+	return c
+}
+
+// transcribeTimeout bounds one chunk request. Local CPU whisper is slower
+// than realtime, so the default is generous; an unparseable value falls back
+// rather than failing the boot.
+func transcribeTimeout() time.Duration {
+	raw := os.Getenv("TRANSCRIBE_TIMEOUT")
+	if raw == "" {
+		return 0 // the client's DefaultTimeout
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("TRANSCRIBE_TIMEOUT=%q is not a valid duration — using the default", raw)
+		return 0
+	}
+	return d
+}
+
+// transcribeOptions gathers the operator knobs of the transcription job
+// path. Recordings wait beside the database file (never /tmp — a reboot must
+// not eat a resumable job's audio), and the audio is deleted once the
+// transcript lands unless TRANSCRIBE_KEEP_AUDIO opts in.
+func transcribeOptions() server.TranscribeOptions {
+	maxUpload := int64(1024)
+	if v, err := strconv.ParseInt(env("TRANSCRIBE_MAX_UPLOAD_MB", ""), 10, 64); err == nil && v > 0 {
+		maxUpload = v
+	}
+	chunkMB := int64(0)
+	if v, err := strconv.ParseInt(env("TRANSCRIBE_CHUNK_MB", ""), 10, 64); err == nil && v > 0 {
+		chunkMB = v
+	}
+	maxDur := 8 * time.Hour
+	if raw := os.Getenv("TRANSCRIBE_MAX_DURATION"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			maxDur = d
+		} else {
+			log.Printf("TRANSCRIBE_MAX_DURATION=%q is not a valid duration — using %s", raw, maxDur)
+		}
+	}
+	keep := false
+	switch strings.ToLower(os.Getenv("TRANSCRIBE_KEEP_AUDIO")) {
+	case "1", "true", "yes", "on":
+		keep = true
+	}
+	return server.TranscribeOptions{
+		Dir:            env("TRANSCRIBE_DIR", filepath.Join(filepath.Dir(dbPath()), "transcribe")),
+		KeepAudio:      keep,
+		MaxUploadBytes: maxUpload << 20,
+		MaxDuration:    maxDur,
+		ChunkBytes:     chunkMB << 20,
+	}
 }
 
 func cardsService() *cards.Service {
@@ -966,9 +1049,14 @@ func runServe() error {
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()), bestiary)
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)
+	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {
 		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)
 	}
+
+	// Jobs interrupted by a shutdown resume from their per-chunk ledger;
+	// a no-op when the transcription hook is not configured.
+	srv.ResumeTranscriptions()
 
 	httpSrv := &http.Server{
 		Addr:              addr(),
@@ -987,11 +1075,16 @@ func runServe() error {
 	if embedClient != nil {
 		embedStatus = embedClient.Model()
 	}
+	transcribeStatus := "off"
+	if tc := transcribeClient(); tc != nil {
+		transcribeStatus = tc.Model()
+	}
 	chatStatus := fmt.Sprintf("%t", chatClient.Configured())
 	if fb := chatClient.FallbackModels(); len(fb) > 0 {
 		chatStatus += fmt.Sprintf(", falling back to %s", strings.Join(fb, " then "))
 	}
-	log.Printf("Grimoire listening on %s (chat configured: %s, embeddings: %s)", addr(), chatStatus, embedStatus)
+	log.Printf("Grimoire listening on %s (chat configured: %s, embeddings: %s, transcription: %s)",
+		addr(), chatStatus, embedStatus, transcribeStatus)
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}

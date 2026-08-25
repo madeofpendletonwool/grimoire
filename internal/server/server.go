@@ -34,6 +34,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
+	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/web"
 )
 
@@ -73,7 +74,13 @@ type Server struct {
 	knowledge *knowledge.Store
 	// The canon engine's deterministic surface (MAD-309): the offline
 	// consistency checks and the flag ledger. Wired with WithCanon.
-	canon            *canon.Store
+	canon *canon.Store
+	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
+	// transcription client plus its job worker. Wired with WithTranscriber;
+	// nil (or unconfigured) means the affordance is not there.
+	transcribe       *transcribe.Client
+	transcribeOpts   TranscribeOptions
+	transcribeWork   transcribeWorkState
 	openRegistration bool
 	tmpl             *template.Template
 	static           fs.FS
@@ -217,6 +224,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/events", s.handleListEvents)
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/events", s.handleAddEvent)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/export", s.handleExportSession)
+	// The optional audio→transcript hook (MAD-320): upload a recording, poll
+	// the job, land a transcript source. DM only; 503 when unconfigured.
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/transcriptions", s.handleStartTranscription)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/transcriptions", s.handleListTranscriptions)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/transcriptions/{tid}", s.handleGetTranscription)
+	mux.HandleFunc("DELETE /api/campaigns/{cid}/sessions/{sid}/transcriptions/{tid}", s.handleDeleteTranscription)
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/transcriptions/{tid}/retry", s.handleRetryTranscription)
 	// The canon engine's deterministic surface: run the checks (offline, no
 	// model), read the flag ledger, decide a flag. DM-only.
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/check", s.handleCanonCheck)
@@ -278,10 +292,12 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"corpora":         views,
-		"chat_configured": s.llm.Configured(),
-		"chat_model":      s.llm.Model(),
-		"chat_fallbacks":  s.llm.FallbackModels(),
+		"corpora":               views,
+		"chat_configured":       s.llm.Configured(),
+		"chat_model":            s.llm.Model(),
+		"chat_fallbacks":        s.llm.FallbackModels(),
+		"transcribe_configured": s.transcribe.Configured(),
+		"transcribe_model":      s.transcribe.Model(),
 	})
 }
 

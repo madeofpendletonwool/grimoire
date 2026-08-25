@@ -24,6 +24,7 @@ internal/
   rulings/        official MTG card rulings from Scryfall, cached + rate-limited
   server/         HTTP handlers, JSON API, SSE chat endpoint, session gate
   study/          spaced-repetition reviews (SM-2) over the corpus (same SQLite file)
+  transcribe/     OpenAI-compatible audio transcription client + chunk planning (optional hook)
 web/
   templates/      the app shell, plus the login / first-run gate
   static/js/      ES modules: chat, palette, reference drawer, study, resolve, deck, encounter, voice, scene, icons

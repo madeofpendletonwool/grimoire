@@ -83,6 +83,9 @@ Anthropic has no embeddings API, so this targets the OpenAI `/embeddings` contra
 | `EMBEDDINGS_BASE_URL` | `https://api.openai.com/v1`      | Any OpenAI-compatible endpoint (z.ai: `https://api.z.ai/v1`). |
 | `EMBEDDINGS_API_KEY`  | _(empty)_                        | Secret. Enables semantic retrieval when set with `EMBEDDINGS_MODEL`. |
 | `EMBEDDINGS_MODEL`    | _(empty)_                        | Provider-specific (e.g. `text-embedding-3-small`, `embedding-3`). Required. |
+| `TRANSCRIBE_BASE_URL` | `https://api.openai.com/v1`      | Any OpenAI-compatible audio transcription endpoint (whisper.cpp, LocalAI, the compose `transcribe` profile). |
+| `TRANSCRIBE_MODEL`    | _(empty)_                        | Enables the session audio→transcript hook when set; unset means the affordance is not there. |
+| `TRANSCRIBE_API_KEY`  | _(empty)_                        | Secret, optional — local backends authenticate nobody. |
 
 Answers are cached: a repeat (or grounding-equivalent) question returns instantly without a second model call. The key folds in the retrieved source set, so a rules **reindex** invalidates affected entries on its own — a stale answer can't survive a grounding change. Send `?nocache` on `/api/ask` or `/api/chats/{id}/messages` to force a fresh answer.
 

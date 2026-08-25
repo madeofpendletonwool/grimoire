@@ -41,6 +41,7 @@ export function initSessions() {
 	$("sess-list").addEventListener("click", onSessionListClick);
 	$("sess-source-form").addEventListener("submit", onPasteSource);
 	$("sess-source-file").addEventListener("change", onUploadSource);
+	$("sess-audio-file").addEventListener("change", onUploadAudio);
 	$("sess-event-form").addEventListener("submit", onLogEvent);
 	$("sess-quick-discovery").addEventListener("click", onQuickDiscovery);
 	$("sess-export").addEventListener("click", onExport);
@@ -205,6 +206,10 @@ function renderDetail(s) {
 	$("sess-sources-panel").hidden = false;
 	$("sess-log-panel").hidden = false;
 	$("sess-actions").hidden = false;
+	// The audio affordance exists only when the operator pointed Grimoire at
+	// a transcription endpoint; unconfigured means no button, not a degraded
+	// one (MAD-320, ADR 5).
+	$("sess-audio-upload").hidden = !(state.meta && state.meta.transcribe_configured);
 
 	const head = clear($("sess-session-head"));
 	head.hidden = false;
@@ -356,6 +361,56 @@ async function onUploadSource() {
 	} catch (err) {
 		$("sess-source-hint").textContent = err.message;
 	}
+}
+
+/* ---------- audio transcription (optional, MAD-320) ---------- */
+
+// onUploadAudio sends a session recording to the transcription job queue and
+// polls until the transcript source lands. A four-hour session is the normal
+// case, so the upload returns immediately and progress lands in the hint.
+async function onUploadAudio() {
+	const file = $("sess-audio-file").files[0];
+	$("sess-audio-file").value = "";
+	if (!file || !campaignID || !sessionID) return;
+	const hint = $("sess-source-hint");
+	try {
+		const body = await api.uploadAudio(campaignID, sessionID, file);
+		const job = body.transcription;
+		hint.textContent = `Transcribing ${file.name} — 0/${job.chunks_total} chunks…`;
+		pollTranscription(job.id, file.name);
+	} catch (err) {
+		hint.textContent = err.message;
+	}
+}
+
+function pollTranscription(jobID, name) {
+	const poll = async () => {
+		if (!campaignID || !sessionID) return; // view moved on
+		let body;
+		try {
+			body = await api.getTranscription(campaignID, sessionID, jobID);
+		} catch {
+			return; // server unreachable; the job ledger keeps the work
+		}
+		const job = body.transcription;
+		if (job.status === "completed") {
+			$("sess-source-hint").textContent = `Transcribed ${name} — the transcript is now a source.`;
+			loadSources();
+			return;
+		}
+		if (job.status === "failed") {
+			$("sess-source-hint").textContent = `Transcription failed — ${job.error || "unknown error"}`;
+			return;
+		}
+		if (job.status === "cancelled") {
+			$("sess-source-hint").textContent = "Transcription cancelled.";
+			return;
+		}
+		$("sess-source-hint").textContent =
+			`Transcribing ${name} — ${job.chunks_done}/${job.chunks_total} chunks…`;
+		setTimeout(poll, 3000);
+	};
+	setTimeout(poll, 1500);
 }
 
 /* ---------- the log ---------- */
