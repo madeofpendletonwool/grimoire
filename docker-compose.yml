@@ -39,6 +39,13 @@ services:
       # Local D&D books at the read-only mount above. Reindex after changing
       # the directory: docker compose run --rm grimoire index
       DND_DOCS_DIR: ${DND_DOCS_DIR:-/books}
+      # Optional audio→transcript hook (MAD-320). Unset means the affordance
+      # is simply not there — no button, no warnings. Point TRANSCRIBE_BASE_URL
+      # at the transcribe profile service below or any OpenAI-compatible
+      # /v1/audio/transcriptions endpoint; see docs/deployment/configuration.md.
+      TRANSCRIBE_BASE_URL: ${TRANSCRIBE_BASE_URL:-}
+      TRANSCRIBE_API_KEY: ${TRANSCRIBE_API_KEY:-}
+      TRANSCRIBE_MODEL: ${TRANSCRIBE_MODEL:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
@@ -46,6 +53,20 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+  # Optional local transcription backend. Not started by a plain `up` —
+  # enable it with `docker compose --profile transcribe up`, then set
+  # TRANSCRIBE_BASE_URL=http://transcribe:8000/v1 and a TRANSCRIBE_MODEL in
+  # .env. This image (faster-whisper) speaks the OpenAI
+  # POST /v1/audio/transcriptions shape on CPU or GPU; any server that does
+  # (whisper.cpp's server, LocalAI, …) works in its place.
+  transcribe:
+    image: ghcr.io/fedirz/faster-whisper-server:latest
+    container_name: grimoire-transcribe
+    profiles: ["transcribe"]
+    environment:
+      WHISPER__MODEL: ${TRANSCRIBE_WHISPER_MODEL:-Systran/faster-whisper-base}
+    restart: unless-stopped
 
 volumes:
   grimoire-data:

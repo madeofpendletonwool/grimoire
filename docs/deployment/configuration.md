@@ -57,6 +57,45 @@ Adds a vector pass alongside FTS5 keyword retrieval — see [Q&A Chat](../featur
 
 Changing the model later requires a reindex; a dimension mismatch falls back to FTS5 rather than mixing incompatible vectors.
 
+## Session transcription (optional, OpenAI-compatible audio API)
+
+Turns a session recording into a timed `transcript` source — identical in shape to a pasted transcript, so spans, extraction and the canon engine work over it unchanged. Targets the OpenAI `POST /v1/audio/transcriptions` multipart contract that whisper.cpp's server, faster-whisper-server, LocalAI and OpenAI all speak. **Off by default; unset means the audio upload affordance is simply not there** — no button, no degraded path, no warning. See [Sessions](../features/sessions.md) for the flow.
+
+| Variable                  | Default                     | Notes                                                                       |
+| ------------------------- | --------------------------- | --------------------------------------------------------------------------- |
+| `TRANSCRIBE_BASE_URL`     | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint. With the compose profile service: `http://transcribe:8000/v1`. |
+| `TRANSCRIBE_MODEL`        | _(empty)_                   | Required — the model is the switch that enables the hook.                    |
+| `TRANSCRIBE_API_KEY`      | _(empty)_                   | Secret, optional — local backends authenticate nobody.                      |
+| `TRANSCRIBE_DIR`          | `data/transcribe`           | Where recordings wait while their job runs (beside the database). Never `/tmp` — a reboot must not eat a resumable job's audio. |
+| `TRANSCRIBE_KEEP_AUDIO`   | `false`                     | Keep the recording after the transcript lands. Failed jobs keep theirs regardless, for a retry. |
+| `TRANSCRIBE_MAX_UPLOAD_MB`| `1024`                      | Upload cap per recording.                                                    |
+| `TRANSCRIBE_MAX_DURATION` | `8h`                        | Transcript duration cap, from the returned timings.                         |
+| `TRANSCRIBE_CHUNK_MB`     | `24`                        | Chunk target for long recordings (under OpenAI's 25 MB request cap).         |
+| `TRANSCRIBE_TIMEOUT`      | `30m`                       | Bound on one chunk request — local CPU whisper is slower than realtime.      |
+
+Worth knowing:
+
+- **Long recordings are the normal case.** A four-hour session is chunked (byte-boundary splits for stream formats — mp3, ogg/opus, flac, aac — and header-synthesized splits for WAV; m4a/mp4/webm go as one request), transcribed sequentially in a background job, and resumable: each chunk's transcript is persisted as it returns, so a restart continues where the ledger left off, and a failed job retries only its unfinished chunks.
+- **The upload returns `202` immediately** — no HTTP request is held open for the duration. Poll the job for progress (`chunks_done`/`chunks_total`).
+- **The recording is deleted once the transcript source exists**, unless `TRANSCRIBE_KEEP_AUDIO` is on — session recordings of real people are the most sensitive data this app touches. Only the transcript, its sha256 checksum and any segment timings are stored, exactly like an `.srt` upload.
+
+### A local backend with one command
+
+`docker-compose.yml` ships an optional transcription service behind a profile, so the plain `up` stays small:
+
+```sh
+docker compose --profile transcribe up -d
+```
+
+Then point Grimoire at it in `.env`:
+
+```sh
+TRANSCRIBE_BASE_URL=http://transcribe:8000/v1
+TRANSCRIBE_MODEL=Systran/faster-whisper-base
+```
+
+The bundled image (faster-whisper) is a convenient default; any server speaking the same `/v1/audio/transcriptions` shape works in its place.
+
 ## Answer cache
 
 | Variable                    | Default | Notes                                                                            |

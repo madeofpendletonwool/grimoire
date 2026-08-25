@@ -341,6 +341,22 @@ export const api = {
 		}).then(json);
 	},
 
+	// The optional audio→transcript hook (MAD-320): the recording goes to the
+	// configured endpoint chunk by chunk in the background; poll
+	// getTranscription until status is completed/failed/cancelled.
+	uploadAudio: (campaignID, sessionID, file) => {
+		const body = new FormData();
+		body.set("file", file);
+		return fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/transcriptions`, {
+			method: "POST",
+			body,
+		}).then(json);
+	},
+
+	getTranscription: (campaignID, sessionID, jobID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}` +
+			`/transcriptions/${encodeURIComponent(jobID)}`).then(json),
+
 	resolveSpan: (campaignID, sessionID, sourceID, start, end) =>
 		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}` +
 			`/span?source_id=${encodeURIComponent(sourceID)}&start=${start}&end=${end}`).then(json),

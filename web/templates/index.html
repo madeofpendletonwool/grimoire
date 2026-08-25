@@ -592,13 +592,17 @@
 							<textarea id="sess-source-content" class="sess-source-input" rows="4"
 								placeholder="Paste a transcript, notes, a journal… (.txt .md .srt .vtt via upload)"
 								aria-label="Paste source text"></textarea>
-							<div class="sess-source-row">
-								<button type="submit" class="sess-btn">Add source</button>
-								<label class="sess-upload-btn sess-btn">Upload
-									<input type="file" id="sess-source-file" accept=".txt,.md,.srt,.vtt" hidden>
-								</label>
-								<span class="sess-hint" id="sess-source-hint">Stored verbatim and immutable — spans cite these bytes.</span>
-							</div>
+						<div class="sess-source-row">
+							<button type="submit" class="sess-btn">Add source</button>
+							<label class="sess-upload-btn sess-btn">Upload
+								<input type="file" id="sess-source-file" accept=".txt,.md,.srt,.vtt" hidden>
+							</label>
+							<label class="sess-upload-btn sess-btn" id="sess-audio-upload" hidden>Audio
+								<input type="file" id="sess-audio-file"
+									accept=".mp3,.wav,.ogg,.oga,.opus,.flac,.aac,.m4a,.mp4,.webm" hidden>
+							</label>
+							<span class="sess-hint" id="sess-source-hint">Stored verbatim and immutable — spans cite these bytes.</span>
+						</div>
 						</form>
 						<div class="sess-sources" id="sess-sources"></div>
 					</div>
