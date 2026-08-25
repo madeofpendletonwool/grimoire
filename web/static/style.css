@@ -3216,3 +3216,104 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .sess-event-detail { margin: 0.2rem 0 0; font-family: var(--font-prose); font-size: var(--fs-sm); opacity: 0.8; white-space: pre-wrap; }
 .sess-event-payload { margin: 0.2rem 0 0; padding-left: var(--sp-4); font-size: var(--fs-xs); opacity: 0.6; }
 .sess-actions { display: flex; gap: var(--sp-2); }
+
+/* ---------- Campaign chat ----------
+     The campaign Grimoire (MAD-311): threads pinned to a perspective, a
+     transcript answered from the record that perspective may read. Two
+     columns — threads left, the conversation right — over the same measure
+     the other full-screen surfaces use. Frames come from pixel.css; nothing
+     here sets a background or a radius. */
+.main.is-cchat > .transcript,
+.main.is-cchat > .composer-dock { display: none; }
+
+.cchat {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+.cchat-body {
+	flex: 1;
+	min-height: 0;
+	max-width: var(--measure-wide, 72rem);
+	width: 100%;
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+	gap: var(--sp-4);
+	align-items: stretch;
+}
+@media (max-width: 55rem) {
+	.cchat-body { grid-template-columns: 1fr; }
+	.cchat-rail-panel { display: none; }
+}
+
+.cchat-rail-panel { display: flex; flex-direction: column; min-height: 0; }
+.cchat-history {
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+}
+.cchat-thread {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	text-align: left;
+	background: none;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+	color: var(--parchment);
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	padding: 0.35rem 0.2rem;
+	cursor: pointer;
+}
+.cchat-thread:hover { color: var(--gold); }
+.cchat-thread.is-active { color: var(--gold); }
+.cchat-thread-title {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.cchat-thread-del { flex: none; opacity: 0.35; font-size: var(--fs-md); }
+.cchat-thread:hover .cchat-thread-del { opacity: 0.8; }
+
+.cchat-main { display: flex; flex-direction: column; min-height: 0; gap: var(--sp-3); }
+.cchat-transcript {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scroll-behavior: smooth;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-4);
+	padding: var(--sp-2) var(--sp-3);
+}
+.cchat-msg { display: flex; flex-direction: column; }
+.cchat-msg.is-user { align-items: flex-end; }
+.cchat-bubble {
+	max-width: 80%;
+	border-bottom: 1px solid var(--stone-line);
+	font-family: var(--font-prose);
+	font-size: var(--fs-md);
+	padding: 0.25rem 0.1rem 0.45rem;
+}
+.cchat-mark {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.04em;
+	opacity: 0.55;
+	margin-bottom: 0.2rem;
+}
+.cchat-answer { font-size: var(--fs-md); }
+.cchat-msg.is-pending .cchat-thinking { opacity: 0.6; }
+.cchat-cites .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cchat-cites .chip.is-secret { color: var(--accent-deep); font-weight: 600; }
+
+.cchat-composer { display: flex; gap: var(--sp-3); align-items: flex-end; }
+.cchat-input { flex: 1 1 auto; resize: none; min-height: 3rem; font-family: var(--font-prose); }
+.cchat-composer-side { display: flex; gap: var(--sp-2); }

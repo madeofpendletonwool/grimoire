@@ -213,6 +213,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/transition", s.handleQuestTransition)
 	mux.HandleFunc("GET /api/campaigns/{id}/graph", s.handleCampaignGraph)
 	mux.HandleFunc("GET /api/campaigns/{id}/search", s.handleCampaignSearch)
+	// The campaign chat (MAD-311): the DM Grimoire and the Player Grimoire.
+	// Threads are pinned to the campaign and to the caller's resolved scope
+	// at creation, and the pin is re-checked on every turn.
+	mux.HandleFunc("GET /api/campaigns/{id}/chats", s.handleListCampaignChats)
+	mux.HandleFunc("POST /api/campaigns/{id}/chats", s.handleCreateCampaignChat)
+	mux.HandleFunc("GET /api/campaigns/{id}/chats/{chatID}", s.handleGetCampaignChat)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/chats/{chatID}", s.handleDeleteCampaignChat)
+	mux.HandleFunc("POST /api/campaigns/{id}/chats/{chatID}/messages", s.handleCampaignChatMessage)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions", s.handleCreateSession)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}", s.handleGetSession)

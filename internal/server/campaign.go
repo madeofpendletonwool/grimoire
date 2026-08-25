@@ -61,6 +61,11 @@ type campAccess struct {
 	keeper   bool
 	member   *campaign.Member
 	view     knowledge.PlayerView // nil exactly when the caller may use the wide store
+	// playerScope is the non-DM scope the view is bound to (party or
+	// character:<id>); the zero Scope for DM and keeper callers. Campaign
+	// chat pins it on the conversation so history cannot be replayed at a
+	// different — especially wider — perspective later.
+	playerScope campaign.Scope
 }
 
 // isDM reports whether the caller holds the campaign's DM perspective: the dm
@@ -128,6 +133,7 @@ func (s *Server) resolveCampaignAccess(w http.ResponseWriter, r *http.Request, c
 		return nil
 	}
 	a.view = view
+	a.playerScope = scope
 	return a
 }
 

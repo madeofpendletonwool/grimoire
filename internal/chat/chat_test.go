@@ -79,7 +79,7 @@ func TestListOrdersByRecentActivity(t *testing.T) {
 	second, _ := s.Create(ctx, "u", "mtg", "second")
 
 	// A new message in the older thread should float it to the top.
-	if _, err := s.AddMessage(ctx, first.ID, RoleUser, "hello", nil, nil, nil, nil); err != nil {
+	if _, err := s.AddMessage(ctx, first.ID, RoleUser, "hello", nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("add message: %v", err)
 	}
 
@@ -104,10 +104,10 @@ func TestMessagesRoundTripCitations(t *testing.T) {
 	c, _ := s.Create(ctx, "u", "mtg", "t")
 
 	sources := json.RawMessage(`[{"number":"702.2"}]`)
-	if _, err := s.AddMessage(ctx, c.ID, RoleUser, "does deathtouch work?", nil, nil, nil, nil); err != nil {
+	if _, err := s.AddMessage(ctx, c.ID, RoleUser, "does deathtouch work?", nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("add user: %v", err)
 	}
-	if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "yes", sources, nil, nil, nil); err != nil {
+	if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "yes", sources, nil, nil, nil, nil); err != nil {
 		t.Fatalf("add assistant: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func TestMessagesRoundTripRulings(t *testing.T) {
 	c, _ := s.Create(ctx, "u", "mtg", "t")
 
 	rulings := json.RawMessage(`[{"card_name":"Derevi, Empyrial Tactician","source":"wotc","published_at":"2020-11-10","comment":"You can activate only in the command zone."}]`)
-	if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "ruling applies", nil, nil, nil, rulings); err != nil {
+	if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "ruling applies", nil, nil, nil, rulings, nil); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
@@ -208,7 +208,7 @@ CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(conversation_id
 		t.Fatalf("upgrade lost history: %+v", msgs)
 	}
 	rulings := json.RawMessage(`[{"card_name":"Bolt","source":"wotc","published_at":"2020-01-01","comment":"x"}]`)
-	if _, err := store.AddMessage(context.Background(), "c1", RoleAssistant, "with rulings", nil, nil, nil, rulings); err != nil {
+	if _, err := store.AddMessage(context.Background(), "c1", RoleAssistant, "with rulings", nil, nil, nil, rulings, nil); err != nil {
 		t.Fatalf("add after upgrade: %v", err)
 	}
 	msgs, _ = store.Messages(context.Background(), "c1")
@@ -221,7 +221,7 @@ func TestDeleteCascadesMessages(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	c, _ := s.Create(ctx, "u", "mtg", "t")
-	if _, err := s.AddMessage(ctx, c.ID, RoleUser, "hi", nil, nil, nil, nil); err != nil {
+	if _, err := s.AddMessage(ctx, c.ID, RoleUser, "hi", nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
@@ -243,10 +243,10 @@ func TestHistoryWindow(t *testing.T) {
 	c, _ := s.Create(ctx, "u", "mtg", "t")
 
 	for i := 0; i < 4; i++ {
-		if _, err := s.AddMessage(ctx, c.ID, RoleUser, "q", nil, nil, nil, nil); err != nil {
+		if _, err := s.AddMessage(ctx, c.ID, RoleUser, "q", nil, nil, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "a", json.RawMessage(`[1]`), nil, nil, nil); err != nil {
+		if _, err := s.AddMessage(ctx, c.ID, RoleAssistant, "a", json.RawMessage(`[1]`), nil, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -274,8 +274,8 @@ func TestHistoryUnboundedReturnsAll(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	c, _ := s.Create(ctx, "u", "mtg", "t")
-	s.AddMessage(ctx, c.ID, RoleUser, "q", nil, nil, nil, nil)
-	s.AddMessage(ctx, c.ID, RoleAssistant, "a", nil, nil, nil, nil)
+	s.AddMessage(ctx, c.ID, RoleUser, "q", nil, nil, nil, nil, nil)
+	s.AddMessage(ctx, c.ID, RoleAssistant, "a", nil, nil, nil, nil, nil)
 
 	got, err := s.History(ctx, c.ID, 0)
 	if err != nil {
