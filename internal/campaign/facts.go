@@ -101,15 +101,16 @@ func (s *Store) createFact(ctx context.Context, tx *sql.Tx, campaignID, subject,
 	}
 	// Staging rule (ADR 3): only a human decision writes canon. Machine
 	// methods may only stage proposals; human methods may assert canon or
-	// derived but never stage. The one exception is the review queue's
-	// acceptance of an extracted fact: it carries AcceptedBy, the human who
-	// made the decision, and that is what makes a canon-confidence extracted
-	// fact legal.
+	// derived but never stage. The exceptions carry AcceptedBy, the human
+	// who made the decision through the review queue: the queue's
+	// acceptance of an extracted fact, and its acceptance of an
+	// AI-proposed suggestion (the NPC simulation's reveals). That human
+	// marker is what makes a canon-confidence machine fact legal.
 	for _, p := range provenance {
 		switch p.Method {
 		case MethodAIProposed:
-			if confidence != ConfidenceProposed {
-				return nil, fmt.Errorf("%w: a %s fact lands as proposed and needs a human decision before it is canon", ErrInvalid, p.Method)
+			if confidence != ConfidenceProposed && strings.TrimSpace(p.AcceptedBy) == "" {
+				return nil, fmt.Errorf("%w: a %s fact lands as proposed unless a human accepts it through the review queue", ErrInvalid, p.Method)
 			}
 		case MethodExtracted:
 			if confidence != ConfidenceProposed && strings.TrimSpace(p.AcceptedBy) == "" {
