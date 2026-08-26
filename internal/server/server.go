@@ -260,12 +260,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/entail", s.handleCanonEntail)
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/health", s.handleCanonHealth)
 	// Proposal batches (MAD-359): the stage-5 generators' multi-object
-	// proposals through the one review gate. DM-only. Staging by hand is
-	// the path until the generators ship their own endpoints.
+	// proposals through the one review gate. DM-only. Staging by hand is the
+	// path until the generators ship their own endpoints.
 	mux.HandleFunc("POST /api/campaigns/{id}/proposals", s.handleProposalsStage)
 	mux.HandleFunc("GET /api/campaigns/{id}/proposals", s.handleProposalsList)
 	mux.HandleFunc("GET /api/campaigns/{id}/proposals/{bid}", s.handleProposalGet)
 	mux.HandleFunc("POST /api/campaigns/{id}/proposals/{bid}/decision", s.handleProposalDecision)
+	// The campaign skeleton generator (MAD-361): a premise becomes a
+	// proposal batch plus the spine's acts and session plans. DM-only, and
+	// gated on the model key like every generator surface.
+	mux.HandleFunc("POST /api/campaigns/{id}/design/skeleton", s.handleCampaignSkeleton)
 	// NPC simulation (MAD-313): structured agent fields on npc entities and
 	// the "ask as this NPC" endpoint. DM-only; the record it assembles is
 	// scope-filtered at npc:<id> in SQL.

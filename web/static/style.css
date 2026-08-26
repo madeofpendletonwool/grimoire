@@ -2756,6 +2756,20 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	opacity: 0.6;
 }
 .camp-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+/* The skeleton generator's request row (MAD-361): a level range beside the
+   act structure. The range resets the field-label styling its wrapper span
+   would otherwise inherit. */
+.camp-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.camp-range {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	font-family: inherit;
+	font-size: inherit;
+	letter-spacing: normal;
+	opacity: 1;
+}
+.camp-range input { width: 4.5rem; }
 .camp-object-kind {
 	display: flex;
 	gap: var(--sp-3);

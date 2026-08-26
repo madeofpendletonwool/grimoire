@@ -7,6 +7,7 @@
 
 import { $, el, esc, clear, isNarrow } from "./dom.js";
 import { api } from "./api.js";
+import { openReviewFor } from "./review.js";
 
 const KINDS = ["pc", "npc", "faction", "location", "item", "deity", "organization", "creature", "concept"];
 
@@ -29,6 +30,7 @@ export function initCampaign() {
 	$("camp-select").addEventListener("change", (e) => selectCampaign(e.target.value));
 	$("camp-new-toggle").addEventListener("click", toggleNewCampaign);
 	$("camp-new-form").addEventListener("submit", onCreateCampaign);
+	$("camp-skeleton-form").addEventListener("submit", onSkeletonDesign);
 	$("camp-join-form").addEventListener("submit", onJoinCampaign);
 	$("camp-search-form").addEventListener("submit", (e) => {
 		e.preventDefault();
@@ -194,6 +196,45 @@ async function onJoinCampaign(e) {
 	} catch (err) {
 		renderMeta(err.message, true);
 	}
+}
+
+/* ---------- start from a premise ---------- */
+
+// onSkeletonDesign is the empty state's front door (MAD-361): found the
+// campaign, then hand the premise to the skeleton generator. The acts and
+// session plans land in the spine right away; everything canon — factions,
+// NPCs, the central secret, the hooks, the web — waits in the review queue,
+// and that is where this hands off to.
+async function onSkeletonDesign(e) {
+	e.preventDefault();
+	const name = $("camp-skeleton-name").value.trim();
+	const premise = $("camp-skeleton-premise").value.trim();
+	if (!name || !premise) return;
+	const start = parseInt($("camp-skeleton-start").value, 10) || 1;
+	const end = parseInt($("camp-skeleton-end").value, 10) || 12;
+	const acts = parseInt($("camp-skeleton-acts").value, 10) || 0;
+	renderMeta("Computing the skeleton…");
+	let campaignID = null;
+	try {
+		const created = await api.campaignCreate(name, "", premise);
+		campaignID = created.campaign?.id;
+		if (!campaignID) throw new Error("the campaign did not come back");
+		await api.skeleton(campaignID, {
+			premise,
+			level_start: start,
+			level_end: end,
+			act_count: acts,
+		});
+	} catch (err) {
+		renderMeta(err.message, true);
+		if (campaignID) await loadCampaigns();
+		return;
+	}
+	$("camp-skeleton-name").value = "";
+	$("camp-skeleton-premise").value = "";
+	$("camp-new-toggle").setAttribute("aria-expanded", "false");
+	closeCampaign();
+	await openReviewFor(campaignID);
 }
 
 /* ---------- entity browser ---------- */

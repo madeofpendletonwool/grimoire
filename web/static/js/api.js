@@ -435,6 +435,15 @@ export const api = {
 			body: JSON.stringify({ decision, items }),
 		}).then(json),
 
+	// The campaign skeleton generator (MAD-361): a premise becomes a
+	// proposal batch plus the spine's acts and session plans. DM-only.
+	skeleton: (campaignID, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/design/skeleton`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
 	sessionExportURL: (campaignID, sessionID) =>
 		`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/export`,
 
