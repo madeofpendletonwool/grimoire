@@ -43,6 +43,7 @@ import (
 
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
+	"github.com/madeofpendletonwool/grimoire/internal/story"
 )
 
 /* ---------- check codes ---------- */
@@ -174,6 +175,11 @@ type Snapshot struct {
 	// provenance cites no session (or a session id that does not resolve)
 	// are absent: they cannot be session-dated.
 	IntroducedSession map[string]string
+	// Spine is the narrative spine (MAD-360): acts, scenes, cast, secrets,
+	// outcomes and session plans, plus the joins story.Validate needs. A
+	// campaign that has planned nothing carries an empty spine, and the
+	// spine rules simply do not fire.
+	Spine *story.Spine
 }
 
 /* ---------- loading ---------- */
@@ -342,6 +348,12 @@ func LoadSnapshot(ctx context.Context, db *sql.DB, campaignID string) (*Snapshot
 	for _, p := range pcs {
 		snap.Party = append(snap.Party, p.level)
 	}
+
+	// The narrative spine: the plan the story rules check. Loaded last so
+	// the graph snapshot it joins against is already assembled.
+	if snap.Spine, err = story.LoadSpine(ctx, db, campaignID); err != nil {
+		return nil, err
+	}
 	return snap, nil
 }
 
@@ -474,6 +486,9 @@ func CheckSnapshot(snap *Snapshot, opts CheckOptions) []campaign.Finding {
 	out = append(out, checkDormantClue(snap, opts)...)
 	out = append(out, checkUnusedEntities(snap)...)
 	out = append(out, checkUnfoundedRelationship(snap)...)
+	// The narrative spine's own rules (MAD-360) — one findings system, the
+	// same ledger, the same `grimoire canon check`.
+	out = append(out, story.Validate(snap.Spine)...)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Check != out[j].Check {
 			return out[i].Check < out[j].Check

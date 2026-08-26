@@ -419,6 +419,103 @@ export const api = {
 
 	sessionExportURL: (campaignID, sessionID) =>
 		`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/export`,
+
+	// The narrative spine (MAD-360): acts, scenes, cast, secrets, outcomes
+	// and session plans. DM-only — the server refuses every other scope;
+	// the shapes and pace helpers are pure math and need no campaign.
+	story: (campaignID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/story`).then(json),
+
+	storyShapes: () => fetch("/api/story/shapes").then(json),
+
+	storyPace: (from, to, acts) =>
+		fetch(`/api/story/pace?from=${from}&to=${to}&acts=${acts}`).then(json),
+
+	campaignQuests: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests`).then(json),
+
+	actCreate: (cid, act) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/acts`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(act),
+		}).then(json),
+
+	actUpdate: (cid, actID, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/acts/${encodeURIComponent(actID)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	actDelete: (cid, actID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/acts/${encodeURIComponent(actID)}`, { method: "DELETE" }).then(json),
+
+	sceneCreate: (cid, scene) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(scene),
+		}).then(json),
+
+	sceneGet: (cid, sceneID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes/${encodeURIComponent(sceneID)}`).then(json),
+
+	sceneUpdate: (cid, sceneID, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes/${encodeURIComponent(sceneID)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	sceneDelete: (cid, sceneID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes/${encodeURIComponent(sceneID)}`, { method: "DELETE" }).then(json),
+
+	sceneCastAdd: (cid, sceneID, cast) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes/${encodeURIComponent(sceneID)}/cast`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(cast),
+		}).then(json),
+
+	sceneCastRemove: (cid, sceneID, entityID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes/${encodeURIComponent(sceneID)}` +
+			`/cast/${encodeURIComponent(entityID)}`, { method: "DELETE" }).then(json),
+
+	sceneSecretAdd: (cid, sceneID, secret) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes/${encodeURIComponent(sceneID)}/secrets`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(secret),
+		}).then(json),
+
+	sceneSecretRemove: (cid, sceneID, factID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes/${encodeURIComponent(sceneID)}` +
+			`/secrets/${encodeURIComponent(factID)}`, { method: "DELETE" }).then(json),
+
+	sceneOutcomeAdd: (cid, sceneID, outcome) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes/${encodeURIComponent(sceneID)}/outcomes`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(outcome),
+		}).then(json),
+
+	sceneOutcomeRemove: (cid, sceneID, label) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/scenes/${encodeURIComponent(sceneID)}` +
+			`/outcomes/${encodeURIComponent(label)}`, { method: "DELETE" }).then(json),
+
+	sessionPlanGet: (cid, sessionID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/sessions/${encodeURIComponent(sessionID)}/plan`).then(json),
+
+	sessionPlanPut: (cid, sessionID, plan) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/sessions/${encodeURIComponent(sessionID)}/plan`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(plan),
+		}).then(json),
+
+	sessionPlanDelete: (cid, sessionID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/sessions/${encodeURIComponent(sessionID)}/plan`, { method: "DELETE" }).then(json),
 };
 
 /**

@@ -33,6 +33,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
+	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/web"
@@ -75,6 +76,10 @@ type Server struct {
 	// The canon engine's deterministic surface (MAD-309): the offline
 	// consistency checks and the flag ledger. Wired with WithCanon.
 	canon *canon.Store
+	// The narrative spine (MAD-360): acts, scenes, session plans and the
+	// deterministic planner helpers. Wired with WithStory; nil disables the
+	// story endpoints.
+	stories *story.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -260,6 +265,33 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{id}/npc/{npc}/agent", s.handleGetNPCAgent)
 	mux.HandleFunc("PUT /api/campaigns/{id}/npc/{npc}/agent", s.handlePutNPCAgent)
 	mux.HandleFunc("POST /api/campaigns/{id}/npc/{npc}/ask", s.handleNPCAsk)
+	// The narrative spine (MAD-360): acts, scenes, cast, secrets, outcomes
+	// and session plans, plus the whole-spine read the planner view loads.
+	// DM-only end to end — the plan is DM material, secrets included.
+	mux.HandleFunc("GET /api/campaigns/{id}/story", s.handleStory)
+	mux.HandleFunc("GET /api/campaigns/{id}/acts", s.handleListActs)
+	mux.HandleFunc("POST /api/campaigns/{id}/acts", s.handleCreateAct)
+	mux.HandleFunc("GET /api/campaigns/{id}/acts/{aid}", s.handleGetAct)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/acts/{aid}", s.handleUpdateAct)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/acts/{aid}", s.handleDeleteAct)
+	mux.HandleFunc("GET /api/campaigns/{id}/scenes", s.handleListScenes)
+	mux.HandleFunc("POST /api/campaigns/{id}/scenes", s.handleCreateScene)
+	mux.HandleFunc("GET /api/campaigns/{id}/scenes/{sid}", s.handleGetScene)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/scenes/{sid}", s.handleUpdateScene)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/scenes/{sid}", s.handleDeleteScene)
+	mux.HandleFunc("POST /api/campaigns/{id}/scenes/{sid}/cast", s.handleAddSceneCast)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/scenes/{sid}/cast/{eid}", s.handleRemoveSceneCast)
+	mux.HandleFunc("POST /api/campaigns/{id}/scenes/{sid}/secrets", s.handleAddSceneSecret)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/scenes/{sid}/secrets/{fid}", s.handleRemoveSceneSecret)
+	mux.HandleFunc("POST /api/campaigns/{id}/scenes/{sid}/outcomes", s.handleAddSceneOutcome)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/scenes/{sid}/outcomes/{label}", s.handleRemoveSceneOutcome)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/plan", s.handleGetSessionPlan)
+	mux.HandleFunc("PUT /api/campaigns/{cid}/sessions/{sid}/plan", s.handlePutSessionPlan)
+	mux.HandleFunc("DELETE /api/campaigns/{cid}/sessions/{sid}/plan", s.handleDeleteSessionPlan)
+	// The deterministic planning helpers: the legal act structures and the
+	// XP-table pacing math. Pure functions, no campaign data, no key.
+	mux.HandleFunc("GET /api/story/shapes", s.handleStoryShapes)
+	mux.HandleFunc("GET /api/story/pace", s.handleStoryPace)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))

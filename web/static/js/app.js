@@ -12,6 +12,7 @@ import { initStudy } from "./study.js";
 import { initReader } from "./reader.js";
 import { initEncounter } from "./encounter.js";
 import { initSessions } from "./sessions.js";
+import { initPlanner } from "./planner.js";
 import { initReview } from "./review.js";
 import { initDeck } from "./deck.js";
 import { initCampaign } from "./campaign.js";
@@ -107,6 +108,7 @@ function start() {
 	initReader();
 	initEncounter();
 	initSessions();
+	initPlanner();
 	initReview();
 	initDeck();
 	initCampaign();

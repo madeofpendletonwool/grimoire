@@ -3317,3 +3317,73 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .cchat-composer { display: flex; gap: var(--sp-3); align-items: flex-end; }
 .cchat-input { flex: 1 1 auto; resize: none; min-height: 3rem; font-family: var(--font-prose); }
 .cchat-composer-side { display: flex; gap: var(--sp-2); }
+
+/* ---------- Story planner (MAD-360) ----------
+     Acts as columns, scenes as cards, cast and secrets as chips — the
+     narrative spine, built by hand. Shares the sessions chrome (the
+     sess-panel / sess-btn surfaces) and adds its own board. */
+.planner {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scroll-behavior: smooth;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+.planner-body {
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-4);
+	align-items: stretch;
+}
+.planner-toolbar { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
+.planner-toolbar select { max-width: 24rem; }
+.planner-empty { margin: 0; color: var(--ink-soft); font-family: var(--font-prose); }
+.planner-empty-hint { margin: 0; color: var(--ink-soft); font-family: var(--font-prose); }
+.planner-board { display: flex; flex-direction: column; gap: var(--sp-2); }
+.planner-cols {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+	gap: var(--sp-3);
+	align-items: start;
+}
+.planner-act { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.planner-act-head { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
+.planner-act-name { margin: 0; font-family: var(--font-prose); font-variant: small-caps; letter-spacing: 0.06em; font-size: var(--fs-md); }
+.planner-act-band { font-size: var(--fs-xs); color: var(--ink-soft); }
+.planner-act-status { font-size: var(--fs-xs); opacity: 0.75; }
+.planner-act-premise { margin: 0; font-size: var(--fs-sm); color: var(--ink-soft); font-family: var(--font-prose); }
+.planner-scenes { display: flex; flex-direction: column; gap: var(--sp-2); }
+.planner-scene-empty { margin: 0; font-size: var(--fs-xs); color: var(--ink-soft); opacity: 0.7; }
+.planner-scene {
+	padding: var(--sp-2) var(--sp-3);
+	border-left: 2px solid var(--stone-line);
+	cursor: pointer;
+}
+.planner-scene:hover { border-left-color: var(--gold); }
+.planner-scene-head { display: flex; align-items: baseline; gap: var(--sp-2); }
+.planner-scene-kind { font-family: var(--font-pixel); font-size: var(--fs-xs); letter-spacing: 0.04em; opacity: 0.7; }
+.planner-scene-name { font-family: var(--font-prose); font-size: var(--fs-md); }
+.planner-scene-purpose { margin: 0.15rem 0 0; font-size: var(--fs-sm); color: var(--ink-soft); }
+.planner-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: 0.3rem; }
+.planner-chip {
+	font-size: var(--fs-xs);
+	padding: 0.05rem 0.45rem;
+	border: 1px solid var(--stone-line);
+	border-radius: 999px;
+	font-family: var(--font-prose);
+}
+.planner-chip.chip-secret { border-color: var(--accent-deep); color: var(--accent-deep); }
+.planner-chip.chip-outcome { border-style: dashed; }
+.planner-icon-btn {
+	border: none;
+	background: transparent;
+	color: var(--parchment);
+	font-family: var(--font-prose);
+	font-size: var(--fs-xs);
+	cursor: pointer;
+	opacity: 0.7;
+	padding: 0;
+}
+.planner-icon-btn:hover { opacity: 1; }
