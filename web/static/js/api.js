@@ -417,6 +417,24 @@ export const api = {
 		`/api/campaigns/${encodeURIComponent(campaignID)}/canon/reviews/export` +
 		(sessionID ? `?session_id=${encodeURIComponent(sessionID)}` : ""),
 
+	// Proposal batches (MAD-359): a generator's multi-object proposal behind
+	// the one review gate. List reads the batches; get reads one with its
+	// items; decide accepts or dismisses the whole batch, with per-item
+	// overrides (modify payloads, per-item dismissals) in the body.
+	proposals: (campaignID, status) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/proposals` +
+			(status ? `?status=${encodeURIComponent(status)}` : "")).then(json),
+
+	proposal: (campaignID, batchID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/proposals/${encodeURIComponent(batchID)}`).then(json),
+
+	proposalDecide: (campaignID, batchID, decision, items) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/proposals/${encodeURIComponent(batchID)}/decision`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ decision, items }),
+		}).then(json),
+
 	sessionExportURL: (campaignID, sessionID) =>
 		`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/export`,
 };

@@ -188,6 +188,8 @@ type reviewView struct {
 	Status        string         `json:"status"`
 	CandidateID   string         `json:"candidate_id,omitempty"`
 	FlagID        string         `json:"flag_id,omitempty"`
+	BatchID       string         `json:"batch_id,omitempty"`
+	DependsOn     []string       `json:"depends_on,omitempty"`
 	Subject       string         `json:"subject"`
 	Summary       string         `json:"summary"`
 	Detail        string         `json:"detail,omitempty"`
@@ -214,7 +216,8 @@ type reviewView struct {
 func toReviewView(r canon.Review) reviewView {
 	v := reviewView{
 		ID: r.ID, Kind: r.Kind, Status: r.Status, CandidateID: r.CandidateID,
-		FlagID: r.FlagID, Subject: r.Subject, Summary: r.Summary, Detail: r.Detail,
+		FlagID: r.FlagID, BatchID: r.BatchID, DependsOn: r.DependsOn,
+		Subject: r.Subject, Summary: r.Summary, Detail: r.Detail,
 		ResultRef: r.ResultRef, DecisionNote: r.DecisionNote, DecidedBy: r.DecidedBy,
 		CreatedAt: r.CreatedAt.UnixMilli(), Payload: r.Payload, Quote: r.Quote,
 		SpanStart: r.SpanStart, SpanEnd: r.SpanEnd, SourceKind: r.SourceKind,

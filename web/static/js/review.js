@@ -23,6 +23,17 @@ const KIND_LABEL = {
 	engine_flag: "Engine flag",
 };
 
+// The generators that stage proposal batches (MAD-359). A batch is a review,
+// rendered bigger: header, items grouped by kind, accept-all / dismiss-all,
+// per-item override.
+const SOURCE_LABEL = {
+	skeleton: "Campaign skeleton",
+	story_plan: "Story plan",
+	scene: "Scene",
+	nl_command: "Command",
+	session_prep: "Session prep",
+};
+
 export function initReview() {
 	$("rail-review").addEventListener("click", openReview);
 	$("review-close").addEventListener("click", closeReview);
@@ -92,8 +103,29 @@ async function loadQueue() {
 		return;
 	}
 	const all = data.reviews || [];
-	const reviews = all.filter((r) => r.status === status);
+	// Open batches render as one grouped card each (a batch is a review,
+	// rendered bigger); their items are excluded from the individual list
+	// so nothing shows twice. On the decided tabs the items render
+	// individually like every other queue item.
+	let batchCards = [];
+	const inOpenBatch = new Set();
+	if (status === "open") {
+		try {
+			const list = (await api.proposals(campaignID, "open")).batches || [];
+			for (const b of list) {
+				const full = (await api.proposal(campaignID, b.id)).batch;
+				if (!full || !full.items) continue;
+				for (const it of full.items) inOpenBatch.add(it.id);
+				batchCards.push(batchCard(full));
+			}
+		} catch (err) {
+			renderMeta(err.message, true);
+			return;
+		}
+	}
+	const reviews = all.filter((r) => r.status === status && !inOpenBatch.has(r.id));
 	const wrap = clear($("review-list"));
+	for (const c of batchCards) wrap.append(c);
 	for (const r of reviews) wrap.append(reviewCard(r));
 	const open = all.filter((r) => r.status === "open").length;
 	renderMeta(all.length ? `${open} open · ${all.length} total` : "Queue is clear.");
@@ -140,6 +172,57 @@ async function onAcceptAgree() {
 }
 
 /* ---------- rendering ---------- */
+
+// batchCard renders one proposal batch: the generator's identity and
+// premise, its items grouped by kind, and the batch decisions. Per-item
+// overrides (modify, dismiss) ride on the item rows and go through the
+// batch decision endpoint so dismissed dependencies refuse their
+// dependents, exactly as the store promises.
+function batchCard(b) {
+	const card = el("article", { class: "review-card review-batch-card", attrs: { "data-batch": b.id } });
+	card.append(
+		el("header", { class: "review-card-head" },
+			el("span", { class: "review-kind", attrs: { "data-kind": "proposed_entity" }, text: SOURCE_LABEL[b.source] || b.source }),
+			el("span", { class: "review-status", attrs: { "data-status": b.status }, text: `${b.status} · ${b.open_count}/${b.item_count} open` }),
+		),
+	);
+	if (b.prompt) card.append(el("p", { class: "review-summary", text: b.prompt }));
+
+	const groups = new Map();
+	for (const it of b.items || []) {
+		if (!groups.has(it.kind)) groups.set(it.kind, []);
+		groups.get(it.kind).push(it);
+	}
+	for (const [kind, items] of groups) {
+		card.append(el("p", { class: "review-batch-group", text: `${KIND_LABEL[kind] || kind} · ${items.length}` }));
+		for (const it of items) card.append(batchItemRow(it));
+	}
+
+	card.append(el("div", { class: "review-actions" },
+		el("button", { class: "sess-btn review-accept", text: "Accept all", attrs: { type: "button", "data-act": "batch-accept" } }),
+		el("button", { class: "sess-btn review-dismiss", text: "Dismiss all", attrs: { type: "button", "data-act": "batch-dismiss" } }),
+	));
+	return card;
+}
+
+// batchItemRow is one proposed object inside a batch. Open items carry the
+// per-item override controls; decided ones show what happened to them.
+function batchItemRow(it) {
+	const row = el("div", { class: "review-batch-item", attrs: { "data-review": it.id } });
+	row.dataset.payload = JSON.stringify(it.payload || {});
+	row.append(el("span", { class: "review-batch-item-summary", text: it.summary || it.subject }));
+	if (it.status === "open") {
+		row.append(
+			el("button", { class: "sess-btn review-modify-toggle", text: "Modify", attrs: { type: "button", "data-act": "modify-toggle" } }),
+			el("button", { class: "sess-btn review-dismiss", text: "Dismiss", attrs: { type: "button", "data-act": "item-dismiss" } }),
+			el("div", { class: "review-modify", attrs: { hidden: true } }),
+		);
+	} else {
+		const note = it.decision_note ? ` — ${it.decision_note}` : "";
+		row.append(el("span", { class: "review-batch-item-status", text: `${it.status}${note}` }));
+	}
+	return row;
+}
 
 function reviewCard(r) {
 	const card = el("article", { class: "review-card", attrs: { "data-review": r.id } });
@@ -200,10 +283,43 @@ function reviewActions(r) {
 }
 
 function onListClick(e) {
+	const act = e.target.closest("[data-act]")?.dataset.act;
+
+	// Inside a batch card the decisions are batch decisions: per-item
+	// overrides travel through the batch endpoint so a dismissed
+	// dependency refuses its dependents instead of failing later.
+	const batch = e.target.closest("[data-batch]");
+	if (batch) {
+		const item = e.target.closest("[data-review]");
+		if (item) {
+			if (act === "item-dismiss") {
+				onBatchItemDecision(batch.dataset.batch, item.dataset.review, "dismiss");
+				return;
+			}
+			if (act === "modify-toggle") {
+				toggleModify(item, item.dataset.review);
+				return;
+			}
+			if (act === "modify-apply") {
+				onBatchItemModify(batch.dataset.batch, item);
+				return;
+			}
+			return;
+		}
+		if (act === "batch-accept") {
+			onBatchDecide(batch.dataset.batch, "accept");
+			return;
+		}
+		if (act === "batch-dismiss") {
+			onBatchDecide(batch.dataset.batch, "dismiss");
+			return;
+		}
+		return;
+	}
+
 	const card = e.target.closest("[data-review]");
 	if (!card) return;
 	const id = card.dataset.review;
-	const act = e.target.closest("[data-act]")?.dataset.act;
 
 	if (act === "accept" || act === "dismiss") {
 		onDecide(id, act, card);
@@ -216,6 +332,69 @@ function onListClick(e) {
 	if (act === "modify-apply") {
 		onModify(id, card);
 	}
+}
+
+/* ---------- batch decisions ---------- */
+
+async function onBatchDecide(batchID, decision) {
+	if (!campaignID) return;
+	try {
+		const res = await api.proposalDecide(campaignID, batchID, decision, []);
+		renderBatchResult(res);
+		await loadQueue();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+// onBatchItemDecision records one per-item override — a dismiss drops that
+// item and everything depending on it — and accepts the rest of the batch.
+async function onBatchItemDecision(batchID, itemID, decision) {
+	if (!campaignID) return;
+	try {
+		const res = await api.proposalDecide(campaignID, batchID, "accept", [{ item_id: itemID, decision }]);
+		renderBatchResult(res);
+		await loadQueue();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+async function onBatchItemModify(batchID, item) {
+	if (!campaignID) return;
+	const input = item.querySelector(".review-modify-input");
+	let payload;
+	try {
+		payload = JSON.parse(input.value);
+	} catch (err) {
+		renderMeta(`Payload is not valid JSON: ${err.message}`, true);
+		return;
+	}
+	try {
+		const res = await api.proposalDecide(campaignID, batchID, "accept", [{ item_id: item.dataset.review, decision: "modify", payload }]);
+		renderBatchResult(res);
+		await loadQueue();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+// renderBatchResult summarizes what a batch decision did, naming the
+// refusals — "depends on X, which was dismissed" — rather than letting
+// them cascade silently.
+function renderBatchResult(res) {
+	const counts = {};
+	const refused = [];
+	for (const it of res.items || []) {
+		counts[it.status] = (counts[it.status] || 0) + 1;
+		if (it.reason && it.status !== "accepted" && it.status !== "modified") {
+			refused.push(`${it.subject || it.review_id}: ${it.reason}`);
+		}
+	}
+	const parts = Object.entries(counts).map(([k, v]) => `${v} ${k}`);
+	let text = `Batch ${res.batch?.status ?? "?"} — ${parts.join(", ")}`;
+	if (refused.length) text += ` · refused: ${refused.join("; ")}`;
+	renderMeta(text);
 }
 
 async function onDecide(id, decision, card) {
