@@ -55,6 +55,13 @@
 			<span data-ico="hourglass"></span> Sessions
 		</button>
 
+		<!-- The narrative spine (MAD-360): acts as columns, scenes as cards,
+		     cast and secrets as chips. The DM's plan, built by hand — no
+		     model, no key. -->
+		<button type="button" class="rail-action rail-planner" id="rail-planner">
+			<span data-ico="scrollOpen"></span> Planner
+		</button>
+
 		<!-- The canon engine's human gate: the review queue where proposed
 		     facts, events and discoveries become canon only when the DM says
 		     so. The post-session ritual. -->
@@ -692,6 +699,32 @@
 					<button type="button" class="sess-btn" id="sess-export">Export Markdown</button>
 				</div>
 				</div>
+			</div>
+		</section>
+
+	<!-- ---------- Story planner surface ----------
+	     The narrative spine (MAD-360): acts as columns, scenes as cards,
+	     cast and secrets as chips. The deterministic helpers (shapes, the
+	     XP-table pace) need no model; the server owns the vocabularies
+	     and the quest-edge checks. DM material end to end. -->
+		<section class="planner" id="planner-view" hidden aria-label="Story planner">
+			<header class="study-head">
+				<h2 class="study-title" id="planner-title">Planner</h2>
+				<div class="sess-campaign-wrap">
+					<select id="planner-campaign" aria-label="Campaign"></select>
+					<button type="button" class="sess-btn" id="planner-new-campaign" title="New campaign">+</button>
+				</div>
+				<p class="study-meta" id="planner-meta"></p>
+				<button type="button" class="icon-btn" id="planner-close" aria-label="Leave the planner" title="Back to chat" data-gi="close"></button>
+			</header>
+			<div class="planner-body">
+				<div class="planner-toolbar sess-panel">
+					<select id="planner-shape" class="sess-field" aria-label="Act shape"></select>
+					<button type="button" class="sess-btn" id="planner-add-act">+ Act</button>
+					<span class="sess-hint">Shapes and pacing come off the DMG XP tables — no model, no key.</span>
+				</div>
+				<p class="planner-empty" id="planner-empty" hidden></p>
+				<div class="planner-board sess-panel" id="planner-board"></div>
 			</div>
 		</section>
 

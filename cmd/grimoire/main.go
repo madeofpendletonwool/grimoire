@@ -88,6 +88,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/server"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
+	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 )
@@ -1252,6 +1253,14 @@ func runServe() error {
 		return err
 	}
 
+	// The narrative spine (MAD-360): acts, scenes and session plans. Its
+	// tables exist only through the migrations too, and its planning rules
+	// are pure functions — no key, no model.
+	stories, err := story.New(store.DB())
+	if err != nil {
+		return err
+	}
+
 	// The canon engine's deterministic checks need no model and work on a
 	// box with no key configured at all. When chat IS configured, the same
 	// store also carries the model client so the Stage 4 surfaces
@@ -1285,6 +1294,7 @@ func runServe() error {
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()), bestiary)
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)
+	srv = srv.WithStory(stories)
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {
 		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)

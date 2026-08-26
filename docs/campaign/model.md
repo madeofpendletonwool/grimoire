@@ -122,6 +122,32 @@ provenance row is a bug, and integrity checks it.
 | `session_events` | `id, session_id, seq, kind, summary, detail, payload` | `qa \| ruling \| note \| discovery \| encounter`. MAD-286's ruling log lives here as one `kind`. `seq` is per-session insertion order; `summary` (the question or label) and `detail` (the ruling/answer body) are first-class so the ruling FTS below can index them in plain SQL; `payload` is JSON for the structured remainder. |
 | `ruling_fts` | FTS5 over `ruling`/`qa` events | The prior-ruling surfacing, retained from MAD-286: recording a ruling or question FTS-matches it against the campaign's past rulings — *"you ruled the other way on this three sessions ago."* Maintained by triggers; no LLM involved. |
 
+### The narrative spine
+
+What is *planned*, as opposed to what is true (MAD-360; migration `0013`, Go
+layer `internal/story`). The campaign graph models the record; the spine
+models the plan every stage-5 generator writes into and a DM can author by
+hand with no model key configured.
+
+| Table | Columns | Notes |
+|---|---|---|
+| `acts` | `id, campaign_id, ordinal, name, premise, level_start, level_end, status` | One movement of the campaign. `status` is `planned \| active \| done`; bands are 1–20 and must chain across acts without overlap or gap (the `act_level_mismatch` check). |
+| `scenes` | `id, campaign_id, act_id, session_id, ordinal, kind, name, purpose, setting_entity, status` | `kind` is `social \| exploration \| combat \| revelation \| downtime \| travel`. **A scene is not an encounter** — an encounter is a combat scene's roster, and `internal/encounter` owns rosters. `session_id` is nullable (planned long before seated); ordinal is per-act, max+1. |
+| `scene_cast` | `scene_id, entity_id, role` | `focus \| present \| offstage \| mentioned`. One row per entity per scene; recasting overwrites the role. A scene with no cast fires `scene_without_cast`. |
+| `scene_secrets` | `scene_id, fact_id, disposition` | Secrets in play are ordinary `facts` rows with `visibility='secret'` — the same rows `unreachable_secret` scores. Planning a secret into a scene is *what makes it reachable*, not a parallel notion. `disposition` is `in_play \| revealed_if \| withheld`; an `in_play` secret the party's awareness already grants fires `secret_already_granted`. |
+| `scene_outcomes` | `id, scene_id, label, summary, leads_to_scene, quest_transition` | Outcomes A–D (any unique label). `leads_to_scene` must stay inside the scene's own act (`outcome_out_of_act`). `quest_transition` is JSON `{"quest","from","to"}` naming an edge of that quest's own machine — checked at write time *and* re-checked by `quest_edge_missing`, because machines change under planned outcomes. |
+| `session_plans` | `session_id (PK), campaign_id, act_id, goal, prep_notes, status` | The planned face of a `game_sessions` row. One plan per session. DM material: prep notes never render on a player surface. |
+
+The deterministic half lives in `internal/story` as pure functions:
+`Pace(levelStart, levelEnd, actCount)` derives sessions-per-act from the
+XP-per-level tables `internal/encounter` already carries (levels 1–12 across
+four acts lands on 26 sessions); `Shape(actCount)` names the legal act
+structures (three-act, four-act, five-act with a mid turn) and what each act
+is for; `Validate(spine)` emits `campaign.Finding` values that flow into the
+same flag ledger and `grimoire canon check` as every other deterministic
+rule. The spine is DM-scope end to end: acts, scenes, plans and outcomes all
+refuse non-DM reads at the store, mirroring quests.
+
 ### Canon engine
 
 | Table | Columns | Notes |
