@@ -249,6 +249,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/reviews/accept-agree", s.handleCanonReviewsAcceptAgree)
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/reviews/{rid}/decision", s.handleCanonReviewDecision)
 	mux.HandleFunc("GET /api/campaigns/{id}/canon/reviews/export", s.handleCanonReviewsExport)
+	// The canon engine's continuity, entailment and health surfaces
+	// (MAD-312): deterministic cores with optional model passes. DM-only.
+	mux.HandleFunc("POST /api/campaigns/{id}/canon/continuity", s.handleCanonContinuity)
+	mux.HandleFunc("POST /api/campaigns/{id}/canon/entail", s.handleCanonEntail)
+	mux.HandleFunc("POST /api/campaigns/{id}/canon/health", s.handleCanonHealth)
 	// NPC simulation (MAD-313): structured agent fields on npc entities and
 	// the "ask as this NPC" endpoint. DM-only; the record it assembles is
 	// scope-filtered at npc:<id> in SQL.
