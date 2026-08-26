@@ -25,20 +25,24 @@ const answerTimeout = 3 * time.Minute
 
 // chatView is the JSON shape of a conversation in list and detail responses.
 type chatView struct {
-	ID        string `json:"id"`
-	Corpus    string `json:"corpus"`
-	Title     string `json:"title"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID         string `json:"id"`
+	Corpus     string `json:"corpus"`
+	CampaignID string `json:"campaign_id,omitempty"`
+	Scope      string `json:"scope,omitempty"`
+	Title      string `json:"title"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 func toChatView(c *chat.Conversation) chatView {
 	return chatView{
-		ID:        c.ID,
-		Corpus:    c.Corpus,
-		Title:     c.Title,
-		CreatedAt: c.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
+		ID:         c.ID,
+		Corpus:     c.Corpus,
+		CampaignID: c.CampaignID,
+		Scope:      c.Scope,
+		Title:      c.Title,
+		CreatedAt:  c.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:  c.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
@@ -174,6 +178,13 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, err)
 		return
 	}
+	// Campaign conversations are answered only by the campaign handlers, which
+	// re-resolve the caller's scope and ground in the campaign record. This
+	// path has no campaign grounding at all, so it must not answer them.
+	if conv.CampaignID != "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("this conversation belongs to a campaign — ask it from the campaign Grimoire"))
+		return
+	}
 	corpus := parseCorpus(conv.Corpus)
 
 	// Persistence must outlive the request context: when the reader navigates
@@ -192,7 +203,7 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 		history = append(history, llm.Turn{Role: m.Role, Content: m.Content})
 	}
 
-	if _, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleUser, req.Question, nil, nil, nil, nil); err != nil {
+	if _, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleUser, req.Question, nil, nil, nil, nil, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -240,7 +251,7 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 				"cached":           true,
 			})
 			sse.send("delta", map[string]any{"text": hit.Answer})
-			saved, saveErr := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleAssistant, hit.Answer, hit.Sources, hit.Cards, hit.Entities, hit.Rulings)
+			saved, saveErr := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleAssistant, hit.Answer, hit.Sources, hit.Cards, hit.Entities, hit.Rulings, nil)
 			if saveErr != nil {
 				log.Printf("chat: save cached answer %s: %v", conv.ID, saveErr)
 			}
@@ -289,7 +300,7 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 			log.Printf("answer cache put: %v", err)
 		}
 	}
-	saved, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleAssistant, answer, sources, cardsJSON, entitiesJSON, rulingsJSON)
+	saved, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleAssistant, answer, sources, cardsJSON, entitiesJSON, rulingsJSON, nil)
 	if err != nil {
 		log.Printf("chat: save answer %s: %v", conv.ID, err)
 	}

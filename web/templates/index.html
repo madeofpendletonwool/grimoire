@@ -76,6 +76,14 @@
 			<span data-ico="map"></span> Campaign
 		</button>
 
+		<!-- The campaign chat (MAD-311): the DM Grimoire and the Player
+		     Grimoire — one campaign, two epistemic realities. The server
+		     decides what each thread may know, in SQL; this is just the
+		     asking. -->
+		<button type="button" class="rail-action rail-cchat" id="rail-cchat">
+			<span data-ico="runestone"></span> Ask campaign
+		</button>
+
 		<div class="corpus-picker" role="radiogroup" aria-label="Rules corpus">
 				<button type="button" class="corpus-opt is-active" data-corpus="mtg" role="radio" aria-checked="true">
 					<span data-ico="orbBlue"></span> Magic
@@ -509,6 +517,54 @@
 						</label>
 						<button type="submit" class="enc-btn">Take your seat</button>
 					</form>
+				</div>
+			</div>
+		</section>
+
+	<!-- ---------- Campaign chat ----------
+	     The campaign Grimoire (MAD-311): ask the campaign from your own
+	     perspective. A DM thread answers from the whole record, secrets
+	     included; a player thread answers from what their party has
+	     discovered — and says "you don't know that" where the record runs
+	     out. Threads are pinned to a perspective server-side; this surface
+	     renders whatever comes back and never decides visibility itself. -->
+	<section class="cchat" id="cchat-view" hidden aria-label="Campaign chat">
+			<header class="study-head">
+				<h2 class="study-title" id="cchat-title">Campaign chat</h2>
+				<div class="camp-picker">
+					<select id="cchat-campaign" aria-label="Campaign"><option value="">No campaigns yet…</option></select>
+					<button type="button" class="enc-btn" id="cchat-new">New thread</button>
+				</div>
+				<p class="study-meta" id="cchat-meta"></p>
+				<button type="button" class="icon-btn" id="cchat-close" aria-label="Leave the campaign chat" title="Back to chat" data-gi="close"></button>
+			</header>
+
+			<div class="cchat-body" id="cchat-body" hidden>
+				<aside class="camp-panel cchat-rail-panel">
+					<h3 class="enc-heading">Threads</h3>
+					<nav class="cchat-history" id="cchat-history" aria-label="Campaign threads"></nav>
+				</aside>
+				<div class="cchat-main">
+					<div class="cchat-transcript" id="cchat-transcript" tabindex="-1">
+						<p class="camp-status" id="cchat-status">Ask your campaign — you will be answered from what your perspective knows.</p>
+					</div>
+					<form class="camp-panel cchat-composer" id="cchat-composer" autocomplete="off">
+						<textarea id="cchat-input" class="enc-field cchat-input" rows="2"
+							placeholder="Ask the campaign…" aria-label="Ask the campaign"></textarea>
+						<div class="cchat-composer-side">
+							<button type="button" class="enc-btn stop-btn" id="cchat-stop" hidden>Stop</button>
+							<button type="submit" class="enc-btn primary" id="cchat-send">Ask</button>
+						</div>
+					</form>
+				</div>
+			</div>
+
+			<!-- The empty state: nothing to ask until a campaign exists. -->
+			<div class="camp-empty" id="cchat-empty" hidden>
+				<div class="camp-panel">
+					<h3 class="enc-heading">No campaign yet</h3>
+					<p class="camp-status">The campaign Grimoire answers from a campaign's living record — what its people know, not what a model guesses. Found a campaign first, or take a seat with an invite.</p>
+					<button type="button" class="enc-btn" id="cchat-go-campaign">Open the campaign world</button>
 				</div>
 			</div>
 		</section>

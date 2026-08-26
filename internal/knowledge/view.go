@@ -599,22 +599,76 @@ type ProseHit struct {
 // ErrEmptyQuery is returned when a prose search sanitizes to nothing.
 var ErrEmptyQuery = errors.New("empty query")
 
-// toFTSQuery converts free text into a safe FTS5 MATCH expression: each
-// token a prefix phrase, tokens AND-ed — the same shape internal/index uses
-// for its rules corpora.
-func toFTSQuery(q string) (string, error) {
-	var parts []string
+// proseStopwords are dropped before matching. Questions are conversational
+// ("where is the Black Sun headquarters?") and AND-ing "where*" against a
+// fact's statement would starve the match; the nouns carry the query.
+var proseStopwords = map[string]bool{
+	"a": true, "an": true, "the": true, "this": true, "that": true,
+	"these": true, "those": true, "is": true, "are": true, "was": true,
+	"were": true, "be": true, "been": true, "am": true, "do": true,
+	"does": true, "did": true, "of": true, "in": true, "on": true,
+	"at": true, "to": true, "for": true, "from": true, "with": true,
+	"about": true, "and": true, "or": true, "not": true, "no": true,
+	"what": true, "where": true, "who": true, "whom": true, "whose": true,
+	"which": true, "why": true, "how": true, "when": true,
+	"can": true, "could": true, "should": true, "would": true, "will": true,
+	"i": true, "we": true, "you": true, "they": true, "it": true,
+	"he": true, "she": true, "me": true, "us": true, "them": true,
+	"my": true, "our": true, "your": true, "their": true, "its": true,
+	"his": true, "her": true, "there": true, "here": true,
+	"know": true, "knows": true, "known": true, "tell": true, "say": true,
+	"says": true, "said": true, "any": true, "some": true, "all": true,
+}
+
+// proseTokens trims and stopword-filters the query into matchable tokens.
+// Possessives split on the apostrophe ("Duke's" → "duke") — the FTS phrase
+// for "Duke's" is two tokens and prefix-matches nothing a table full of
+// "Vane's" and "the party's" would need to.
+func proseTokens(q string) []string {
+	var toks []string
 	for _, tok := range strings.Fields(q) {
-		tok = strings.Trim(tok, "\"'*()?,.;:!")
-		if tok == "" {
-			continue
+		for _, part := range strings.FieldsFunc(strings.Trim(tok, "\"'*()?,.;:!"), func(r rune) bool {
+			return r == '\'' || r == '’'
+		}) {
+			if len(part) <= 1 || proseStopwords[strings.ToLower(part)] {
+				continue
+			}
+			toks = append(toks, part)
 		}
+	}
+	return toks
+}
+
+func prefixPhrases(tokens []string) []string {
+	parts := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
 		parts = append(parts, fmt.Sprintf("%q*", tok))
 	}
+	return parts
+}
+
+// toFTSQuery converts free text into a safe FTS5 MATCH expression: each token
+// a prefix phrase, tokens AND-ed — the same shape internal/index uses for its
+// rules corpora.
+func toFTSQuery(q string) (string, error) {
+	parts := prefixPhrases(proseTokens(q))
 	if len(parts) == 0 {
 		return "", ErrEmptyQuery
 	}
 	return strings.Join(parts, " "), nil
+}
+
+// toFTSQueryRelaxed is the fallback when the AND query finds nothing: tokens
+// OR-ed, so a question sharing no full keyword set with any one row still
+// surfaces its best matches by rank. The authorization is untouched — only
+// the match expression widens; a row the scope cannot read stays unreadable
+// whichever expression runs.
+func toFTSQueryRelaxed(q string) (string, error) {
+	parts := prefixPhrases(proseTokens(q))
+	if len(parts) == 0 {
+		return "", ErrEmptyQuery
+	}
+	return strings.Join(parts, " OR "), nil
 }
 
 // SearchProse runs full-text search over campaign prose — entity names and
@@ -622,11 +676,11 @@ func toFTSQuery(q string) (string, error) {
 // may read. The authorization rides the same CTEs as the structured reads,
 // in the same SQL statement as the MATCH: a secret fact's text is indexed,
 // but a scope that cannot read the fact cannot surface its snippet.
-func (s *Store) searchProse(ctx context.Context, scope Scope, campaignID, query string, limit int, strict bool) ([]ProseHit, error) {
+func (s *Store) searchProse(ctx context.Context, scope Scope, campaignID, query string, limit int, strict, relaxed bool) ([]ProseHit, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	match, err := toFTSQuery(query)
+	match, err := matchExpr(query, relaxed)
 	if err != nil {
 		return nil, err
 	}
@@ -666,6 +720,15 @@ func (s *Store) searchProse(ctx context.Context, scope Scope, campaignID, query 
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// matchExpr builds the FTS5 MATCH expression for one search: the strict AND
+// form, or the relaxed OR form used as its fallback.
+func matchExpr(query string, relaxed bool) (string, error) {
+	if relaxed {
+		return toFTSQueryRelaxed(query)
+	}
+	return toFTSQuery(query)
 }
 
 /* ---------- exported wrappers ---------- */
@@ -708,5 +771,12 @@ func (s *Store) Relationships(ctx context.Context, scope Scope, campaignID strin
 // SearchProse runs full-text search over campaign prose, restricted to rows
 // the scope may read.
 func (s *Store) SearchProse(ctx context.Context, scope Scope, campaignID, query string, limit int) ([]ProseHit, error) {
-	return s.searchProse(ctx, scope, campaignID, query, limit, false)
+	return s.searchProse(ctx, scope, campaignID, query, limit, false, false)
+}
+
+// SearchProseRelaxed is the ranked fallback when SearchProse's AND match
+// finds nothing: tokens OR-ed, best matches first. The scope's authorization
+// is identical — only the match expression widens.
+func (s *Store) SearchProseRelaxed(ctx context.Context, scope Scope, campaignID, query string, limit int) ([]ProseHit, error) {
+	return s.searchProse(ctx, scope, campaignID, query, limit, false, true)
 }

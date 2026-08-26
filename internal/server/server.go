@@ -213,6 +213,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/transition", s.handleQuestTransition)
 	mux.HandleFunc("GET /api/campaigns/{id}/graph", s.handleCampaignGraph)
 	mux.HandleFunc("GET /api/campaigns/{id}/search", s.handleCampaignSearch)
+	// The campaign chat (MAD-311): the DM Grimoire and the Player Grimoire.
+	// Threads are pinned to the campaign and to the caller's resolved scope
+	// at creation, and the pin is re-checked on every turn.
+	mux.HandleFunc("GET /api/campaigns/{id}/chats", s.handleListCampaignChats)
+	mux.HandleFunc("POST /api/campaigns/{id}/chats", s.handleCreateCampaignChat)
+	mux.HandleFunc("GET /api/campaigns/{id}/chats/{chatID}", s.handleGetCampaignChat)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/chats/{chatID}", s.handleDeleteCampaignChat)
+	mux.HandleFunc("POST /api/campaigns/{id}/chats/{chatID}/messages", s.handleCampaignChatMessage)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions", s.handleCreateSession)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}", s.handleGetSession)
@@ -246,6 +254,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/continuity", s.handleCanonContinuity)
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/entail", s.handleCanonEntail)
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/health", s.handleCanonHealth)
+	// NPC simulation (MAD-313): structured agent fields on npc entities and
+	// the "ask as this NPC" endpoint. DM-only; the record it assembles is
+	// scope-filtered at npc:<id> in SQL.
+	mux.HandleFunc("GET /api/campaigns/{id}/npc/{npc}/agent", s.handleGetNPCAgent)
+	mux.HandleFunc("PUT /api/campaigns/{id}/npc/{npc}/agent", s.handlePutNPCAgent)
+	mux.HandleFunc("POST /api/campaigns/{id}/npc/{npc}/ask", s.handleNPCAsk)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))

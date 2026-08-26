@@ -79,13 +79,13 @@ func adminSession2(t *testing.T, s *Server) *http.Cookie {
 // shares only need stored rows.
 func addTurn(t *testing.T, s *Server, chatID, question, answer string) int64 {
 	t.Helper()
-	if _, err := s.chats.AddMessage(t.Context(), chatID, chat.RoleUser, question, nil, nil, nil, nil); err != nil {
+	if _, err := s.chats.AddMessage(t.Context(), chatID, chat.RoleUser, question, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("add question: %v", err)
 	}
 	m, err := s.chats.AddMessage(t.Context(), chatID, chat.RoleAssistant, answer,
 		json.RawMessage(`[{"number":"702.2a","title":"Deathtouch","body":"Deathtouch is a static ability.","source":"MTG Comp Rules"}]`),
 		json.RawMessage(`[{"name":"Deicide"}]`), nil,
-		json.RawMessage(`[{"card_name":"Deicide","source":"wotc","published_at":"2014-04-15","comment":"Deicide exiles the card."}]`))
+		json.RawMessage(`[{"card_name":"Deicide","source":"wotc","published_at":"2014-04-15","comment":"Deicide exiles the card."}]`), nil)
 	if err != nil {
 		t.Fatalf("add answer: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestShareAuthorization(t *testing.T) {
 func TestShareOnlyAnswers(t *testing.T) {
 	s := newShareServer(t)
 	id := createChat(t, s, "mtg")
-	if _, err := s.chats.AddMessage(t.Context(), id, chat.RoleUser, "a question", nil, nil, nil, nil); err != nil {
+	if _, err := s.chats.AddMessage(t.Context(), id, chat.RoleUser, "a question", nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("add question: %v", err)
 	}
 	code, _ := createShare(t, s, id, 1)

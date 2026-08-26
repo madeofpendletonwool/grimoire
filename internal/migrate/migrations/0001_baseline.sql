@@ -10,9 +10,11 @@
 -- columns the old addColumnIfMissing() helpers bolted on after the fact
 -- (users.is_admin, encounters.name, encounters.notes, chat_messages.rulings,
 -- chat_messages.entities, answer_cache.rulings, answer_cache.entities,
--- share_snapshots.entities). Those helpers still run at boot, so any live
--- database already has them; declaring anything narrower would make a fresh
--- database differ from an upgraded one.
+-- share_snapshots.entities, and the campaign-chat pins
+-- conversations.campaign_id, conversations.scope, chat_messages.campaign).
+-- Those helpers still run at boot, so any live database already has them;
+-- declaring anything narrower would make a fresh database differ from an
+-- upgraded one.
 --
 -- Existing packages keep their own New() DDL for now. Stripping it is a
 -- deliberate follow-up, not part of adopting the runner.
@@ -118,12 +120,14 @@ CREATE TABLE IF NOT EXISTS reader_guides (
 
 -- -------------------------------------------------------------------- chat --
 CREATE TABLE IF NOT EXISTS conversations (
-	id         TEXT PRIMARY KEY,
-	user_id    TEXT NOT NULL DEFAULT 'anonymous',
-	corpus     TEXT NOT NULL,
-	title      TEXT NOT NULL DEFAULT '',
-	created_at INTEGER NOT NULL,
-	updated_at INTEGER NOT NULL
+	id          TEXT PRIMARY KEY,
+	user_id     TEXT NOT NULL DEFAULT 'anonymous',
+	corpus      TEXT NOT NULL,
+	campaign_id TEXT NOT NULL DEFAULT '',
+	scope       TEXT NOT NULL DEFAULT '',
+	title       TEXT NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL,
+	updated_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS conversations_owner ON conversations(user_id, updated_at DESC);
 
@@ -136,6 +140,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 	cards           TEXT NOT NULL DEFAULT '',
 	entities        TEXT NOT NULL DEFAULT '',
 	rulings         TEXT NOT NULL DEFAULT '',
+	campaign        TEXT NOT NULL DEFAULT '',
 	created_at      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(conversation_id, id);

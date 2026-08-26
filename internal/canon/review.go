@@ -43,7 +43,8 @@ import (
 /* ---------- vocabularies ---------- */
 
 // Review item kinds. proposed_* items carry a candidate_id; engine_flag items
-// carry a flag_id; contradiction items carry their sides in detail.
+// carry a flag_id; contradiction items carry their sides in detail; npc_reveal
+// items carry their proposed fact in detail (see reveal.go).
 const (
 	ReviewProposedFact         = "proposed_fact"
 	ReviewProposedEvent        = "proposed_event"
@@ -53,6 +54,7 @@ const (
 	ReviewLowAgreement         = "low_agreement"
 	ReviewContradiction        = "contradiction"
 	ReviewEngineFlag           = "engine_flag"
+	ReviewNPCReveal            = "npc_reveal"
 )
 
 // Review statuses. A decision is terminal: once accepted, modified or
@@ -409,6 +411,14 @@ func (s *Store) Reviews(ctx context.Context, campaignID, status string) ([]Revie
 // adversarial verdict to a queue item, so the review screen renders without
 // follow-up queries.
 func (s *Store) enrich(ctx context.Context, r *Review) error {
+	if r.Kind == ReviewNPCReveal {
+		// The reveal's proposed change lives in the item's detail — there
+		// is no candidate row behind it.
+		if len(r.Detail) > 0 {
+			_ = json.Unmarshal([]byte(r.Detail), &r.Payload)
+		}
+		return nil
+	}
 	if r.CandidateID == "" {
 		return nil
 	}
@@ -585,6 +595,11 @@ func (s *Store) DecideReview(ctx context.Context, campaignID, reviewID, decision
 		if len(c.Payload) > 0 {
 			_ = json.Unmarshal(c.Payload, &payload)
 		}
+	} else if rev.Kind == ReviewNPCReveal {
+		payload = map[string]any{}
+		if len(rev.Detail) > 0 {
+			_ = json.Unmarshal([]byte(rev.Detail), &payload)
+		}
 	}
 
 	// Claim the item BEFORE any canon is written: the guarded flip to its
@@ -753,6 +768,8 @@ func (s *Store) applyReview(ctx context.Context, rev *Review, payload map[string
 		return s.applyCandidateByKind(ctx, rev, kind, payload, decidedBy)
 	case ReviewContradiction:
 		return s.applyContradiction(ctx, rev, decidedBy)
+	case ReviewNPCReveal:
+		return s.applyNPCReveal(ctx, rev, payload, decidedBy)
 	default:
 		return "", fmt.Errorf("%w: item kind %s cannot be accepted here", ErrInvalid, rev.Kind)
 	}

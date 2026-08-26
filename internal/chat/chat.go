@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,18 +43,27 @@ var ErrNotFound = errors.New("conversation not found")
 // Conversation is a single saved chat thread. Corpus is fixed when the thread
 // is created: the grounding differs per rule set, so a thread that switched
 // corpora mid-way would carry incoherent history.
+//
+// CampaignID and Scope (MAD-311) pin a campaign conversation to one campaign
+// and one knowledge perspective. Both are set only by CreateInCampaign and are
+// empty for rules conversations. The scope is recorded at creation and
+// re-checked by the campaign chat handlers on every later turn, so history
+// recorded at one epistemic scope — the party's, one character's — can never
+// be replayed or extended at a wider one.
 type Conversation struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"-"`
-	Corpus    string    `json:"corpus"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	UserID     string    `json:"-"`
+	Corpus     string    `json:"corpus"`
+	CampaignID string    `json:"campaign_id,omitempty"`
+	Scope      string    `json:"scope,omitempty"`
+	Title      string    `json:"title"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// Message is one turn in a conversation. Sources, Cards, Entities, and Rulings
-// hold the citation payloads shown under an assistant answer, stored as raw JSON
-// so the chat store stays independent of the server's view types.
+// Message is one turn in a conversation. Sources, Cards, Entities, Rulings and
+// Campaign hold the citation payloads shown under an assistant answer, stored
+// as raw JSON so the chat store stays independent of the server's view types.
 type Message struct {
 	ID        int64           `json:"id"`
 	Role      string          `json:"role"`
@@ -62,6 +72,7 @@ type Message struct {
 	Cards     json.RawMessage `json:"cards,omitempty"`
 	Entities  json.RawMessage `json:"entities,omitempty"`
 	Rulings   json.RawMessage `json:"rulings,omitempty"`
+	Campaign  json.RawMessage `json:"campaign,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
 }
 
@@ -85,12 +96,14 @@ func New(db *sql.DB) (*Store, error) {
 
 const schema = `
 CREATE TABLE IF NOT EXISTS conversations (
-	id         TEXT PRIMARY KEY,
-	user_id    TEXT NOT NULL DEFAULT 'anonymous',
-	corpus     TEXT NOT NULL,
-	title      TEXT NOT NULL DEFAULT '',
-	created_at INTEGER NOT NULL,
-	updated_at INTEGER NOT NULL
+	id          TEXT PRIMARY KEY,
+	user_id     TEXT NOT NULL DEFAULT 'anonymous',
+	corpus      TEXT NOT NULL,
+	campaign_id TEXT NOT NULL DEFAULT '',
+	scope       TEXT NOT NULL DEFAULT '',
+	title       TEXT NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL,
+	updated_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS conversations_owner ON conversations(user_id, updated_at DESC);
 CREATE TABLE IF NOT EXISTS chat_messages (
@@ -102,18 +115,24 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 	cards           TEXT NOT NULL DEFAULT '',
 	entities        TEXT NOT NULL DEFAULT '',
 	rulings         TEXT NOT NULL DEFAULT '',
+	campaign        TEXT NOT NULL DEFAULT '',
 	created_at      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(conversation_id, id);
 `
 
-// migrate applies additive column additions for installs whose chat_messages
-// table predates a later feature. Each step is idempotent: a fresh database
-// already has the column from schema, and an upgraded one gets it added
-// in-place without losing history.
+// migrate applies additive column additions for installs whose tables predate
+// a later feature. Each step is idempotent: a fresh database already has the
+// column from schema (or the goose baseline), and an upgraded one gets it
+// added in-place without losing history.
 func migrate(db *sql.DB) error {
-	for _, col := range []string{"rulings", "entities"} {
+	for _, col := range []string{"rulings", "entities", "campaign"} {
 		if err := ensureColumn(db, "chat_messages", col); err != nil {
+			return err
+		}
+	}
+	for _, col := range []string{"campaign_id", "scope"} {
+		if err := ensureColumn(db, "conversations", col); err != nil {
 			return err
 		}
 	}
@@ -156,34 +175,66 @@ func ensureColumn(db *sql.DB, table, column string) error {
 
 // Create opens a new conversation for a user against a fixed corpus.
 func (s *Store) Create(ctx context.Context, userID, corpus, title string) (*Conversation, error) {
+	return s.create(ctx, userID, corpus, "", "", title)
+}
+
+// CreateInCampaign opens a conversation pinned to one campaign and one
+// knowledge scope (MAD-311). The scope is the caller's resolved perspective —
+// the server derives it from the membership row, never from the request body —
+// and every later turn re-checks it, so history recorded at one epistemic
+// scope cannot be replayed or extended at a wider one.
+func (s *Store) CreateInCampaign(ctx context.Context, userID, corpus, campaignID, scope, title string) (*Conversation, error) {
+	if strings.TrimSpace(campaignID) == "" || strings.TrimSpace(scope) == "" {
+		return nil, fmt.Errorf("create campaign conversation: campaign and scope are required")
+	}
+	return s.create(ctx, userID, corpus, campaignID, scope, title)
+}
+
+func (s *Store) create(ctx context.Context, userID, corpus, campaignID, scope, title string) (*Conversation, error) {
 	now := time.Now().UTC()
 	c := &Conversation{
-		ID:        uuid.NewString(),
-		UserID:    defaultUser(userID),
-		Corpus:    corpus,
-		Title:     strings.TrimSpace(title),
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         uuid.NewString(),
+		UserID:     defaultUser(userID),
+		Corpus:     corpus,
+		CampaignID: campaignID,
+		Scope:      scope,
+		Title:      strings.TrimSpace(title),
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO conversations (id, user_id, corpus, title, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		c.ID, c.UserID, c.Corpus, c.Title, now.UnixMilli(), now.UnixMilli())
+		`INSERT INTO conversations (id, user_id, corpus, campaign_id, scope, title, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.UserID, c.Corpus, c.CampaignID, c.Scope, c.Title, now.UnixMilli(), now.UnixMilli())
 	if err != nil {
 		return nil, fmt.Errorf("create conversation: %w", err)
 	}
 	return c, nil
 }
 
-// List returns a user's conversations, most recently active first.
+// List returns a user's rules conversations, most recently active first.
+// Campaign conversations are excluded: they belong to the campaign Grimoire
+// surface, which lists them through ListInCampaign.
 func (s *Store) List(ctx context.Context, userID string, limit int) ([]Conversation, error) {
+	return s.listWhere(ctx, `user_id = ? AND campaign_id = ''`,
+		[]any{defaultUser(userID)}, limit)
+}
+
+// ListInCampaign returns a user's conversations within one campaign, most
+// recently active first — the campaign Grimoire's own thread list.
+func (s *Store) ListInCampaign(ctx context.Context, userID, campaignID string, limit int) ([]Conversation, error) {
+	return s.listWhere(ctx, `user_id = ? AND campaign_id = ?`,
+		[]any{defaultUser(userID), campaignID}, limit)
+}
+
+func (s *Store) listWhere(ctx context.Context, where string, args []any, limit int) ([]Conversation, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, corpus, title, created_at, updated_at
-		   FROM conversations WHERE user_id = ?
-		  ORDER BY updated_at DESC LIMIT ?`, defaultUser(userID), limit)
+		`SELECT id, user_id, corpus, campaign_id, scope, title, created_at, updated_at
+		   FROM conversations WHERE `+where+` ORDER BY updated_at DESC LIMIT `+strconv.Itoa(limit),
+		args...)
 	if err != nil {
 		return nil, fmt.Errorf("list conversations: %w", err)
 	}
@@ -203,7 +254,7 @@ func (s *Store) List(ctx context.Context, userID string, limit int) ([]Conversat
 // Get returns a single conversation owned by userID.
 func (s *Store) Get(ctx context.Context, userID, id string) (*Conversation, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, corpus, title, created_at, updated_at
+		`SELECT id, user_id, corpus, campaign_id, scope, title, created_at, updated_at
 		   FROM conversations WHERE id = ? AND user_id = ?`, id, defaultUser(userID))
 	c, err := scanConversation(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -244,14 +295,14 @@ func (s *Store) ReassignOwner(ctx context.Context, from, to string) (int64, erro
 }
 
 // AddMessage appends a turn and bumps the conversation's updated_at so the
-// sidebar orders by real activity. Sources, cards, entities, and rulings may be
-// nil.
-func (s *Store) AddMessage(ctx context.Context, convID, role, content string, sources, cards, entities, rulings json.RawMessage) (*Message, error) {
+// sidebar orders by real activity. Sources, cards, entities, rulings and the
+// campaign citation payload may be nil.
+func (s *Store) AddMessage(ctx context.Context, convID, role, content string, sources, cards, entities, rulings, campaign json.RawMessage) (*Message, error) {
 	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO chat_messages (conversation_id, role, content, sources, cards, rulings, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		convID, role, content, string(sources), string(cards), string(rulings), now.UnixMilli())
+		`INSERT INTO chat_messages (conversation_id, role, content, sources, cards, rulings, campaign, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		convID, role, content, string(sources), string(cards), string(rulings), string(campaign), now.UnixMilli())
 	if err != nil {
 		return nil, fmt.Errorf("add message: %w", err)
 	}
@@ -263,13 +314,13 @@ func (s *Store) AddMessage(ctx context.Context, convID, role, content string, so
 		`UPDATE conversations SET updated_at = ? WHERE id = ?`, now.UnixMilli(), convID); err != nil {
 		return nil, fmt.Errorf("touch conversation: %w", err)
 	}
-	return &Message{ID: id, Role: role, Content: content, Sources: sources, Cards: cards, Entities: entities, Rulings: rulings, CreatedAt: now}, nil
+	return &Message{ID: id, Role: role, Content: content, Sources: sources, Cards: cards, Entities: entities, Rulings: rulings, Campaign: campaign, CreatedAt: now}, nil
 }
 
 // Messages returns a conversation's turns in order.
 func (s *Store) Messages(ctx context.Context, convID string) ([]Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, role, content, sources, cards, entities, rulings, created_at
+		`SELECT id, role, content, sources, cards, entities, rulings, campaign, created_at
 		   FROM chat_messages WHERE conversation_id = ? ORDER BY id ASC`, convID)
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
@@ -281,15 +332,17 @@ func (s *Store) Messages(ctx context.Context, convID string) ([]Message, error) 
 		var (
 			m                           Message
 			sources, card, entities, ru string
+			camp                        string
 			created                     int64
 		)
-		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &sources, &card, &entities, &ru, &created); err != nil {
+		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &sources, &card, &entities, &ru, &camp, &created); err != nil {
 			return nil, err
 		}
 		m.Sources = rawOrNil(sources)
 		m.Cards = rawOrNil(card)
 		m.Entities = rawOrNil(entities)
 		m.Rulings = rawOrNil(ru)
+		m.Campaign = rawOrNil(camp)
 		m.CreatedAt = time.UnixMilli(created).UTC()
 		out = append(out, m)
 	}
@@ -317,6 +370,7 @@ func (s *Store) History(ctx context.Context, convID string, maxTurns int) ([]Mes
 		all[i].Sources = nil
 		all[i].Cards = nil
 		all[i].Rulings = nil
+		all[i].Campaign = nil
 	}
 	return all, nil
 }
@@ -349,7 +403,7 @@ func scanConversation(r rowScanner) (*Conversation, error) {
 		c                Conversation
 		created, updated int64
 	)
-	if err := r.Scan(&c.ID, &c.UserID, &c.Corpus, &c.Title, &created, &updated); err != nil {
+	if err := r.Scan(&c.ID, &c.UserID, &c.Corpus, &c.CampaignID, &c.Scope, &c.Title, &created, &updated); err != nil {
 		return nil, err
 	}
 	c.CreatedAt = time.UnixMilli(created).UTC()

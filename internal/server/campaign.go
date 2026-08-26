@@ -61,6 +61,11 @@ type campAccess struct {
 	keeper   bool
 	member   *campaign.Member
 	view     knowledge.PlayerView // nil exactly when the caller may use the wide store
+	// playerScope is the non-DM scope the view is bound to (party or
+	// character:<id>); the zero Scope for DM and keeper callers. Campaign
+	// chat pins it on the conversation so history cannot be replayed at a
+	// different — especially wider — perspective later.
+	playerScope campaign.Scope
 }
 
 // isDM reports whether the caller holds the campaign's DM perspective: the dm
@@ -128,6 +133,7 @@ func (s *Server) resolveCampaignAccess(w http.ResponseWriter, r *http.Request, c
 		return nil
 	}
 	a.view = view
+	a.playerScope = scope
 	return a
 }
 
@@ -254,15 +260,24 @@ type provenanceView struct {
 	SpanEnd   int64  `json:"span_end,omitempty"`
 	Quote     string `json:"quote"`
 	Method    string `json:"method"`
-	CreatedAt string `json:"created_at"`
+	// AcceptedBy / AcceptedAt record the human who accepted a machine
+	// proposal (extracted fact, NPC reveal) through the review queue.
+	AcceptedBy string `json:"accepted_by,omitempty"`
+	AcceptedAt string `json:"accepted_at,omitempty"`
+	CreatedAt  string `json:"created_at"`
 }
 
 func toProvenanceView(p *campaign.Provenance) provenanceView {
-	return provenanceView{
+	v := provenanceView{
 		ID: p.ID, SessionID: p.SessionID, SourceID: p.SourceID,
 		SpanStart: p.SpanStart, SpanEnd: p.SpanEnd, Quote: p.Quote, Method: p.Method,
-		CreatedAt: p.CreatedAt.Format(http.TimeFormat),
+		AcceptedBy: p.AcceptedBy,
+		CreatedAt:  p.CreatedAt.Format(http.TimeFormat),
 	}
+	if !p.AcceptedAt.IsZero() {
+		v.AcceptedAt = p.AcceptedAt.Format(http.TimeFormat)
+	}
+	return v
 }
 
 type awarenessView struct {

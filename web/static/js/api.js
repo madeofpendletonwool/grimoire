@@ -265,6 +265,21 @@ export const api = {
 	campaignGraph: (cid, center, hops) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/graph?center=${encodeURIComponent(center)}&hops=${hops}`).then(json),
 
+	// The campaign chat (MAD-311): threads pinned to the campaign and to the
+	// caller's resolved scope. The scope is decided server-side from the
+	// membership row — this surface never chooses a perspective.
+	campaignChatList: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/chats`).then(json),
+
+	campaignChatCreate: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/chats`, { method: "POST" }).then(json),
+
+	campaignChatGet: (cid, chatID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/chats/${encodeURIComponent(chatID)}`).then(json),
+
+	campaignChatDelete: (cid, chatID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/chats/${encodeURIComponent(chatID)}`, { method: "DELETE" }).then(json),
+
 	campaignMembers: (cid) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/members`).then(json),
 
@@ -454,6 +469,15 @@ async function postSSE(url, payload, handlers, signal) {
 /** Post a chat question and consume the answer as server-sent events. */
 export function streamAnswer(chatID, question, handlers, signal) {
 	return postSSE(`/api/chats/${encodeURIComponent(chatID)}/messages`, { question }, handlers, signal);
+}
+
+/** Ask a campaign thread a question and consume the answer as SSE. The
+ *  campaign's citation payload rides the meta frame alongside the rules
+ *  sources. */
+export function streamCampaignAnswer(cid, chatID, question, handlers, signal) {
+	return postSSE(
+		`/api/campaigns/${encodeURIComponent(cid)}/chats/${encodeURIComponent(chatID)}/messages`,
+		{ question }, handlers, signal);
 }
 
 /** Post a board + sequence to the resolver and consume the trace as SSE. */
