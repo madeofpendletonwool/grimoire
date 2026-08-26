@@ -15,6 +15,7 @@ import { initSessions } from "./sessions.js";
 import { initReview } from "./review.js";
 import { initDeck } from "./deck.js";
 import { initCampaign } from "./campaign.js";
+import { initCampaignChat } from "./campaignchat.js";
 import { initAdmin } from "./admin.js";
 import { initLibrary } from "./library.js";
 import { initShares } from "./shares.js";
@@ -109,6 +110,7 @@ function start() {
 	initReview();
 	initDeck();
 	initCampaign();
+	initCampaignChat();
 	syncChrome();
 	initAccount();
 	initAdmin();

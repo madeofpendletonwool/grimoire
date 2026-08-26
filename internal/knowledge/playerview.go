@@ -41,6 +41,10 @@ type PlayerView interface {
 	// SearchProse runs full-text search over campaign prose the scope may
 	// read.
 	SearchProse(ctx context.Context, campaignID, query string, limit int) ([]ProseHit, error)
+	// SearchProseRelaxed is the ranked fallback when SearchProse's AND match
+	// finds nothing: tokens OR-ed, best matches first, under the same
+	// authorization.
+	SearchProseRelaxed(ctx context.Context, campaignID, query string, limit int) ([]ProseHit, error)
 	// Discoveries lists the scope's own discoveries of non-secret facts —
 	// the journal's "how we learned it" view.
 	Discoveries(ctx context.Context, campaignID, factID string) ([]Discovery, error)
@@ -93,7 +97,11 @@ func (v *playerView) Relationships(ctx context.Context, campaignID string) ([]ca
 }
 
 func (v *playerView) SearchProse(ctx context.Context, campaignID, query string, limit int) ([]ProseHit, error) {
-	return v.store.searchProse(ctx, v.scope, campaignID, query, limit, true)
+	return v.store.searchProse(ctx, v.scope, campaignID, query, limit, true, false)
+}
+
+func (v *playerView) SearchProseRelaxed(ctx context.Context, campaignID, query string, limit int) ([]ProseHit, error) {
+	return v.store.searchProse(ctx, v.scope, campaignID, query, limit, true, true)
 }
 
 func (v *playerView) Discoveries(ctx context.Context, campaignID, factID string) ([]Discovery, error) {
