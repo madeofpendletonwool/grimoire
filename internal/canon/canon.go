@@ -288,6 +288,10 @@ func NewOffline(db *sql.DB) (*Store, error) {
 // NewOffline.
 var errOffline = errors.New("canon: no model configured (offline store; extraction and validation need a model client)")
 
+// IsOffline reports whether err is the offline store's refusal — the HTTP
+// layer maps it to 503 rather than a store error.
+func IsOffline(err error) bool { return errors.Is(err, errOffline) }
+
 // ConfigFromEnv reads the CANON_* budget guards from the environment, the
 // same one-key-one-knob shape the rest of the configuration uses. Empty or
 // absent values fall back to DefaultConfig's value for that knob.

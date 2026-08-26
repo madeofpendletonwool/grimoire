@@ -500,32 +500,62 @@
 
 			<!-- The picker's empty state: create the first campaign, or join
 			     one with a code the DM handed over. -->
-			<div class="camp-empty" id="camp-empty" hidden>
-				<div class="camp-panel">
-					<h3 class="enc-heading">Found a campaign</h3>
-					<form class="camp-new-form" id="camp-new-form" autocomplete="off">
-						<label class="camp-field"><span>Name</span>
-							<input id="camp-new-name" class="enc-field" type="text" required placeholder="The Ashen Court" aria-label="Campaign name">
-						</label>
-						<label class="camp-field"><span>System</span>
-							<input id="camp-new-system" class="enc-field" type="text" placeholder="D&D 5e" aria-label="Rules system">
-						</label>
-						<label class="camp-field"><span>Premise</span>
-							<textarea id="camp-new-premise" class="enc-idea-input" rows="3" aria-label="Premise"></textarea>
-						</label>
-						<button type="submit" class="enc-btn primary">Create</button>
-					</form>
-				</div>
-				<div class="camp-panel">
-					<h3 class="enc-heading">Join with an invite code</h3>
-					<form class="camp-new-form" id="camp-join-form" autocomplete="off">
-						<label class="camp-field"><span>Code</span>
-							<input id="camp-join-code" class="enc-field" type="text" required aria-label="Invite code">
-						</label>
-						<button type="submit" class="enc-btn">Take your seat</button>
-					</form>
-				</div>
+		<div class="camp-empty" id="camp-empty" hidden>
+			<div class="camp-panel">
+				<h3 class="enc-heading">Found a campaign</h3>
+				<form class="camp-new-form" id="camp-new-form" autocomplete="off">
+					<label class="camp-field"><span>Name</span>
+						<input id="camp-new-name" class="enc-field" type="text" required placeholder="The Ashen Court" aria-label="Campaign name">
+					</label>
+					<label class="camp-field"><span>System</span>
+						<input id="camp-new-system" class="enc-field" type="text" placeholder="D&D 5e" aria-label="Rules system">
+					</label>
+					<label class="camp-field"><span>Premise</span>
+						<textarea id="camp-new-premise" class="enc-idea-input" rows="3" aria-label="Premise"></textarea>
+					</label>
+					<button type="submit" class="enc-btn primary">Create</button>
+				</form>
 			</div>
+			<div class="camp-panel">
+				<h3 class="enc-heading">Start from a premise</h3>
+				<p class="camp-status">Dark fantasy, a kingdom consumed by an ancient forest, levels 1–12 — Grimoire computes the acts and level bands, the model fills in the names, and every generated thing lands as a proposal you accept or reject.</p>
+				<form class="camp-new-form" id="camp-skeleton-form" autocomplete="off">
+					<label class="camp-field"><span>Name</span>
+						<input id="camp-skeleton-name" class="enc-field" type="text" required placeholder="The Withering Kingdom" aria-label="Campaign name">
+					</label>
+					<label class="camp-field"><span>Premise</span>
+						<textarea id="camp-skeleton-premise" class="enc-idea-input" rows="3" required placeholder="Dark fantasy, a kingdom consumed by an ancient forest, political intrigue and occasional nasty horror" aria-label="Premise"></textarea>
+					</label>
+					<div class="camp-field-row">
+						<label class="camp-field"><span>Levels</span>
+							<span class="camp-range">
+								<input id="camp-skeleton-start" class="enc-field" type="number" min="1" max="20" value="1" aria-label="Starting level">
+								<span aria-hidden="true">to</span>
+								<input id="camp-skeleton-end" class="enc-field" type="number" min="1" max="20" value="12" aria-label="Ending level">
+							</span>
+						</label>
+						<label class="camp-field"><span>Acts</span>
+							<select id="camp-skeleton-acts" class="enc-field" aria-label="Act structure">
+								<option value="0">Let the levels decide</option>
+								<option value="3">Three acts</option>
+								<option value="4">Four acts</option>
+								<option value="5">Five acts</option>
+							</select>
+						</label>
+					</div>
+					<button type="submit" class="enc-btn primary">Design the skeleton</button>
+				</form>
+			</div>
+			<div class="camp-panel">
+				<h3 class="enc-heading">Join with an invite code</h3>
+				<form class="camp-new-form" id="camp-join-form" autocomplete="off">
+					<label class="camp-field"><span>Code</span>
+						<input id="camp-join-code" class="enc-field" type="text" required aria-label="Invite code">
+					</label>
+					<button type="submit" class="enc-btn">Take your seat</button>
+				</form>
+			</div>
+		</div>
 		</section>
 
 	<!-- ---------- Campaign chat ----------

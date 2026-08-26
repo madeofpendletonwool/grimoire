@@ -64,6 +64,16 @@ export async function openReview() {
 	await loadCampaigns();
 }
 
+// openReviewFor opens the queue aimed at one campaign — the skeleton
+// generator's hand-off: the batch it staged is the review the DM owes.
+export async function openReviewFor(id) {
+	if (isNarrow()) $("app").classList.add("rail-hidden");
+	$("review-view").hidden = false;
+	$("main").classList.add("is-sessioning");
+	campaignID = id;
+	await loadCampaigns();
+}
+
 export function closeReview() {
 	$("review-view").hidden = true;
 	$("main").classList.remove("is-sessioning");
