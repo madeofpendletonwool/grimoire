@@ -454,11 +454,14 @@ func validatePayload(wire WirePayload, vctx validateContext, seen map[string]boo
 	return staged, drops
 }
 
-// validEntityKind mirrors the entities CHECK constraint.
+// validEntityKind mirrors the entities CHECK constraint; the list lives in
+// generate.go's entityKindValues so the extraction rules and the
+// generation pools share one definition.
 func validEntityKind(kind string) bool {
-	switch kind {
-	case "pc", "npc", "faction", "location", "item", "deity", "organization", "creature", "concept":
-		return true
+	for _, k := range entityKindValues {
+		if k == kind {
+			return true
+		}
 	}
 	return false
 }

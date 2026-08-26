@@ -101,6 +101,8 @@ type Review struct {
 	DedupKey     string
 	CandidateID  string
 	FlagID       string
+	BatchID      string
+	DependsOn    []string
 	Subject      string
 	Summary      string
 	Detail       string
@@ -128,25 +130,32 @@ type Review struct {
 	Confidence    float64
 }
 
-const reviewCols = `id, campaign_id, kind, status, dedup_key, candidate_id, flag_id, subject, summary,
-                    detail, result_ref, decision_note, decided_by, decided_at, created_at, updated_at`
+const reviewCols = `id, campaign_id, kind, status, dedup_key, candidate_id, flag_id, batch_id, depends_on,
+                    subject, summary, detail, result_ref, decision_note, decided_by, decided_at, created_at, updated_at`
 
 func scanReview(row interface{ Scan(...any) error }) (*Review, error) {
 	var (
 		r         Review
 		candidate sql.NullString
 		flagID    sql.NullString
+		batchID   sql.NullString
+		dependsOn string
 		decidedAt sql.NullInt64
 		created   int64
 		updated   int64
 	)
 	if err := row.Scan(&r.ID, &r.CampaignID, &r.Kind, &r.Status, &r.DedupKey, &candidate,
-		&flagID, &r.Subject, &r.Summary, &r.Detail, &r.ResultRef, &r.DecisionNote,
+		&flagID, &batchID, &dependsOn, &r.Subject, &r.Summary, &r.Detail, &r.ResultRef, &r.DecisionNote,
 		&r.DecidedBy, &decidedAt, &created, &updated); err != nil {
 		return nil, err
 	}
 	r.CandidateID = candidate.String
 	r.FlagID = flagID.String
+	r.BatchID = batchID.String
+	r.DependsOn = []string{}
+	if dependsOn != "" {
+		_ = json.Unmarshal([]byte(dependsOn), &r.DependsOn)
+	}
 	if decidedAt.Valid {
 		r.DecidedAt = time.UnixMilli(decidedAt.Int64).UTC()
 	}
@@ -351,14 +360,41 @@ func (s *Store) buildFlagItems(ctx context.Context, campaignID string) error {
 // insertReview inserts one queue item, doing nothing when its dedup key has
 // already been seen (open or decided) — the never-resurrect rule.
 func (s *Store) insertReview(ctx context.Context, campaignID, kind, dedup, candidateID, flagID, subject, summary, detail string) error {
-	now := s.now().UnixMilli()
-	_, err := s.db.ExecContext(ctx, `
+	return insertReviewOn(ctx, s.db, "", campaignID, kind, dedup, candidateID, flagID, "", nil,
+		subject, summary, detail, s.now().UnixMilli())
+}
+
+// reviewWriter is the slice of *sql.DB and *sql.Tx the queue insert needs,
+// so StageBatch can stage a whole batch on one transaction.
+type reviewWriter interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// insertReviewOn is insertReview over a db or tx handle, with the batch
+// columns StageBatch fills. id is the row's id — StageBatch pre-mints ids
+// so depends_on references the exact row that lands (pass "" to mint one
+// here); empty batchID and nil dependsOn stage a loose item, exactly like
+// insertReview.
+func insertReviewOn(ctx context.Context, w reviewWriter, id, campaignID, kind, dedup, candidateID, flagID, batchID string,
+	dependsOn []string, subject, summary, detail string, nowMS int64) error {
+	if id == "" {
+		id = uuid.NewString()
+	}
+	depJSON := "[]"
+	if len(dependsOn) > 0 {
+		b, err := json.Marshal(dependsOn)
+		if err != nil {
+			return fmt.Errorf("encode depends_on: %w", err)
+		}
+		depJSON = string(b)
+	}
+	_, err := w.ExecContext(ctx, `
 		INSERT INTO canon_reviews (id, campaign_id, kind, status, dedup_key, candidate_id, flag_id,
-			subject, summary, detail, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			batch_id, depends_on, subject, summary, detail, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (campaign_id, dedup_key) DO NOTHING`,
-		uuid.NewString(), campaignID, kind, ReviewOpen, dedup, nullString(candidateID),
-		nullString(flagID), subject, summary, detail, now, now)
+		id, campaignID, kind, ReviewOpen, dedup, nullString(candidateID),
+		nullString(flagID), nullString(batchID), depJSON, subject, summary, detail, nowMS, nowMS)
 	if err != nil {
 		return fmt.Errorf("insert review: %w", err)
 	}
@@ -411,15 +447,12 @@ func (s *Store) Reviews(ctx context.Context, campaignID, status string) ([]Revie
 // adversarial verdict to a queue item, so the review screen renders without
 // follow-up queries.
 func (s *Store) enrich(ctx context.Context, r *Review) error {
-	if r.Kind == ReviewNPCReveal {
-		// The reveal's proposed change lives in the item's detail — there
-		// is no candidate row behind it.
-		if len(r.Detail) > 0 {
+	if r.CandidateID == "" {
+		// npc_reveal and proposal-batch items have no candidate row behind
+		// them: the proposed change lives in the item's detail.
+		if len(r.Detail) > 0 && (r.Kind == ReviewNPCReveal || r.BatchID != "") {
 			_ = json.Unmarshal([]byte(r.Detail), &r.Payload)
 		}
-		return nil
-	}
-	if r.CandidateID == "" {
 		return nil
 	}
 	c, err := s.getCandidate(ctx, r.CampaignID, r.CandidateID)
