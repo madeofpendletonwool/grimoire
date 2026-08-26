@@ -232,7 +232,7 @@ func TestBatch_DismissDependencyRefusesDependents(t *testing.T) {
 		in.Items[1],
 		{ID: "control", Kind: "fact", DependsOn: []string{"vane"}, Payload: map[string]any{
 			"local_id": "control-fact", "statement": "The Duke secretly controls House Vane.",
-			"subject":  fx.Duke, "predicate": "secretly_controls",
+			"subject": fx.Duke, "predicate": "secretly_controls",
 			"object_entity": "House Vane", "visibility": "secret",
 		}},
 		in.Items[5],

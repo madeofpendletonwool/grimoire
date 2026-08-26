@@ -157,8 +157,8 @@ func TestProposals_StageListGetDecide(t *testing.T) {
 		t.Fatalf("decide: status %d, body %s", rec.Code, rec.Body)
 	}
 	var dec struct {
-		Batch map[string]any      `json:"batch"`
-		Items []map[string]any    `json:"items"`
+		Batch map[string]any   `json:"batch"`
+		Items []map[string]any `json:"items"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &dec); err != nil {
 		t.Fatal(err)
