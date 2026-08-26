@@ -3053,6 +3053,28 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .review-modify { flex-basis: 100%; display: flex; flex-direction: column; gap: var(--sp-2); }
 .review-modify-input { width: 100%; }
 .review-decision { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); opacity: 0.7; }
+
+/* A proposal batch (MAD-359): a review rendered bigger — one generator
+ * run's linked objects behind one decision, grouped by kind. */
+.review-batch-card { border-left: 2px solid var(--gold-dim); }
+.review-batch-group {
+	margin: var(--sp-3) 0 var(--sp-1);
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.05em;
+	color: var(--gold-dim);
+}
+.review-batch-item {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	flex-wrap: wrap;
+	padding: var(--sp-1) 0;
+	border-bottom: 1px solid var(--stone-line);
+}
+.review-batch-item:last-of-type { border-bottom: none; }
+.review-batch-item-summary { flex: 1; min-width: 16rem; font-family: var(--font-prose); font-size: var(--fs-sm); color: var(--parchment); }
+.review-batch-item-status { margin-left: auto; font-size: var(--fs-xs); opacity: 0.7; }
 .study-meta.is-error { color: var(--gold-bright); opacity: 1; }
 
 /* The session list: ordinal, name, status — a shelf of sittings. */
