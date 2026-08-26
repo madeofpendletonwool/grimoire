@@ -241,6 +241,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/reviews/accept-agree", s.handleCanonReviewsAcceptAgree)
 	mux.HandleFunc("POST /api/campaigns/{id}/canon/reviews/{rid}/decision", s.handleCanonReviewDecision)
 	mux.HandleFunc("GET /api/campaigns/{id}/canon/reviews/export", s.handleCanonReviewsExport)
+	// NPC simulation (MAD-313): structured agent fields on npc entities and
+	// the "ask as this NPC" endpoint. DM-only; the record it assembles is
+	// scope-filtered at npc:<id> in SQL.
+	mux.HandleFunc("GET /api/campaigns/{id}/npc/{npc}/agent", s.handleGetNPCAgent)
+	mux.HandleFunc("PUT /api/campaigns/{id}/npc/{npc}/agent", s.handlePutNPCAgent)
+	mux.HandleFunc("POST /api/campaigns/{id}/npc/{npc}/ask", s.handleNPCAsk)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
 	mux.HandleFunc("GET /", s.handleIndex)
 	return s.recoverer(s.logger(s.requireSession(mux)))
