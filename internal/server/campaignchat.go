@@ -552,6 +552,17 @@ func (s *Server) handleCampaignChatMessage(w http.ResponseWriter, r *http.Reques
 	// chat: navigating away mid-answer still saves the turn.
 	saveCtx := context.WithoutCancel(r.Context())
 
+	// MAD-363: the DM Grimoire routes recognized commands to the command
+	// engine instead of answering them in prose. A slash prefix is the
+	// deterministic signal — every DM message is otherwise a question, and
+	// guessing which questions are commands is the failure this surface
+	// exists to avoid. Players' slashes stay questions: they cannot
+	// command the database.
+	if isChatCommand(a, req.Question) {
+		s.handleCampaignChatCommand(w, r, a, conv, saveCtx, req.Question)
+		return
+	}
+
 	prior, err := s.chats.History(r.Context(), conv.ID, campaignHistoryTurns)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -645,6 +656,52 @@ func (s *Server) handleCampaignChatMessage(w http.ResponseWriter, r *http.Reques
 		sse.send("error", map[string]any{"error": fmt.Sprintf("the answer was cut short: %v", streamErr)})
 		return
 	}
+	var id int64
+	if saved != nil {
+		id = saved.ID
+	}
+	sse.send("done", map[string]any{"message_id": id, "title": title, "perspective": perspective})
+}
+
+// handleCampaignChatCommand runs one slash-prefixed DM message through the
+// command engine (MAD-363) and renders the result as the same SSE frame
+// contract a streamed answer uses: meta (title, perspective, and the
+// command payload), one delta carrying the whole message, done. The
+// exchange persists like any other turn — the user message with its slash,
+// the assistant message carrying the command result — so a reloaded
+// thread replays the command history verbatim. There is no model answer
+// to stream: the engine's result IS the turn.
+func (s *Server) handleCampaignChatCommand(w http.ResponseWriter, r *http.Request, a *campAccess, conv *chat.Conversation, saveCtx context.Context, question string) {
+	if _, err := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleUser, question, nil, nil, nil, nil, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	title := conv.Title
+	if strings.TrimSpace(title) == "" {
+		title = chat.DeriveTitle(question)
+		if err := s.chats.Rename(saveCtx, userID(r), conv.ID, title); err != nil {
+			log.Printf("campaign chat: title %s: %v", conv.ID, err)
+		}
+	}
+	res := s.runCampaignCommand(r, a, strings.TrimPrefix(strings.TrimSpace(question), "/"))
+
+	var commandJSON json.RawMessage
+	if b, err := json.Marshal(res); err == nil {
+		commandJSON = b
+	}
+	perspective := a.perspectiveLabel(r.Context())
+	saved, saveErr := s.chats.AddMessage(saveCtx, conv.ID, chat.RoleAssistant, res.Message, nil, nil, nil, nil, commandJSON)
+	if saveErr != nil {
+		log.Printf("campaign chat: save command %s: %v", conv.ID, saveErr)
+	}
+
+	sse := newSSEWriter(w)
+	sse.send("meta", map[string]any{
+		"title":       title,
+		"perspective": perspective,
+		"command":     res,
+	})
+	sse.send("delta", map[string]any{"text": res.Message})
 	var id int64
 	if saved != nil {
 		id = saved.ID

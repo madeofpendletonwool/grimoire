@@ -32,6 +32,8 @@ export function initCampaign() {
 	$("camp-new-form").addEventListener("submit", onCreateCampaign);
 	$("camp-skeleton-form").addEventListener("submit", onSkeletonDesign);
 	$("camp-join-form").addEventListener("submit", onJoinCampaign);
+	$("camp-cmd-form").addEventListener("submit", onCommand);
+	$("camp-cmd-result").addEventListener("click", onCommandResultClick);
 	$("camp-search-form").addEventListener("submit", (e) => {
 		e.preventDefault();
 		runSearch($("camp-search").value.trim());
@@ -137,6 +139,8 @@ async function selectCampaign(id) {
 	$("camp-new-entity").hidden = !isDM();
 	$("camp-fact-form").hidden = !isDM();
 	$("camp-members-panel").hidden = !isDM();
+	$("camp-cmd-form").hidden = !isDM();
+	if (!isDM()) $("camp-cmd-result").hidden = true;
 	kindFilter = "";
 	renderKindChips();
 	await loadEntities();
@@ -235,6 +239,83 @@ async function onSkeletonDesign(e) {
 	$("camp-new-toggle").setAttribute("aria-expanded", "false");
 	closeCampaign();
 	await openReviewFor(campaignID);
+}
+
+/* ---------- the command line (MAD-363) ---------- */
+
+// onCommand runs one plain-English command through the campaign's command
+// engine. Graph mutations come back staged behind the review gate; a
+// clarifying question comes back with its candidates; a refusal says so
+// plainly. This surface never decides which is which — the server does.
+async function onCommand(e) {
+	e.preventDefault();
+	if (!current) return;
+	const input = $("camp-cmd-input");
+	const text = input.value.trim();
+	if (!text) return;
+	const box = $("camp-cmd-result");
+	box.hidden = false;
+	clear(box).append(el("p", { class: "camp-status", text: "Running the command…" }));
+	input.value = "";
+	let data;
+	try {
+		data = await api.campaignCommand(current.id, text);
+	} catch (err) {
+		clear(box).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	renderCommandResult(box, data.command);
+	// A merge or a cast write changed the world the browser is showing.
+	if (data.command && data.command.kind === "written") loadEntities();
+}
+
+// renderCommandResult draws one command outcome: the message, the staged
+// batch's items with a door into the review queue, or the question's
+// candidates as one-click names.
+function renderCommandResult(box, cmd) {
+	if (!cmd) return;
+	box.hidden = false;
+	const inner = clear(box);
+	inner.append(el("p", { class: "camp-cmd-message", text: cmd.message || "(no response)" }));
+	if (cmd.kind === "batch" && cmd.batch) {
+		const items = el("div", { class: "camp-cmd-items" });
+		for (const it of cmd.batch.items || []) {
+			items.append(el("span", { class: "enc-chip", text: it.subject || it.kind }));
+		}
+		inner.append(items);
+		inner.append(el("button", {
+			class: "enc-btn",
+			text: "Open the review queue",
+			attrs: { type: "button", "data-open-review": cmd.batch.id },
+		}));
+	}
+	if (cmd.kind === "question" && cmd.question && (cmd.question.candidates || []).length) {
+		const cands = el("div", { class: "camp-cmd-items" });
+		for (const c of cmd.question.candidates) {
+			const label = c.kind ? `${c.name} (${c.kind})` : c.name;
+			const chip = el("button", { class: "enc-chip", text: label, attrs: { type: "button", "data-name": c.name } });
+			if (c.note) chip.title = c.note;
+			cands.append(chip);
+		}
+		inner.append(cands);
+	}
+}
+
+// onCommandResultClick handles the affordances a result carries: the door
+// into the review queue, and the candidate chips that drop a name into the
+// command line for the DM's next command.
+async function onCommandResultClick(e) {
+	const open = e.target.closest("[data-open-review]");
+	if (open) {
+		openReviewFor(current.id);
+		return;
+	}
+	const name = e.target.closest("[data-name]");
+	if (name) {
+		const input = $("camp-cmd-input");
+		input.value = (input.value ? input.value.replace(/\s+$/, "") + " " : "") + name.dataset.name;
+		input.focus();
+	}
 }
 
 /* ---------- entity browser ---------- */

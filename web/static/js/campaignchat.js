@@ -8,6 +8,7 @@
 import { $, el, clear, isNarrow } from "./dom.js";
 import { api, streamCampaignAnswer } from "./api.js";
 import { renderAnswer, renderCitations } from "./render.js";
+import { openReviewFor } from "./review.js";
 
 let campaigns = [];
 let campaignID = null; // { id, my_role }
@@ -24,6 +25,7 @@ export function initCampaignChat() {
 	$("cchat-composer").addEventListener("submit", onSubmit);
 	$("cchat-stop").addEventListener("click", stopStreaming);
 	$("cchat-history").addEventListener("click", onHistoryClick);
+	$("cchat-transcript").addEventListener("click", onCommandStripClick);
 	$("cchat-go-campaign").addEventListener("click", () => {
 		closeCampaignChat();
 		document.getElementById("rail-campaign").click();
@@ -211,11 +213,59 @@ function sageMessage(m, meta) {
 	renderAnswer(prose, m.content || "", "dnd");
 	wrap.append(el("div", { class: "cchat-mark", text: "the Grimoire" }), prose);
 
-	const record = renderRecord(camp);
-	if (record) wrap.append(record);
+	// A command turn (MAD-363): the server routed a slash command to the
+	// command engine and the payload rides in the meta / campaign column.
+	// The candidates render as chips; a staged batch gets the door into
+	// the review queue.
+	const command = (meta && meta.command) || commandFromPayload(camp);
+	if (command) {
+		const strip = renderCommandStrip(command);
+		if (strip) wrap.append(strip);
+	} else {
+		const record = renderRecord(camp);
+		if (record) wrap.append(record);
+	}
 	const cites = renderCitations(sources, null, entities, unresolved, "dnd");
 	if (cites) wrap.append(cites);
 	return wrap;
+}
+
+// commandFromPayload recognizes a persisted command turn's payload (the
+// campaign column carries the engine's result JSON).
+function commandFromPayload(camp) {
+	if (camp && typeof camp === "object" && typeof camp.kind === "string" && typeof camp.message === "string") {
+		return camp;
+	}
+	return null;
+}
+
+// renderCommandStrip draws a command result's affordances: the staged
+// batch's items with a door into the review queue, or the question's
+// candidates as one-click names that fill the composer.
+function renderCommandStrip(command) {
+	const strip = el("div", { class: "citations cchat-cites cchat-command" });
+	strip.append(el("span", { class: "citations-label", text: "Command:" }));
+	if (command.kind === "question" && command.question && (command.question.candidates || []).length) {
+		for (const c of command.question.candidates) {
+			const label = c.kind ? `${c.name} (${c.kind})` : c.name;
+			const chip = el("button", { class: "chip", text: label, attrs: { type: "button", "data-cmd-name": c.name } });
+			if (c.note) chip.title = c.note;
+			strip.append(chip);
+		}
+		return strip;
+	}
+	if (command.kind === "batch" && command.batch) {
+		for (const it of (command.batch.items || []).slice(0, 6)) {
+			strip.append(el("span", { class: "chip", text: it.subject || it.kind }));
+		}
+		strip.append(el("button", {
+			class: "chip is-review",
+			text: "review the proposal →",
+			attrs: { type: "button", "data-cmd-review": command.batch.id },
+		}));
+		return strip;
+	}
+	return null;
 }
 
 function parseCampaignPayload(raw) {
@@ -331,6 +381,23 @@ function stopStreaming() {
 	if (abort) abort.abort();
 }
 
+// onCommandStripClick handles a command result's affordances: the door
+// into the review queue, and the candidate chips that drop a name into
+// the composer for the next command.
+function onCommandStripClick(e) {
+	const review = e.target.closest("[data-cmd-review]");
+	if (review) {
+		openReviewFor(campaignID);
+		return;
+	}
+	const name = e.target.closest("[data-cmd-name]");
+	if (name) {
+		const input = $("cchat-input");
+		input.value = (input.value ? input.value.replace(/\s+$/, "") + " " : "") + name.dataset.cmdName;
+		input.focus();
+	}
+}
+
 function scrollTranscript() {
 	const box = $("cchat-transcript");
 	box.scrollTop = box.scrollHeight;
@@ -348,6 +415,7 @@ function renderMeta(message, warn) {
 function renderPerspective(perspective) {
 	if (perspective === "dm") {
 		renderMeta("DM Grimoire — the whole record, secrets included.");
+		$("cchat-input").placeholder = "Ask anything — or /command the world (“/create an npc called Vess”, “/undo”)…";
 	} else if (perspective === "party") {
 		renderMeta("Player Grimoire — what the party has discovered.");
 	} else if (perspective) {

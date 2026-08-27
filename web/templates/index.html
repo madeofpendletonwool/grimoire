@@ -388,9 +388,20 @@
 					<select id="camp-select" aria-label="Campaign"><option value="">No campaigns yet…</option></select>
 					<button type="button" class="enc-btn" id="camp-new-toggle" aria-expanded="false" aria-controls="camp-new-form">New</button>
 				</div>
-				<p class="study-meta" id="campaign-meta"></p>
-				<button type="button" class="icon-btn" id="campaign-close" aria-label="Leave the campaign" title="Back to chat" data-gi="close"></button>
+			<p class="study-meta" id="campaign-meta"></p>
+			<button type="button" class="icon-btn" id="campaign-close" aria-label="Leave the campaign" title="Back to chat" data-gi="close"></button>
 			</header>
+
+			<!-- The command line (MAD-363): the DM's plain-English commands
+			     over the campaign database — every mutation staged behind the
+			     review gate. DM-only; the server refuses every other scope. -->
+			<form class="camp-cmd" id="camp-cmd-form" autocomplete="off" hidden>
+				<input id="camp-cmd-input" class="enc-field" type="text"
+					placeholder="Command the world — “create a level 5 necromancer called Vess who serves the Duke”, “put him in Blackwater”, “undo”…"
+					aria-label="Campaign command">
+				<button type="submit" class="enc-btn">Run</button>
+			</form>
+			<div class="camp-cmd-result" id="camp-cmd-result" hidden></div>
 
 			<div class="camp-body" id="camp-body">
 				<!-- The world, one entity at a time. Filter by kind, search the

@@ -444,6 +444,21 @@ export const api = {
 			body: JSON.stringify(body),
 		}).then(json),
 
+	// The natural-language command interface (MAD-363): text in; a proposal
+	// batch, a clarifying question with its candidates, a plain refusal, or
+	// a spine write out. DM-only. The campaign chat's slash commands and the
+	// campaign view's command bar are the two surfaces onto this endpoint.
+	campaignCommand: (campaignID, text) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/command`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ text }),
+		}).then(json),
+
+	campaignCommandLog: (campaignID, limit) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/command/log` +
+			(limit ? `?limit=${limit}` : "")).then(json),
+
 	sessionExportURL: (campaignID, sessionID) =>
 		`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/export`,
 

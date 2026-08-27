@@ -276,6 +276,13 @@ func (s *Server) Handler() http.Handler {
 	// as a proposal batch. DM-only, gated on the model key.
 	mux.HandleFunc("POST /api/campaigns/{id}/design/plan", s.handleCampaignPlan)
 	mux.HandleFunc("POST /api/campaigns/{id}/design/scene", s.handleCampaignScene)
+	// The natural-language command interface (MAD-363): text in; a proposal
+	// batch, a clarifying question with its candidates, a plain refusal, or
+	// a spine write out. DM-only. The DM Grimoire chat routes slash-prefixed
+	// messages here, and the campaign view's command bar is the second
+	// surface onto the same endpoint.
+	mux.HandleFunc("POST /api/campaigns/{id}/command", s.handleCampaignCommand)
+	mux.HandleFunc("GET /api/campaigns/{id}/command/log", s.handleCampaignCommandLog)
 	// NPC simulation (MAD-313): structured agent fields on npc entities and
 	// the "ask as this NPC" endpoint. DM-only; the record it assembles is
 	// scope-filtered at npc:<id> in SQL.
