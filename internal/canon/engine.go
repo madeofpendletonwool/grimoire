@@ -727,6 +727,17 @@ func checkUnreachableSecret(snap *Snapshot) []campaign.Finding {
 			granting[a.FactID] = true
 		}
 	}
+	// A secret placed in a scene is on a clue path: the scene is where it
+	// can surface (MAD-360 — planning a secret into a scene is what makes
+	// it reachable, not a parallel notion of one).
+	planned := map[string]bool{}
+	if snap.Spine != nil {
+		for i := range snap.Spine.Scenes {
+			for _, sec := range snap.Spine.Scenes[i].Secrets {
+				planned[sec.FactID] = true
+			}
+		}
+	}
 	var out []campaign.Finding
 	for _, f := range snap.Facts {
 		if f.Visibility != campaign.VisibilitySecret || f.SupersededBy != "" {
@@ -735,7 +746,7 @@ func checkUnreachableSecret(snap *Snapshot) []campaign.Finding {
 		if f.Confidence != campaign.ConfidenceCanon && f.Confidence != campaign.ConfidenceDerived {
 			continue
 		}
-		if anyRow[f.ID] || granting[f.ID] {
+		if anyRow[f.ID] || granting[f.ID] || planned[f.ID] {
 			continue
 		}
 		out = append(out, campaign.Finding{
