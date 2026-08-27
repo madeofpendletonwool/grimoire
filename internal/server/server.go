@@ -270,6 +270,12 @@ func (s *Server) Handler() http.Handler {
 	// proposal batch plus the spine's acts and session plans. DM-only, and
 	// gated on the model key like every generator surface.
 	mux.HandleFunc("POST /api/campaigns/{id}/design/skeleton", s.handleCampaignSkeleton)
+	// The story planner and scene designer (MAD-362): plan the next session
+	// or a whole act forward from the campaign as it stands, or design one
+	// scene. Scenes land in the spine; the promised awareness changes stage
+	// as a proposal batch. DM-only, gated on the model key.
+	mux.HandleFunc("POST /api/campaigns/{id}/design/plan", s.handleCampaignPlan)
+	mux.HandleFunc("POST /api/campaigns/{id}/design/scene", s.handleCampaignScene)
 	// NPC simulation (MAD-313): structured agent fields on npc entities and
 	// the "ask as this NPC" endpoint. DM-only; the record it assembles is
 	// scope-filtered at npc:<id> in SQL.
