@@ -2721,6 +2721,30 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 }
 .camp-picker select:focus { outline: none; border-bottom-color: var(--gold); }
 
+/* The command line (MAD-363): the DM's plain-English commands over the
+   campaign database, staged behind the review gate. Sits under the header
+   on the same measure; the result strip carries the message, the staged
+   items, and the door into the review queue. */
+.camp-cmd {
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto var(--sp-3);
+	display: flex;
+	gap: var(--sp-2);
+}
+.camp-cmd .enc-field { flex: 1; }
+.camp-cmd-result {
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto var(--sp-4);
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	align-items: flex-start;
+}
+.camp-cmd-message { margin: 0; color: var(--parchment); }
+.camp-cmd-items { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.cchat-command .chip { cursor: pointer; }
+.cchat-command .chip.is-review { color: var(--accent-deep); font-weight: 600; }
+
 .camp-body {
 	max-width: var(--measure-wide, 72rem);
 	margin: 0 auto;
