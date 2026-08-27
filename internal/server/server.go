@@ -283,6 +283,13 @@ func (s *Server) Handler() http.Handler {
 	// surface onto the same endpoint.
 	mux.HandleFunc("POST /api/campaigns/{id}/command", s.handleCampaignCommand)
 	mux.HandleFunc("GET /api/campaigns/{id}/command/log", s.handleCampaignCommandLog)
+	// One-click session prep (MAD-364): the five most plausible
+	// next-session directions scored from the campaign's own state, and the
+	// build that turns the chosen one into a ready-to-run session. DM-only.
+	// Not gated on the model key: the scoring and the offline build are
+	// deterministic — only the prose pitches need a model.
+	mux.HandleFunc("POST /api/campaigns/{id}/prep/directions", s.handlePrepDirections)
+	mux.HandleFunc("POST /api/campaigns/{id}/prep/build", s.handlePrepBuild)
 	// NPC simulation (MAD-313): structured agent fields on npc entities and
 	// the "ask as this NPC" endpoint. DM-only; the record it assembles is
 	// scope-filtered at npc:<id> in SQL.
