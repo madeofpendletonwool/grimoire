@@ -110,3 +110,6 @@ nav:
   - Campaign OS:
       - Data Model: campaign/model.md
       - Epistemics: campaign/epistemics.md
+  - Table Play:
+      - Data Model: table/model.md
+      - Interaction: table/interaction.md

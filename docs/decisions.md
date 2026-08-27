@@ -344,3 +344,225 @@ Standing acceptance criteria for every issue under MAD-301:
 CI needs no changes. `.github/workflows/ci.yml` already runs `gofmt`, `go vet`,
 `go build` and `go test -race -count=1 ./...` on every push and pull request,
 which covers all of the above.
+
+---
+
+## ADR 9 — The event log is the only writer; state is a fold
+
+**Status:** accepted · **Date:** 2026-08-27 · **Issue:** MAD-322
+
+### Context
+
+Four players, one game, several screens, and a product constraint that
+decides everything: correction must be cheaper than manual entry. The
+obvious implementations — shared mutable state with locking, or per-client
+state with a sync protocol, or undo as compensating transactions — each make
+correction an engineered feature instead of a natural operation.
+
+One naming note while we are here: ADR 7's "`internal/table` is never
+created" was about MAD-286's D&D session tracker, folded into the session
+layer. The MTG engine package (MAD-323) takes that name for something else;
+this entry records that the reuse is deliberate, not a violation.
+
+### Decision
+
+The game state model is event-sourced with a single writer:
+
+- `apply(state, action) → ([]Event, error)` is a **pure function**. No I/O,
+  no clock, no model, no randomness that is not passed in.
+- Events are appended to `mtg_events` with **monotonic per-game ordinals**,
+  assigned by one writer in one transaction. Between rewinds the log is
+  append-only.
+- **State is a pure fold over the log** — deterministic, total, and **never
+  stored as truth**. Nothing else mutates state; there is nothing else to
+  mutate.
+- **Undo and amend are truncate-and-refold.** Rewind to *N* deletes events
+  after *N* and re-folds. No compensating transactions exist anywhere.
+
+### Why
+
+Everything the plan asks for falls out of this one shape: undo is free,
+replay and post-game analysis are viewers over data Stage 2 already writes,
+the reducer is exhaustively unit-testable, and multiplayer is log
+replication — append-only ordinals over SSE, no conflict resolution, no
+CRDT, because a single writer assigns ordinals.
+
+### Consequences
+
+- The SSE contract is "replay from the last ordinal you saw"; contiguity of
+  ordinals per game is an invariant, and a gap is corruption.
+- A rewind is announced on the stream as a control frame so attached clients
+  re-fold; no client ever folds a log that no longer exists.
+- `mtg_rulings` rows survive a rewind — human records are never clobbered by
+  a truncate, the same semantics as a decided canon review.
+- Board rendering, traces ("why is this 7/7?"), and per-seat views are all
+  folds. A materialized projection, if ever added, is a cache with the fold
+  as its contract — never a second writer.
+
+---
+
+## ADR 10 — The engine is the authority; the LLM is a parser
+
+**Status:** accepted · **Date:** 2026-08-27 · **Issue:** MAD-322, built across MAD-330/331
+
+### Context
+
+The table surface accepts natural language: "attack Sarah for six", "make
+two Treasures", "-3". The tempting architecture is a model with the game in
+its context, updating state as it chats.
+
+### Decision
+
+The model's only job is **natural language → a candidate typed Action**. It
+never writes state, and it never decides a rules question unaided. The
+deterministic engine validates and applies every Action; rules answers are
+grounded through `internal/resolver` against the live board, citing rules
+and card text, and say plainly where they cannot verify something.
+
+Grammar before model, specifically: a hand-written deterministic parser
+(MAD-330) covers the phrasings tables actually use — instant, free, offline,
+consistent — and the LLM (MAD-331) is the fallback for what the grammar
+returns no-parse, never the front door.
+
+### Why
+
+A model writing state produces a plausible board, and plausibility is the
+failure mode: it is trusted, built on, and wrong silently. This is the
+campaign's "stage proposals, never write-then-downgrade" (ADR 3) in a
+different costume — the parser *proposes* a typed Action, the engine
+*disposes*. Consistency is the property the user flagged as the catch, and
+consistency is exactly what a deterministic grammar has and a model does not.
+
+### Consequences
+
+- One Action type from every source: grammar, model fallback, and the
+  manual board UI produce the same values and walk the same reducer.
+- Parse output is **Action plus confidence, never applied state**; the
+  confidence feeds the confirmation ladder (`auto` / `confirm` / `ask`), and
+  a wrong parse is designed to be impossible — no-parse is returned cleanly
+  rather than guessed.
+- Resolved names are cached per game (`mtg_name_resolutions`) so the same
+  mumble is never re-inferred and never re-billed.
+
+---
+
+## ADR 11 — Card behaviour is declared, never simulated
+
+**Status:** accepted · **Date:** 2026-08-27 · **Issue:** MAD-322
+
+### Context
+
+Magic has roughly 28,000 unique cards with effectively arbitrary text. The
+tempting feature is reading oracle text and simulating what a card does.
+
+### Decision
+
+The engine enforces **structure fixed by the Comprehensive Rules** — zones,
+turn and phase order, priority, state-based actions, the stack, combat
+arithmetic, commander rules — none of which depends on card text. Card-
+specific effects are **recorded as declared or confirmed deltas**: a player
+says what happened ("Anthem gives my creatures +1/+1"), or the model
+proposes it once and a human confirms, and the mapping is cached by card
+name so the second occurrence is automatic. Oracle text is never parsed into
+simulated behaviour.
+
+### Why
+
+The only complete engines in existence — MTGO, Arena, Forge, XMage — are
+per-card scripted implementations representing thousands of
+contributor-years; Forge and XMage each carry a Java class per card. That is
+the actual cost of simulation, and it cannot be cut with a model: a model
+that is 97% right about a card's behaviour produces a board state that is
+**silently wrong, which is worse than no board state**, because it is
+trusted and built upon. A declared delta is honest about where the knowledge
+came from — a human said so, at this ordinal, correctable in two taps.
+
+### Consequences
+
+- The engine's promises are exactly the structural ones, all fully
+  deterministic and unit-testable.
+- Modifiers are attached (source + layer + duration + delta), never derived
+  from card text; the trigger registry fires only on structural events the
+  engine already emits.
+- Rules questions are answered from the real board with citations — an
+  assistant, not a Comprehensive Rules oracle — and the UI keeps saying so.
+- Combo discovery, when it comes (MAD-340), works over registered shapes and
+  declared effects, and says so rather than implying completeness.
+
+---
+
+## ADR 12 — Decklist-scoped identity before global
+
+**Status:** accepted · **Date:** 2026-08-27 · **Issue:** MAD-322, built in MAD-329
+
+### Context
+
+"I'll play my Rhystic" has to become *Rhystic Study* before it can be an
+Action. Matching a mumbled name against all of Magic is error-prone.
+
+### Decision
+
+Names resolve against the **loaded decks first** and `carddb` second:
+exact match in the speaking seat's deck → fuzzy match in that deck → any
+attached deck → the global card database → unresolved. Decks are strongly
+encouraged but optional — a game without them works, identification is just
+worse, and the UI says so rather than blocking setup.
+
+### Why
+
+Matching against ~400 known cards is near-exact; matching against ~28,000 is
+not. Loading decklists collapses the identification problem for one paste
+per player per game — the highest-value-per-effort decision in the plan —
+and `internal/deck.ParseDecklist` plus the existing credibility-gated fuzzy
+matchers already exist; no second scoring scheme is invented.
+
+### Consequences
+
+- Library **composition** becomes known when a deck is attached; **order
+  never does**, and the engine refuses order-dependent questions out loud.
+- Resolution confidence feeds the confirmation ladder — a global fuzzy hit
+  lands on `confirm` or `ask`, an exact deck hit on `auto`.
+- Resolutions cache per game (`mtg_name_resolutions`): the same mumble is
+  never re-inferred, never re-billed, and survives rewind.
+
+---
+
+## ADR 13 — Hidden zones are authorization in SQL, not instruction
+
+**Status:** accepted · **Date:** 2026-08-27 · **Issue:** MAD-322, enforced in MAD-337
+
+### Context
+
+A Magic game has hidden zones, and this is precisely the campaign side's
+perspective problem (ADR 2) in a different costume: hands are opaque to
+other seats, private notes are private, and the tempting implementation is
+telling the model what to withhold.
+
+### Decision
+
+Event rows carry `visibility` — `public`, or `seat` with a `visible_seat` —
+and **a seat's view of the log is a WHERE clause**. The per-seat stream is
+selected, never post-filtered, never entrusted to a prompt. A seat-visible
+row is invisible to other seats as a row; its public consequences (a hand
+count moving) are separate public events.
+
+### Why
+
+Prompt-level secrecy is a request, not a mechanism — the player Grimoire must
+be **physically incapable** of retrieving a card another seat has not
+revealed. The game's owner is entitled to everything (the DM analog, and the
+common solo-tracker case); every other account sees the public stream plus
+its own seat's rows.
+
+### Consequences
+
+- The engine's fold includes seat-visible rows — it must, to serve a seat
+  its own view — exactly as the campaign store holds secrets no player
+  retrieval can reach. The gate is the query.
+- The reflection leak test pattern (MAD-304) is the hard gate here: walk the
+  response types and assert no hidden-zone field can reach a seat not
+  entitled to it (MAD-337), plus a `hidden_zone_leak` deterministic check —
+  a join, not a model call, so it is free.
+- Identity-bearing events (`CARD_KNOWN`, `LOOK`) choose their visibility at
+  submission: spoken at the table is public, typed on your own screen is
+  seat-visible.
