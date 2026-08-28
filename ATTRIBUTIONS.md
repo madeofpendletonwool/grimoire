@@ -27,6 +27,23 @@ pack.* Grimoire ships adaptations, not the pack: `panel-stone.png`,
 gold, and the book cover is scaled 2× so its corner filigree survives at
 interface size. The recolour maps live in `scripts/build-assets.py`.
 
+### Pixel RPG UI Pack
+**itch.io** — the archive ships art and source files only, with no licence
+file or author name inside it; record the pack's itch.io page here when its
+source is to hand.
+
+The window manager's chrome: the plate that every tabbed container's tabs and
+every window's title bar are cut from. Those were the two things the older art
+had nothing drawn for — tabs borrowed the chip sprite meant for inline pills,
+and title bars used the 2px progress bar.
+
+Free for commercial use. Grimoire ships adaptations, not the pack: one 46×12
+plate is cropped from `Ui.png` at (747, 372) and recoloured onto each theme's
+stone ladder as `tab.png`, `tab-active.png` and `titleplate.png`. The plate is
+already built as concentric rings — border, a dark inset line, then fill —
+which is what lets it slice cleanly at 3 on all four sides. The crop and the
+recolour maps live in `scripts/build-assets.py`.
+
 ### Shikashi's Fantasy Icons Pack v2
 **Shikashi** · <https://cheekyinkling.itch.io/shikashis-fantasy-icons-pack>
 

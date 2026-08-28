@@ -11,11 +11,10 @@ export const state = {
 	chats: [],         // sidebar list
 	meta: null,        // /api/meta payload
 	streaming: false,
-	studyOpen: false,  // whether the study surface is showing over the transcript
-	readerOpen: false,    // whether the reading surface is showing over the transcript
-	encounterOpen: false, // whether the encounter builder is showing over the transcript
-	deckOpen: false, // whether the deck builder is showing over the transcript
-	sessionsOpen: false, // whether the sessions surface is showing over the transcript
+	// There were five "is this surface open?" booleans here, for nine
+	// surfaces, kept in step by hand with a `hidden` attribute and a class on
+	// <main>. The window manager's tree is the single answer now — ask
+	// wm.openTools() or wm.isOpen(id).
 };
 
 const KEY = "grimoire.corpus";

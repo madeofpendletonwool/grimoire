@@ -7,7 +7,7 @@
 
 import { $, el, esc, clear, isNarrow } from "./dom.js";
 import { api } from "./api.js";
-import { openReviewFor } from "./review.js";
+import { reviewFor } from "./review.js";
 
 const KINDS = ["pc", "npc", "faction", "location", "item", "deity", "organization", "creature", "concept"];
 
@@ -23,9 +23,7 @@ let clockInfo = null; // the last GET /clock body (date, weather, strip, due)
 let scheduleEntries = []; // the schedule at the caller's scope
 let editingScheduleID = null; // the entry whose inline editor is open
 
-export function initCampaign() {
-	$("rail-campaign").addEventListener("click", openCampaign);
-	$("campaign-close").addEventListener("click", closeCampaign);
+function wire() {
 	// The entity creator's kind select is static; fill it once.
 	const kindSelect = $("camp-entity-kind");
 	for (const k of KINDS) kindSelect.append(el("option", { text: k, attrs: { value: k } }));
@@ -90,20 +88,14 @@ export function initCampaign() {
 	});
 }
 
-export async function openCampaign() {
-	if (isNarrow()) $("app").classList.add("rail-hidden");
-	$("campaign-view").hidden = false;
-	$("main").classList.add("is-campaiging");
+async function openCampaign() {
 	$("camp-new-toggle").setAttribute("aria-expanded", "false");
 	await loadCampaigns();
 }
 
-export function closeCampaign() {
-	$("campaign-view").hidden = true;
-	$("main").classList.remove("is-campaiging");
+function closeCampaign() {
 	current = null;
 	selected = null;
-	$("rail-campaign").focus();
 }
 
 const isDM = () => current && (current.my_role === "dm" || current.my_role === "keeper");
@@ -254,7 +246,7 @@ async function onSkeletonDesign(e) {
 	$("camp-skeleton-premise").value = "";
 	$("camp-new-toggle").setAttribute("aria-expanded", "false");
 	closeCampaign();
-	await openReviewFor(campaignID);
+	await reviewFor(campaignID);
 }
 
 /* ---------- the command line (MAD-363) ---------- */
@@ -323,7 +315,7 @@ function renderCommandResult(box, cmd) {
 async function onCommandResultClick(e) {
 	const open = e.target.closest("[data-open-review]");
 	if (open) {
-		openReviewFor(current.id);
+		reviewFor(current.id);
 		return;
 	}
 	const name = e.target.closest("[data-name]");
@@ -1310,3 +1302,25 @@ async function onFactionPlanStatusChange(e) {
 		renderMeta(err.message, true);
 	}
 }
+
+/* ---------- the window-manager contract ---------- */
+
+// mount() adopts the surface that already exists in index.html rather than
+// building one, which is what made migrating nine surfaces tractable: every
+// $("camp-entities") lookup inside this module keeps working untouched. The
+// cost is one window per tool; see the note on `instances` in wm/registry.js.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("campaign-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		openCampaign();
+		return { destroy: closeCampaign };
+	},
+};

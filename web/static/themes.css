@@ -27,6 +27,9 @@ html[data-scene="cave"] {
 	--frame-field: url("/static/assets/ui/cave/field.png");
 	--frame-field-focus: url("/static/assets/ui/cave/field-focus.png");
 	--frame-bar: url("/static/assets/ui/cave/bar.png");
+	--frame-tab: url("/static/assets/ui/cave/tab.png");
+	--frame-tab-active: url("/static/assets/ui/cave/tab-active.png");
+	--frame-titleplate: url("/static/assets/ui/cave/titleplate.png");
 }
 
 html[data-scene="deadforest"] {
@@ -44,6 +47,9 @@ html[data-scene="deadforest"] {
 	--frame-field: url("/static/assets/ui/deadforest/field.png");
 	--frame-field-focus: url("/static/assets/ui/deadforest/field-focus.png");
 	--frame-bar: url("/static/assets/ui/deadforest/bar.png");
+	--frame-tab: url("/static/assets/ui/deadforest/tab.png");
+	--frame-tab-active: url("/static/assets/ui/deadforest/tab-active.png");
+	--frame-titleplate: url("/static/assets/ui/deadforest/titleplate.png");
 }
 
 html[data-scene="plains"] {
@@ -61,6 +67,9 @@ html[data-scene="plains"] {
 	--frame-field: url("/static/assets/ui/plains/field.png");
 	--frame-field-focus: url("/static/assets/ui/plains/field-focus.png");
 	--frame-bar: url("/static/assets/ui/plains/bar.png");
+	--frame-tab: url("/static/assets/ui/plains/tab.png");
+	--frame-tab-active: url("/static/assets/ui/plains/tab-active.png");
+	--frame-titleplate: url("/static/assets/ui/plains/titleplate.png");
 }
 
 html[data-scene="snowy"] {
@@ -78,4 +87,7 @@ html[data-scene="snowy"] {
 	--frame-field: url("/static/assets/ui/snowy/field.png");
 	--frame-field-focus: url("/static/assets/ui/snowy/field-focus.png");
 	--frame-bar: url("/static/assets/ui/snowy/bar.png");
+	--frame-tab: url("/static/assets/ui/snowy/tab.png");
+	--frame-tab-active: url("/static/assets/ui/snowy/tab-active.png");
+	--frame-titleplate: url("/static/assets/ui/snowy/titleplate.png");
 }

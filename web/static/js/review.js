@@ -5,6 +5,7 @@
 // Dismiss. Accept is the only path that writes canon, and the server refuses
 // every non-DM caller before this module even renders.
 
+import { openTool, isOpen } from "./wm/wm.js";
 import { $, el, esc, clear, isNarrow } from "./dom.js";
 import { api } from "./api.js";
 
@@ -34,9 +35,7 @@ const SOURCE_LABEL = {
 	session_prep: "Session prep",
 };
 
-export function initReview() {
-	$("rail-review").addEventListener("click", openReview);
-	$("review-close").addEventListener("click", closeReview);
+function wire() {
 	$("review-campaign").addEventListener("change", (e) => {
 		campaignID = e.target.value || null;
 		loadQueue();
@@ -57,27 +56,18 @@ export function initReview() {
 	$("review-list").addEventListener("click", onListClick);
 }
 
-export async function openReview() {
-	if (isNarrow()) $("app").classList.add("rail-hidden");
-	$("review-view").hidden = false;
-	$("main").classList.add("is-sessioning");
+async function openReview() {
 	await loadCampaigns();
 }
 
 // openReviewFor opens the queue aimed at one campaign — the skeleton
 // generator's hand-off: the batch it staged is the review the DM owes.
 export async function openReviewFor(id) {
-	if (isNarrow()) $("app").classList.add("rail-hidden");
-	$("review-view").hidden = false;
-	$("main").classList.add("is-sessioning");
 	campaignID = id;
 	await loadCampaigns();
 }
 
-export function closeReview() {
-	$("review-view").hidden = true;
-	$("main").classList.remove("is-sessioning");
-	$("rail-review").focus();
+function closeReview() {
 }
 
 async function loadCampaigns() {
@@ -461,4 +451,47 @@ async function onModify(id, card) {
 	} catch (err) {
 		renderMeta(err.message, true);
 	}
+}
+
+/* ---------- the window-manager contract ---------- */
+
+// mount() adopts the surface that already exists in index.html rather than
+// building one, which is what made migrating nine surfaces tractable: every
+// $("review-list") lookup inside this module keeps working untouched. The
+// cost is one window per tool; see the note on `instances` in wm/registry.js.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("review-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		flushReview();
+		return { destroy: closeReview };
+	},
+};
+
+/**
+ * Open the review queue aimed at one campaign — the hand-off from the campaign
+ * graph and from Ask campaign after a batch of proposals is staged. Same
+ * parking trick as the reader: mount() consumes the pending campaign, so the
+ * queue is loaded once either way.
+ */
+let pendingReview = null;
+
+export function reviewFor(id) {
+	pendingReview = id;
+	const already = isOpen("review");
+	openTool("review");
+	if (already) flushReview();
+}
+
+function flushReview() {
+	const id = pendingReview;
+	pendingReview = null;
+	return id ? openReviewFor(id) : openReview();
 }

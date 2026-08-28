@@ -5,6 +5,7 @@
 // surface layered over the transcript, opened from the rail, so it does not
 // entangle the Ask/Resolve chat mode machinery.
 
+import { isOpen } from "./wm/wm.js";
 import { $, el, esc, clear, isNarrow } from "./dom.js";
 import { api } from "./api.js";
 import { gi } from "./icons.js";
@@ -36,9 +37,7 @@ let cursor = 0;
 let abortLoad = null;
 let topic = ""; // "" = corpus default deck
 
-export function initStudy() {
-	$("rail-study").addEventListener("click", () => openStudy());
-	$("study-close").addEventListener("click", closeStudy);
+function wire() {
 	// Grade + reveal are wired by delegation on the study body so the handlers
 	// survive re-renders without re-binding each card.
 	$("study-body").addEventListener("click", onStudyBodyClick);
@@ -46,7 +45,7 @@ export function initStudy() {
 	// study is open, so MTG <-> D&D swaps without leaving the surface.
 	document.querySelectorAll(".corpus-opt").forEach((btn) => {
 		btn.addEventListener("click", () => {
-			if (state.studyOpen) {
+			if (isOpen("study")) {
 				topic = ""; // each corpus lands on its default deck
 				loadSession(btn.dataset.corpus);
 			}
@@ -64,28 +63,22 @@ export function initStudy() {
 }
 
 /** Open the study surface for the active corpus and load a session. */
-export async function openStudy(corpus) {
-	state.studyOpen = true;
+async function openStudy(corpus) {
 	const c = corpus || activeCorpus();
 	// On a narrow screen the rail is an overlay, so the button that opened study
 	// would otherwise sit on top of it. Same move as opening a chat from history.
-	if (isNarrow()) $("app").classList.add("rail-hidden");
 	setChrome(c);
 	await loadSession(c);
 }
 
 /** Drop back to the transcript; a queued fetch is cancelled so it can't paint a
  *  half-loaded session over the chat after the reader left. */
-export function closeStudy() {
+function closeStudy() {
 	if (abortLoad) abortLoad.abort();
-	state.studyOpen = false;
 	queue = [];
 	cursor = 0;
-	$("study-view").hidden = true;
-	$("main").classList.remove("is-studying");
 	// The rail button is what opened this, so it is where focus belongs — the
 	// close button it was on is now hidden.
-	$("rail-study").focus();
 }
 
 async function loadSession(corpus) {
@@ -281,11 +274,9 @@ async function gradeCard(slug) {
 /* ---------- Chrome + helpers ---------- */
 
 function setChrome(corpus) {
-	$("study-view").hidden = false;
 	// Layer the study surface over the transcript rather than unmounting it, so
 	// returning to chat restores the open conversation exactly. A state class on
 	// the column, not inline display, so style.css keeps deciding what shows.
-	$("main").classList.add("is-studying");
 	renderMeta(corpus, null);
 }
 
@@ -346,3 +337,25 @@ function renderFace(card, text) {
 	const html = esc(text || "");
 	return card.corpus === "mtg" ? manaInEscaped(html) : html;
 }
+
+/* ---------- the window-manager contract ---------- */
+
+// mount() adopts the surface that already exists in index.html rather than
+// building one, which is what made migrating nine surfaces tractable: every
+// $("study-card") lookup inside this module keeps working untouched. The
+// cost is one window per tool; see the note on `instances` in wm/registry.js.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("study-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		openStudy();
+		return { destroy: closeStudy };
+	},
+};

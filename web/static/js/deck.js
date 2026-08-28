@@ -22,9 +22,7 @@ let draftAbort = null;
 let chatTurns = []; // the conversation about this deck: [{ role, content }]
 let chatAbort = null;
 
-export function initDeck() {
-	$("rail-deck").addEventListener("click", openDeck);
-	$("deck-close").addEventListener("click", closeDeck);
+function wire() {
 
 	$("deck-idea-form").addEventListener("submit", onPropose);
 	$("deck-commanders").addEventListener("click", (e) => {
@@ -44,23 +42,15 @@ export function initDeck() {
 }
 
 /** Open the builder surface. */
-export function openDeck() {
-	state.deckOpen = true;
-	if (isNarrow()) $("app").classList.add("rail-hidden");
-	$("deck-view").hidden = false;
-	$("main").classList.add("is-decking");
+function openDeck() {
 	loadSavedList();
 	$("deck-idea").focus();
 }
 
 /** Drop back to the transcript. */
-export function closeDeck() {
-	state.deckOpen = false;
+function closeDeck() {
 	if (draftAbort) draftAbort.abort();
 	if (chatAbort) chatAbort.abort();
-	$("deck-view").hidden = true;
-	$("main").classList.remove("is-decking");
-	$("rail-deck").focus();
 }
 
 /* ---------- Propose ---------- */
@@ -497,3 +487,25 @@ function onCopy() {
 		() => { $("deck-meta").textContent = "Decklist copied."; },
 		() => { $("deck-meta").textContent = "Copy failed — select the list manually."; });
 }
+
+/* ---------- the window-manager contract ---------- */
+
+// mount() adopts the surface that already exists in index.html rather than
+// building one, which is what made migrating nine surfaces tractable: every
+// $("deck-idea") lookup inside this module keeps working untouched. The
+// cost is one window per tool; see the note on `instances` in wm/registry.js.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("deck-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		openDeck();
+		return { destroy: closeDeck };
+	},
+};

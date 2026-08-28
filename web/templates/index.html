@@ -9,6 +9,7 @@
 	<link rel="stylesheet" href="/static/mana.css">
 	<link rel="stylesheet" href="/static/keyrune.css">
 	<link rel="stylesheet" href="/static/style.css">
+	<link rel="stylesheet" href="/static/wm.css">
 	<link rel="stylesheet" href="/static/pixel.css">
 	<link rel="stylesheet" href="/static/themes.css">
 	<link rel="icon" type="image/png" href="/static/assets/favicon-32.png">
@@ -28,69 +29,8 @@
 				<button type="button" class="icon-btn rail-collapse" id="rail-collapse" aria-label="Hide sidebar" title="Hide sidebar" data-gi="collapse"></button>
 			</div>
 
-			<button type="button" class="new-chat" id="new-chat">
-				<span data-ico="scroll"></span> New chat
-			</button>
-
-		<!-- A destination, not a foot utility — so it sits with New chat, between
-		     two other 32px sprites rather than among the vector-icon rows below. -->
-		<button type="button" class="rail-action rail-study" id="rail-study">
-			<span data-ico="card"></span> Study
-		</button>
-
-		<button type="button" class="rail-action rail-reader" id="rail-reader">
-			<span data-ico="openBook"></span> Read
-		</button>
-
-		<!-- The D&D encounter builder: party + monsters + a live DMG difficulty
-		     verdict, saved per user. A sibling destination to Study. -->
-		<button type="button" class="rail-action rail-encounter" id="rail-encounter">
-			<span data-ico="dice"></span> Encounter
-		</button>
-
-		<!-- The campaign session layer: transcripts in, a chronological log
-		     of what was ruled and discovered, spans that resolve back to the
-		     actual words. A sibling destination to Study and Encounter. -->
-		<button type="button" class="rail-action rail-sessions" id="rail-sessions">
-			<span data-ico="hourglass"></span> Sessions
-		</button>
-
-		<!-- The narrative spine (MAD-360): acts as columns, scenes as cards,
-		     cast and secrets as chips. The DM's plan, built by hand — no
-		     model, no key. -->
-		<button type="button" class="rail-action rail-planner" id="rail-planner">
-			<span data-ico="scrollOpen"></span> Planner
-		</button>
-
-		<!-- The canon engine's human gate: the review queue where proposed
-		     facts, events and discoveries become canon only when the DM says
-		     so. The post-session ritual. -->
-		<button type="button" class="rail-action rail-review" id="rail-review">
-			<span data-ico="shield"></span> Review
-		</button>
-
-			<!-- The MTG deck builder: describe an idea, pick a commander, draft
-		     the 99 with the model, iterate, analyze a pasted list. A sibling
-		     destination to Study and Encounter. -->
-		<button type="button" class="rail-action rail-deck" id="rail-deck">
-			<span data-ico="chest"></span> Deck
-		</button>
-
-		<!-- The campaign world: the persistent graph of entities, facts,
-		     relationships and the timeline, browsed by DM and player alike —
-		     each at their own scope. -->
-		<button type="button" class="rail-action rail-campaign" id="rail-campaign">
-			<span data-ico="map"></span> Campaign
-		</button>
-
-		<!-- The campaign chat (MAD-311): the DM Grimoire and the Player
-		     Grimoire — one campaign, two epistemic realities. The server
-		     decides what each thread may know, in SQL; this is just the
-		     asking. -->
-		<button type="button" class="rail-action rail-cchat" id="rail-cchat">
-			<span data-ico="runestone"></span> Ask campaign
-		</button>
-
+		<!-- The game picker leads the rail: it scopes the destinations below,
+		     so it is chosen first. -->
 		<div class="corpus-picker" role="radiogroup" aria-label="Rules corpus">
 				<button type="button" class="corpus-opt is-active" data-corpus="mtg" role="radio" aria-checked="true">
 					<span data-ico="orbBlue"></span> Magic
@@ -99,6 +39,17 @@
 					<span data-ico="swords"></span> D&amp;D
 				</button>
 			</div>
+
+			<button type="button" class="new-chat" id="new-chat">
+				<span data-ico="scroll"></span> New chat
+			</button>
+
+		<!-- Tools. Built from web/static/js/wm/registry.js and filtered by the
+		     active game, which is the whole of corpus separation now: this
+		     used to be nine hardcoded buttons plus a block of
+		     html[data-corpus] display:none rules in style.css, both of which
+		     had to be edited by hand for every new tool. -->
+		<nav class="rail-tools" id="rail-tools" aria-label="Tools"></nav>
 
 			<nav class="history" id="history" aria-label="Chat history"></nav>
 
@@ -124,59 +75,99 @@
 		<main class="main" id="main">
 			<header class="topbar">
 				<button type="button" class="icon-btn rail-open" id="rail-open" aria-label="Show sidebar" title="Show sidebar" data-gi="menu"></button>
-				<h1 class="conv-title" id="conv-title">New chat</h1>
-				<span class="corpus-chip" id="corpus-chip" title="This conversation's rule set"></span>
-				<div class="mode-toggle" id="mode-toggle" hidden role="radiogroup" aria-label="Mode">
-					<button type="button" class="mode-opt is-active" data-mode="ask" role="radio" aria-checked="true" title="Free Q&amp;A with the sage">
-						<span data-gi="ask"></span> Ask
-					</button>
-					<button type="button" class="mode-opt" data-mode="resolve" role="radio" aria-checked="false" title="Walk a board + spell sequence step by step">
-						<span data-gi="resolve"></span> Resolve
-					</button>
-				</div>
+				<!-- Workspaces ride the topbar: they scope the whole window, the
+				     way a desktop's workspace switcher does. -->
+				<div class="wm-strip" id="wm-strip" role="tablist" aria-label="Workspaces"></div>
 				<div class="topbar-actions">
 					<button type="button" class="icon-btn" id="topbar-search" aria-label="Search rules and cards" title="Search rules and cards" data-gi="search"></button>
-					<button type="button" class="icon-btn" id="topbar-rename" aria-label="Rename conversation" title="Rename conversation" data-gi="rename" hidden></button>
-					<button type="button" class="icon-btn danger" id="topbar-delete" aria-label="Delete conversation" title="Delete conversation" data-gi="delete" hidden></button>
+					<button type="button" class="icon-btn" id="wm-help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" data-gi="ask"></button>
 				</div>
 			</header>
 
-			<div class="transcript" id="transcript" tabindex="-1">
-				<section class="welcome" id="welcome">
-					<div class="welcome-sigil" data-ico="spellbook" data-ico-scale="3"></div>
-					<h2 class="welcome-title">Grimoire</h2>
-					<p class="welcome-sub" id="welcome-sub">Ask, and the tome shall answer.</p>
-					<div class="suggestions" id="suggestions"></div>
-				</section>
-				<div class="messages" id="messages"></div>
-			</div>
+			<!-- The tiling area. Windows are built by js/wm/wm.js from the
+			     workspace tree; the surfaces below are moved into them on
+			     mount and moved back out on close. -->
+			<div class="wm-root" id="wm-root"></div>
 
-		<!-- ---------- Study surface ---------- -->
+		<!-- ---------- Chat surface ----------
+		     A tool like the rest now: the transcript and the composer travel
+		     together into a window, rather than being the page everything
+		     else covered up. -->
+		</main>
+
+		<!-- ---------- Reference drawer ---------- -->
+		<aside class="drawer" id="drawer" aria-label="Reference" hidden>
+			<div class="drawer-head">
+				<h2 class="drawer-title" id="drawer-title"></h2>
+				<button type="button" class="icon-btn" id="drawer-close" aria-label="Close reference" data-gi="close"></button>
+			</div>
+			<div class="drawer-body" id="drawer-body"></div>
+		</aside>
+	</div>
+
+	<!-- ---------- Keyboard shortcuts (?) ----------
+	     Contents are generated from the keymap at boot, so a binding cannot
+	     be advertised here and not exist, or exist and go undocumented. -->
+	<div class="wm-sheet-layer" id="wm-sheet-layer" hidden>
+		<div class="wm-sheet-scrim" data-sheet-close></div>
+		<div class="wm-sheet f-stone" id="wm-sheet" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+			<div class="wm-sheet-head">
+				<h2>Keyboard</h2>
+				<button type="button" class="icon-btn" data-sheet-close aria-label="Close" data-gi="close"></button>
+			</div>
+			<div class="wm-sheet-body"></div>
+		</div>
+	</div>
+
+	<!-- ---------- Command palette ---------- -->
+	<div class="palette-layer" id="palette" hidden>
+		<div class="palette-scrim" data-palette-close></div>
+		<div class="palette-box" role="dialog" aria-modal="true" aria-label="Search rules and cards">
+			<div class="palette-inputwrap">
+				<span class="palette-icon" data-gi="search"></span>
+				<input type="text" id="palette-input" class="palette-input"
+					placeholder="Search rules, or a card name…"
+					aria-label="Search rules and cards" aria-controls="palette-results" autocomplete="off">
+				<kbd>Esc</kbd>
+			</div>
+			<div class="palette-results" id="palette-results" role="listbox" aria-label="Results"></div>
+			<div class="palette-foot">
+				<span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+				<span><kbd>↵</kbd> open</span>
+				<span id="palette-scope"></span>
+			</div>
+		</div>
+	</div>
+
+	<script type="module" src="/static/js/app.js"></script>
+
+	<!-- ---------- Surface stash ----------
+	     Every tool's markup lives here while its window is closed. The window
+	     manager moves a section into a window on mount and returns it here on
+	     close, so a tool keeps its DOM — and everything in it: a loaded board,
+	     a scroll position, a half-typed field — across being closed and
+	     reopened, and closing one window can never take another's markup with
+	     it. Hidden as a block; each section also carries its own `hidden`. -->
+	<div id="wm-stash" hidden aria-hidden="true">
 		<section class="study" id="study-view" hidden aria-label="Study">
 			<header class="study-head">
 				<h2 class="study-title" id="study-title">Study</h2>
 				<div class="study-decks" id="study-decks" role="tablist" aria-label="Deck"></div>
 				<p class="study-meta" id="study-meta"></p>
-				<button type="button" class="icon-btn" id="study-close" aria-label="Leave study" title="Back to chat" data-gi="close"></button>
 			</header>
 			<div class="study-body" id="study-body"></div>
 		</section>
-
-		<!-- ---------- Reading surface ---------- -->
 		<section class="reader" id="reader-view" hidden aria-label="Reading">
 			<header class="reader-head">
 				<h2 class="reader-title" id="reader-title">Read</h2>
 				<div class="reader-guides" id="reader-guides" role="tablist" aria-label="Book"></div>
 				<button type="button" class="icon-btn" id="reader-contents" aria-label="Toggle contents" title="Contents" data-gi="menu"></button>
-				<button type="button" class="icon-btn" id="reader-close" aria-label="Leave the book" title="Back to chat" data-gi="close"></button>
 			</header>
 			<div class="reader-body">
 				<nav class="reader-toc" id="reader-toc" aria-label="Contents"></nav>
 				<div class="reader-page" id="reader-page" tabindex="-1"></div>
 			</div>
 		</section>
-
-			<!-- ---------- Encounter builder surface ---------- -->
 			<section class="encounter" id="encounter-view" hidden aria-label="Encounter builder">
 				<header class="study-head">
 					<h2 class="study-title" id="encounter-title">Encounter</h2>
@@ -186,7 +177,6 @@
 						</select>
 					</div>
 					<p class="study-meta" id="encounter-meta"></p>
-					<button type="button" class="icon-btn" id="encounter-close" aria-label="Leave the builder" title="Back to chat" data-gi="close"></button>
 				</header>
 				<div class="enc-body">
 					<!-- The brief: everything the DM has to say, which is allowed to be
@@ -289,8 +279,6 @@
 					</div>
 				</div>
 			</section>
-
-			<!-- ---------- Deck builder surface ---------- -->
 		<section class="deckbuilder" id="deck-view" hidden aria-label="Deck builder">
 			<header class="study-head">
 				<h2 class="study-title" id="deck-title">Deck</h2>
@@ -300,7 +288,6 @@
 					</select>
 				</div>
 				<p class="study-meta" id="deck-meta"></p>
-				<button type="button" class="icon-btn" id="deck-close" aria-label="Leave the deck builder" title="Back to chat" data-gi="close"></button>
 			</header>
 			<div class="deck-body">
 				<div class="deck-col deck-col-idea">
@@ -379,8 +366,6 @@
 				</div>
 			</div>
 		</section>
-
-	<!-- ---------- Campaign surface ---------- -->
 	<section class="campaign" id="campaign-view" hidden aria-label="Campaign world">
 			<header class="study-head">
 				<h2 class="study-title" id="campaign-title">Campaign</h2>
@@ -389,7 +374,6 @@
 					<button type="button" class="enc-btn" id="camp-new-toggle" aria-expanded="false" aria-controls="camp-new-form">New</button>
 				</div>
 			<p class="study-meta" id="campaign-meta"></p>
-			<button type="button" class="icon-btn" id="campaign-close" aria-label="Leave the campaign" title="Back to chat" data-gi="close"></button>
 			</header>
 
 			<!-- The command line (MAD-363): the DM's plain-English commands
@@ -545,7 +529,7 @@
 				<div class="camp-panel camp-graph-panel">
 						<h3 class="enc-heading">The map</h3>
 						<div class="camp-graph-controls">
-							<div class="mode-toggle camp-hops" role="radiogroup" aria-label="Hops">
+							<div class="mode-toggle camp-hops" id="camp-hops" role="radiogroup" aria-label="Hops">
 								<button type="button" class="mode-opt is-active" data-hops="1" role="radio" aria-checked="true">1 hop</button>
 								<button type="button" class="mode-opt" data-hops="2" role="radio" aria-checked="false">2 hops</button>
 							</div>
@@ -629,14 +613,6 @@
 			</div>
 		</div>
 		</section>
-
-	<!-- ---------- Campaign chat ----------
-	     The campaign Grimoire (MAD-311): ask the campaign from your own
-	     perspective. A DM thread answers from the whole record, secrets
-	     included; a player thread answers from what their party has
-	     discovered — and says "you don't know that" where the record runs
-	     out. Threads are pinned to a perspective server-side; this surface
-	     renders whatever comes back and never decides visibility itself. -->
 	<section class="cchat" id="cchat-view" hidden aria-label="Campaign chat">
 			<header class="study-head">
 				<h2 class="study-title" id="cchat-title">Campaign chat</h2>
@@ -645,7 +621,6 @@
 					<button type="button" class="enc-btn" id="cchat-new">New thread</button>
 				</div>
 				<p class="study-meta" id="cchat-meta"></p>
-				<button type="button" class="icon-btn" id="cchat-close" aria-label="Leave the campaign chat" title="Back to chat" data-gi="close"></button>
 			</header>
 
 			<div class="cchat-body" id="cchat-body" hidden>
@@ -677,14 +652,6 @@
 				</div>
 			</div>
 		</section>
-
-	<!-- ---------- Sessions surface ----------
-		     The campaign session layer: a campaign picker, the sessions of
-		     that campaign, and for each session its sources (pasted or
-		     uploaded, stored verbatim) and the chronological log of rulings,
-		     Q&A, notes, discoveries and encounters. Selecting text inside a
-		     source shows the addressable span — the byte offsets downstream
-		     facts will cite. -->
 		<section class="sessions" id="review-view" hidden aria-label="Canon review queue">
 			<header class="study-head">
 				<h2 class="study-title" id="review-title">Review queue</h2>
@@ -692,7 +659,6 @@
 					<select id="review-campaign" aria-label="Campaign"></select>
 				</div>
 				<p class="study-meta" id="review-meta"></p>
-				<button type="button" class="icon-btn" id="review-close" aria-label="Leave review" title="Back to chat" data-gi="close"></button>
 			</header>
 			<div class="review-body">
 				<div class="review-toolbar">
@@ -714,7 +680,6 @@
 				<div class="review-list" id="review-list" aria-label="Review items"></div>
 			</div>
 		</section>
-
 		<section class="sessions" id="sessions-view" hidden aria-label="Game sessions">
 			<header class="study-head">
 				<h2 class="study-title" id="sessions-title">Sessions</h2>
@@ -723,7 +688,6 @@
 					<button type="button" class="sess-btn" id="sess-new-campaign" title="New campaign">+</button>
 				</div>
 				<p class="study-meta" id="sessions-meta"></p>
-				<button type="button" class="icon-btn" id="sessions-close" aria-label="Leave sessions" title="Back to chat" data-gi="close"></button>
 			</header>
 			<div class="sess-body">
 				<div class="sess-col sess-col-list">
@@ -803,12 +767,6 @@
 				</div>
 			</div>
 		</section>
-
-	<!-- ---------- Story planner surface ----------
-	     The narrative spine (MAD-360): acts as columns, scenes as cards,
-	     cast and secrets as chips. The deterministic helpers (shapes, the
-	     XP-table pace) need no model; the server owns the vocabularies
-	     and the quest-edge checks. DM material end to end. -->
 		<section class="planner" id="planner-view" hidden aria-label="Story planner">
 			<header class="study-head">
 				<h2 class="study-title" id="planner-title">Planner</h2>
@@ -817,7 +775,6 @@
 					<button type="button" class="sess-btn" id="planner-new-campaign" title="New campaign">+</button>
 				</div>
 				<p class="study-meta" id="planner-meta"></p>
-				<button type="button" class="icon-btn" id="planner-close" aria-label="Leave the planner" title="Back to chat" data-gi="close"></button>
 			</header>
 			<div class="planner-body">
 				<div class="planner-toolbar sess-panel">
@@ -829,6 +786,65 @@
 				<div class="planner-board sess-panel" id="planner-board"></div>
 			</div>
 		</section>
+		<section class="chatview" id="chat-view" hidden aria-label="Chat">
+			<header class="chat-head">
+				<h1 class="conv-title" id="conv-title">New chat</h1>
+				<span class="corpus-chip" id="corpus-chip" title="This conversation's rule set"></span>
+				<div class="mode-toggle" id="mode-toggle" hidden role="radiogroup" aria-label="Mode">
+					<button type="button" class="mode-opt is-active" data-mode="ask" role="radio" aria-checked="true" title="Free Q&amp;A with the sage">
+						<span data-gi="ask"></span> Ask
+					</button>
+					<button type="button" class="mode-opt" data-mode="resolve" role="radio" aria-checked="false" title="Walk a board + spell sequence step by step">
+						<span data-gi="resolve"></span> Resolve
+					</button>
+				</div>
+				<div class="chat-actions">
+					<button type="button" class="icon-btn" id="topbar-rename" aria-label="Rename conversation" title="Rename conversation" data-gi="rename" hidden></button>
+					<button type="button" class="icon-btn danger" id="topbar-delete" aria-label="Delete conversation" title="Delete conversation" data-gi="delete" hidden></button>
+				</div>
+			</header>
+			<div class="transcript" id="transcript" tabindex="-1">
+				<section class="welcome" id="welcome">
+					<div class="welcome-sigil" data-ico="spellbook" data-ico-scale="3"></div>
+					<h2 class="welcome-title">Grimoire</h2>
+					<p class="welcome-sub" id="welcome-sub">Ask, and the tome shall answer.</p>
+					<div class="suggestions" id="suggestions"></div>
+				</section>
+				<div class="messages" id="messages"></div>
+			</div>
+
+		<!-- ---------- Study surface ---------- -->
+
+		<!-- ---------- Reading surface ---------- -->
+
+			<!-- ---------- Encounter builder surface ---------- -->
+
+			<!-- ---------- Deck builder surface ---------- -->
+
+	<!-- ---------- Campaign surface ---------- -->
+
+	<!-- ---------- Campaign chat ----------
+	     The campaign Grimoire (MAD-311): ask the campaign from your own
+	     perspective. A DM thread answers from the whole record, secrets
+	     included; a player thread answers from what their party has
+	     discovered — and says "you don't know that" where the record runs
+	     out. Threads are pinned to a perspective server-side; this surface
+	     renders whatever comes back and never decides visibility itself. -->
+
+	<!-- ---------- Sessions surface ----------
+		     The campaign session layer: a campaign picker, the sessions of
+		     that campaign, and for each session its sources (pasted or
+		     uploaded, stored verbatim) and the chronological log of rulings,
+		     Q&A, notes, discoveries and encounters. Selecting text inside a
+		     source shows the addressable span — the byte offsets downstream
+		     facts will cite. -->
+
+
+	<!-- ---------- Story planner surface ----------
+	     The narrative spine (MAD-360): acts as columns, scenes as cards,
+	     cast and secrets as chips. The deterministic helpers (shapes, the
+	     XP-table pace) need no model; the server owns the vocabularies
+	     and the quest-edge checks. DM material end to end. -->
 
 		<div class="composer-dock">
 				<form class="composer" id="composer" autocomplete="off">
@@ -871,38 +887,8 @@
 				<p class="composer-foot" id="composer-foot"></p>
 				<p class="resolver-caveat" id="resolver-caveat" hidden>Assistant, not oracle — verify against the Comprehensive Rules.</p>
 			</div>
-		</main>
-
-		<!-- ---------- Reference drawer ---------- -->
-		<aside class="drawer" id="drawer" aria-label="Reference" hidden>
-			<div class="drawer-head">
-				<h2 class="drawer-title" id="drawer-title"></h2>
-				<button type="button" class="icon-btn" id="drawer-close" aria-label="Close reference" data-gi="close"></button>
-			</div>
-			<div class="drawer-body" id="drawer-body"></div>
-		</aside>
+		</section>
 	</div>
 
-	<!-- ---------- Command palette ---------- -->
-	<div class="palette-layer" id="palette" hidden>
-		<div class="palette-scrim" data-palette-close></div>
-		<div class="palette-box" role="dialog" aria-modal="true" aria-label="Search rules and cards">
-			<div class="palette-inputwrap">
-				<span class="palette-icon" data-gi="search"></span>
-				<input type="text" id="palette-input" class="palette-input"
-					placeholder="Search rules, or a card name…"
-					aria-label="Search rules and cards" aria-controls="palette-results" autocomplete="off">
-				<kbd>Esc</kbd>
-			</div>
-			<div class="palette-results" id="palette-results" role="listbox" aria-label="Results"></div>
-			<div class="palette-foot">
-				<span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-				<span><kbd>↵</kbd> open</span>
-				<span id="palette-scope"></span>
-			</div>
-		</div>
-	</div>
-
-	<script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

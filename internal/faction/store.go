@@ -13,7 +13,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 )
 
-// The faction plan store: the rows migration 0017 owns, read and written
+// The faction plan store: the rows migration 0018 owns, read and written
 // here. The pure model (Advance) stays pure; this file is where a plan meets
 // the graph — validating its owner is a live faction, deriving its active
 // step's modifiers from entity/edge/fact/enemy-plan state, and persisting

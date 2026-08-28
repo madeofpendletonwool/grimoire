@@ -32,9 +32,7 @@ const EVENT_KINDS = {
 	encounter: "encounter",
 };
 
-export function initSessions() {
-	$("rail-sessions").addEventListener("click", openSessions);
-	$("sessions-close").addEventListener("click", closeSessions);
+function wire() {
 	$("sess-campaign").addEventListener("change", onPickCampaign);
 	$("sess-new-campaign").addEventListener("click", onNewCampaign);
 	$("sess-new-form").addEventListener("submit", onCreateSession);
@@ -51,20 +49,12 @@ export function initSessions() {
 }
 
 /** Open the sessions surface. */
-export async function openSessions() {
-	state.sessionsOpen = true;
-	if (isNarrow()) $("app").classList.add("rail-hidden");
-	$("sessions-view").hidden = false;
-	$("main").classList.add("is-sessioning");
+async function openSessions() {
 	await loadCampaigns();
 }
 
 /** Drop back to the transcript. */
-export function closeSessions() {
-	state.sessionsOpen = false;
-	$("sessions-view").hidden = true;
-	$("main").classList.remove("is-sessioning");
-	$("rail-sessions").focus();
+function closeSessions() {
 }
 
 /* ---------- campaigns ---------- */
@@ -509,3 +499,25 @@ function onExport() {
 	if (!campaignID || !sessionID) return;
 	window.location.assign(api.sessionExportURL(campaignID, sessionID));
 }
+
+/* ---------- the window-manager contract ---------- */
+
+// mount() adopts the surface that already exists in index.html rather than
+// building one, which is what made migrating nine surfaces tractable: every
+// $("sess-list") lookup inside this module keeps working untouched. The
+// cost is one window per tool; see the note on `instances` in wm/registry.js.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("sessions-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		openSessions();
+		return { destroy: closeSessions };
+	},
+};

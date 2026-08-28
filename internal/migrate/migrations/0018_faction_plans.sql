@@ -6,8 +6,9 @@
 -- and the integrity checks read them through internal/campaign's snapshot,
 -- exactly like quests. This issue's note on migration numbers: it claimed
 -- 0015 when main was at 0011, but MAD-359/360 (0012/0013), MAD-322 (0014),
--- MAD-363 (0015) and MAD-365 (0016) landed first — so this takes the next
--- genuinely free number, the rebase rule the issue set for itself.
+-- MAD-363 (0015), MAD-365 (0016) and the tiling update's ui_state (0017)
+-- landed first — so this takes the next genuinely free number, the rebase
+-- rule the issue set for itself.
 
 -- One faction's plan. state_machine is the same JSON shape quests use
 -- ({"initial": ..., "states": [...], "edges": [...]}) and the same rules

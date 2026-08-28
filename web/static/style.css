@@ -16,7 +16,9 @@
 	--stone-700: #241d15;
 	--stone-600: #2f261b;
 	--stone-500: #3d3225;
+	--stone-950: #0b0806;
 	--stone-line: #4a3c2b;
+	--stone-400: #584832;
 
 	/* parchment (content) — the page sprite's own pixels */
 	--parchment: #ffd7a8;
@@ -68,6 +70,7 @@
 	--shadow-2: 0 6px 20px rgba(0, 0, 0, 0.45);
 	--shadow-3: 0 18px 50px rgba(0, 0, 0, 0.6);
 
+	--measure-wide: 72rem;
 	--rail-w: 264px;
 	--drawer-w: 380px;
 	--measure: 46rem;
@@ -319,6 +322,7 @@ kbd {
 .rail-action kbd { margin-left: auto; }
 .rail-action .gi { color: var(--gold-dim); }
 .rail-action:hover .gi { color: var(--gold-bright); }
+
 .rail-user {
 	margin-left: auto;
 	max-width: 9rem;
@@ -927,8 +931,6 @@ kbd {
 	scroll-behavior: smooth;
 	padding: var(--sp-5) var(--sp-4) var(--sp-6);
 }
-.main.is-studying > .transcript,
-.main.is-studying > .composer-dock { display: none; }
 
 .study-head {
 	max-width: var(--measure);
@@ -1081,8 +1083,6 @@ kbd {
 /* Two panes over the stone column: the contents on stone (it is navigation,
    the same chrome the rail is), the page itself on parchment — reading is the
    one thing the app exists to do, so the book gets the artifact surface. */
-.main.is-reading > .transcript,
-.main.is-reading > .composer-dock { display: none; }
 
 .reader {
 	flex: 1;
@@ -1310,8 +1310,6 @@ kbd {
    is something the DM reads at the table, which makes it content, which makes
    it parchment: the same rule the answers and rule cards follow. The verdict
    gauge stays on stone above it, because it is an instrument, not prose. */
-.main.is-encountering > .transcript,
-.main.is-encountering > .composer-dock { display: none; }
 
 .encounter {
 	flex: 1;
@@ -2381,8 +2379,6 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
    all registered there — nothing below may set a background, a border or a
    radius, because the sprites own all three. */
 
-.main.is-decking > .transcript,
-.main.is-decking > .composer-dock { display: none; }
 
 .deckbuilder {
 	flex: 1;
@@ -2685,8 +2681,6 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
    one thing the caller reads at length — an entity's sheet — is parchment.
    The map is deliberately parchment too: it is the campaign's own map, not
    an instrument, so ink on parchment rather than chrome. */
-.main.is-campaiging > .transcript,
-.main.is-campaiging > .composer-dock { display: none; }
 
 .campaign {
 	flex: 1;
@@ -2861,8 +2855,6 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	border-bottom: 1px solid var(--ink-soft);
 	padding-bottom: 0.2rem;
 }
-.main.is-sessioning > .transcript,
-.main.is-sessioning > .composer-dock { display: none; }
 
 .sess-campaign-wrap { display: flex; align-items: center; gap: var(--sp-2); }
 .sess-campaign-wrap select {
@@ -3330,8 +3322,6 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
      columns — threads left, the conversation right — over the same measure
      the other full-screen surfaces use. Frames come from pixel.css; nothing
      here sets a background or a radius. */
-.main.is-cchat > .transcript,
-.main.is-cchat > .composer-dock { display: none; }
 
 .cchat {
 	flex: 1;
@@ -3515,3 +3505,61 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .camp-plan-step-cost { color: var(--ink-soft); font-size: var(--fs-xs); }
 .camp-plan-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
 .camp-plan-form .enc-field { width: 100%; }
+
+/* ---------- Registry-built rail ---------- */
+
+.rail-tools {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+/* A tool already on screen reads as a destination you are at, not one you can
+   go to — the rail reflects the workspace rather than listing possibilities. */
+.rail-tools .rail-action.is-open { color: var(--gold-bright); }
+.rail-tools .rail-action.is-open::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 50%;
+	width: 3px;
+	height: 1.1em;
+	margin-top: -0.55em;
+	background: var(--gold);
+}
+.rail-tools .rail-action { position: relative; }
+
+.rail-accel {
+	margin-left: auto;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--gold-dim);
+	opacity: 0;
+	transition: opacity 0.12s ease;
+	white-space: nowrap;
+}
+.rail-tools .rail-action:hover .rail-accel,
+.rail-tools .rail-action:focus-visible .rail-accel { opacity: 1; }
+
+/* ---------- The conversation's own header ----------
+   This was the app's topbar, back when the chat was the page and every other
+   surface covered it up. It describes a conversation, so it travels with one. */
+.chatview {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+.chat-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: var(--sp-3);
+	padding: var(--sp-2) var(--sp-3);
+	border-bottom: 1px solid var(--stone-line);
+}
+.chat-actions { margin-left: auto; display: flex; gap: var(--sp-1); flex: none; }
+.chat-head .conv-title { flex: none; }
+
+@media (prefers-reduced-motion: reduce) {
+	.rail-accel { transition: none; }
+}

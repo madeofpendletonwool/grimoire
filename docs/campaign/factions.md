@@ -59,7 +59,7 @@ validates and enforces legal edges. A faction plan is that machine plus:
 - a **reaction rule** (what the author says happens when a step's world
   goes away).
 
-The rows live in migration `0017`: `faction_plans`, `faction_plan_steps`
+The rows live in migration `0018`: `faction_plans`, `faction_plan_steps`
 (in pursuit order; a step is the work to *enter* its state, `cost` progress
 at a time), and `faction_plan_transitions` (every move, the clock day it
 happened on, and the arithmetic that caused it).

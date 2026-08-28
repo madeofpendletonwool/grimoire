@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // FetchOptions controls which corpora are fetched and from where. The
@@ -89,8 +90,16 @@ func fetchDNDDataset(ctx context.Context, opts FetchOptions) (*Dataset, error) {
 }
 
 func fetchMTG(ctx context.Context, url string) (*Dataset, error) {
-	if url == "" {
-		url = mtgDefaultURL
+	if url == "" || url == mtgDefaultURL {
+		// Wizards republishes the rules under a new date-stamped filename on
+		// every update and removes the old file, so the pinned URL goes stale.
+		// Discover the current link from the canonical rules page and fall
+		// back to the pin only when discovery fails.
+		if discovered := discoverMTGRulesURL(ctx); discovered != "" {
+			url = discovered
+		} else {
+			url = firstNonEmpty(url, mtgDefaultURL)
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -104,7 +113,55 @@ func fetchMTG(ctx context.Context, url string) (*Dataset, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch mtg rules: %s", resp.Status)
 	}
-	return ParseMTG(resp.Body)
+	ds, err := ParseMTG(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if m, ok := ds.Meta[CorpusMTG]; ok {
+		m.SourceURL = url
+		ds.Meta[CorpusMTG] = m
+	}
+	return ds, nil
+}
+
+// discoverMTGRulesURL scrapes the canonical Wizards rules page for the link to
+// the current Comprehensive Rules text file. It returns "" on any failure so
+// callers can fall back to a pinned URL.
+func discoverMTGRulesURL(ctx context.Context) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mtgRulesPageURL, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return ""
+	}
+	return extractMTGRulesLink(string(body))
+}
+
+// extractMTGRulesLink pulls the comp-rules .txt link out of a rules-page HTML
+// document, percent-encoding the literal space the href carries in its
+// date-stamped filename.
+func extractMTGRulesLink(body string) string {
+	link := mtgRulesLinkRe.FindString(body)
+	return strings.ReplaceAll(link, " ", "%20")
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func fetchDND(ctx context.Context, repo, ref string) (*Dataset, error) {

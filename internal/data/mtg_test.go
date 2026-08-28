@@ -109,6 +109,20 @@ func TestParseMTG(t *testing.T) {
 	}
 }
 
+func TestExtractMTGRulesLink(t *testing.T) {
+	// Shape mirrors the rules page: a .pdf cta before the .txt one, with a
+	// literal space inside the date-stamped href that must be percent-encoded.
+	page := `<a class="cta" href="https://media.wizards.com/2026/downloads/MagicCompRules 20260819.pdf">PDF</a>` +
+		`<a class="cta" href="https://media.wizards.com/2026/downloads/MagicCompRules 20260819.txt" target="_blank">TXT</a>`
+	want := "https://media.wizards.com/2026/downloads/MagicCompRules%2020260819.txt"
+	if got := extractMTGRulesLink(page); got != want {
+		t.Errorf("extractMTGRulesLink = %q, want %q", got, want)
+	}
+	if got := extractMTGRulesLink("<html>no link here</html>"); got != "" {
+		t.Errorf("extractMTGRulesLink(no link) = %q, want empty", got)
+	}
+}
+
 func TestParseMTG_TopLevelRuleHasTrailingPeriod(t *testing.T) {
 	// Regression: top-level rules like "205.1." carry a trailing period before the text.
 	// Structure mirrors the real file: rules, then Glossary, then Credits.

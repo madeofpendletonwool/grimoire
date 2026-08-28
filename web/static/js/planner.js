@@ -29,29 +29,21 @@ const KINDS = {
 const ROLES = { focus: "focus", present: "present", offstage: "offstage", mentioned: "mentioned" };
 const DISPOSITIONS = { in_play: "in play", revealed_if: "revealed if…", withheld: "withheld" };
 
-export function initPlanner() {
-	$("rail-planner").addEventListener("click", openPlanner);
-	$("planner-close").addEventListener("click", closePlanner);
+function wire() {
 	$("planner-campaign").addEventListener("change", onPickCampaign);
 	$("planner-new-campaign").addEventListener("click", onNewCampaign);
 	$("planner-shape").addEventListener("change", onPickShape);
 	$("planner-add-act").addEventListener("click", onQuickAct);
-	$("planner-spine").addEventListener("click", onSpineClick);
+	$("planner-board").addEventListener("click", onSpineClick);
 }
 
 /** Open the planner. */
-export async function openPlanner() {
-	if (isNarrow()) $("app").classList.add("rail-hidden");
-	$("planner-view").hidden = false;
-	$("main").classList.add("is-sessioning");
+async function openPlanner() {
 	await loadCampaigns();
 }
 
 /** Drop back to the transcript. */
-export function closePlanner() {
-	$("planner-view").hidden = true;
-	$("main").classList.remove("is-sessioning");
-	$("rail-planner").focus();
+function closePlanner() {
 }
 
 /* ---------- campaigns ---------- */
@@ -404,3 +396,25 @@ async function onQuickAct() {
 		window.alert(err.message);
 	}
 }
+
+/* ---------- the window-manager contract ---------- */
+
+// mount() adopts the surface that already exists in index.html rather than
+// building one, which is what made migrating nine surfaces tractable: every
+// $("planner-board") lookup inside this module keeps working untouched. The
+// cost is one window per tool; see the note on `instances` in wm/registry.js.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("planner-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		openPlanner();
+		return { destroy: closePlanner };
+	},
+};
