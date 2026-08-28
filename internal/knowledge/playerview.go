@@ -51,6 +51,11 @@ type PlayerView interface {
 	// Summarize is the four-bucket summary at this scope; its Unknown
 	// bucket lists only public facts.
 	Summarize(ctx context.Context, campaignID, subject string) (*Summary, error)
+	// FactionFacade reads a faction's player-facing self-presentation —
+	// the public face and the reputation from the payload's agent block,
+	// and nothing else. PrivateTruth and the rest of the payload are DM
+	// structure this interface cannot express.
+	FactionFacade(ctx context.Context, campaignID, id string) (face, reputation string, err error)
 }
 
 // playerView is the PlayerView implementation: the wide store's scoped reads
@@ -145,4 +150,8 @@ func (v *playerView) Summarize(ctx context.Context, campaignID, subject string) 
 		*bucket = kept
 	}
 	return sum, nil
+}
+
+func (v *playerView) FactionFacade(ctx context.Context, campaignID, id string) (string, string, error) {
+	return v.store.FactionFacade(ctx, v.scope, campaignID, id)
 }

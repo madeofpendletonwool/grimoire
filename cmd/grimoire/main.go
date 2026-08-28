@@ -8,6 +8,7 @@
 //	grimoire migrate up     apply pending schema migrations and exit
 //	grimoire migrate down   roll back the most recent migration and exit
 //	grimoire campaign check run the campaign-graph integrity checks
+//	grimoire campaign plans list a campaign's faction plans
 //	grimoire canon check    run the canon engine's deterministic checks
 //	grimoire [-h]           help
 //
@@ -80,6 +81,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
+	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
@@ -141,6 +143,7 @@ Usage:
   grimoire index     (re)build the search index and exit
   grimoire migrate status|up|down   inspect or move the database schema
   grimoire campaign check [id]      run campaign integrity checks
+  grimoire campaign plans [id]      list a campaign's faction plans
   grimoire canon check [id]                 run the deterministic canon checks
   grimoire canon continuity [flags] <id> <prep.json>   pre-session continuity check
   grimoire canon entail [flags] <id> <prose.txt>       entailment pass over prose
@@ -491,17 +494,103 @@ func runMigrate(args []string) error {
 // runs the integrity checks over one campaign (or every campaign) and prints
 // the findings; it exits non-zero from the caller's perspective only when a
 // check reports an error-severity finding, so a cron or pre-session ritual
-// can gate on it.
+// can gate on it. `campaign plans` lists one campaign's faction plans — a
+// read-only view of plan state, inspectable with no server and no key.
 func runCampaign(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: grimoire campaign check [campaign-id]")
+		return fmt.Errorf("usage: grimoire campaign check [campaign-id] | grimoire campaign plans <campaign-id>")
 	}
 	switch args[0] {
 	case "check":
 		return runCampaignCheck(args[1:])
+	case "plans":
+		return runCampaignPlans(args[1:])
 	default:
-		return fmt.Errorf("unknown campaign subcommand %q (want check)", args[0])
+		return fmt.Errorf("unknown campaign subcommand %q (want check or plans)", args[0])
 	}
+}
+
+// runCampaignPlans prints a campaign's faction plans: owner, status, state,
+// the active step with its progress, and the remaining checklist — the DM's
+// "what is everyone doing" answer straight off the database.
+func runCampaignPlans(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: grimoire campaign plans <campaign-id>")
+	}
+	campaignID := args[0]
+	if err := ensureDBDir(); err != nil {
+		return err
+	}
+	db, err := index.OpenDB(dbPath())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := migrate.Up(db); err != nil {
+		return err
+	}
+	camps, err := campaign.New(db)
+	if err != nil {
+		return err
+	}
+	factions, err := faction.New(db)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	c, err := camps.GetCampaign(ctx, campaignID)
+	if err != nil {
+		return err
+	}
+	plans, err := factions.ListPlans(ctx, campaign.ScopeDM, campaignID)
+	if err != nil {
+		return err
+	}
+	if len(plans) == 0 {
+		log.Printf("%s (%s): no faction plans", c.Name, campaignID)
+		return nil
+	}
+	byID := map[string]string{}
+	if entities, err := camps.ListEntities(ctx, campaign.ScopeDM, campaignID, ""); err == nil {
+		for _, e := range entities {
+			byID[e.ID] = e.Name
+		}
+	}
+	nameOf := func(id string) string {
+		if n, ok := byID[id]; ok {
+			return n
+		}
+		return id
+	}
+	for _, p := range plans {
+		owner := nameOf(p.FactionEntity)
+		pct := 0
+		if step := p.ActiveStep(); step != nil && step.Cost > 0 && p.Progress > 0 {
+			pct = int(min(p.Progress/step.Cost, 1) * 100)
+		}
+		log.Printf("%s — %q [%s] at %s (%d%% into the active step, %s/day)",
+			owner, p.Name, p.Status, p.CurrentState, pct, trimRate(p.RatePerDay))
+		for _, step := range p.Steps {
+			mark := " "
+			if done := p.ReachedContains(step.State); done {
+				mark = "x"
+			}
+			stepName := step.Name
+			if stepName == "" {
+				stepName = step.State
+			}
+			log.Printf("  [%s] %-28s cost %s", mark, stepName, trimRate(step.Cost))
+		}
+	}
+	return nil
+}
+
+// trimRate renders a number without trailing zeros for the CLI listing.
+func trimRate(v float64) string {
+	if v == float64(int64(v)) {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 func runCampaignCheck(args []string) error {
@@ -1262,6 +1351,13 @@ func runServe() error {
 		return err
 	}
 
+	// The faction plan store (MAD-366) rides on the same migrations: the
+	// dossier reads degrade gracefully, the plan endpoints need it.
+	factions, err := faction.New(store.DB())
+	if err != nil {
+		return err
+	}
+
 	// The canon engine's deterministic checks need no model and work on a
 	// box with no key configured at all. When chat IS configured, the same
 	// store also carries the model client so the Stage 4 surfaces
@@ -1292,6 +1388,7 @@ func runServe() error {
 	}
 	srv = srv.WithShares(shares)
 	srv = srv.WithCampaign(campaigns, gameSessions)
+	srv = srv.WithFactions(factions)
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()), bestiary)
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)

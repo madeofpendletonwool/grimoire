@@ -27,6 +27,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
+	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
@@ -74,6 +75,10 @@ type Server struct {
 	campaigns *campaign.Store
 	sessions  *gamesession.Store
 	knowledge *knowledge.Store
+	// The faction plan store (MAD-366). Wired with WithFactions; nil
+	// disables the faction plan endpoints (the dossier reads degrade to
+	// plans-less).
+	factions *faction.Store
 	// The canon engine's deterministic surface (MAD-309): the offline
 	// consistency checks and the flag ledger. Wired with WithCanon.
 	canon *canon.Store
@@ -230,6 +235,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/quests", s.handleCreateCampaignQuest)
 	mux.HandleFunc("GET /api/campaigns/{id}/quests/{qid}", s.handleCampaignQuest)
 	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/transition", s.handleQuestTransition)
+
+	// The faction surface (MAD-366): the scope-filtered dossier and the
+	// DM-only plan machinery.
+	mux.HandleFunc("GET /api/campaigns/{id}/factions", s.handleCampaignFactions)
+	mux.HandleFunc("GET /api/campaigns/{id}/factions/{eid}", s.handleCampaignFaction)
+	mux.HandleFunc("GET /api/campaigns/{id}/factions/{eid}/plans", s.handleFactionPlans)
+	mux.HandleFunc("POST /api/campaigns/{id}/factions/{eid}/plans", s.handleCreateFactionPlan)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/plans/{pid}", s.handleUpdateFactionPlan)
+	mux.HandleFunc("POST /api/campaigns/{id}/plans/{pid}/transition", s.handleFactionPlanTransition)
 	// The campaign clock (MAD-365): calendar, clock ledger, schedule, travel.
 	mux.HandleFunc("GET /api/campaigns/{id}/calendar", s.handleCampaignCalendar)
 	mux.HandleFunc("PUT /api/campaigns/{id}/calendar", s.handlePutCampaignCalendar)

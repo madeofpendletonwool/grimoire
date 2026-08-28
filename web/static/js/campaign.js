@@ -73,8 +73,12 @@ function wire() {
 		renderGraph();
 	});
 	// The sheet is fully delegated: why?, awareness quick-sets, retcon and
-	// node clicks survive re-renders without re-binding.
+	// node clicks survive re-renders without re-binds. The faction page's
+	// plan controls (activate, move, status, create) ride the same
+	// delegation.
 	$("camp-sheet-body").addEventListener("click", onSheetClick);
+	$("camp-sheet-body").addEventListener("submit", onFactionPlanSubmit);
+	$("camp-sheet-body").addEventListener("change", onFactionPlanStatusChange);
 	$("camp-invite-form").addEventListener("submit", onMintInvite);
 	$("camp-members-body").addEventListener("change", onMemberRoleChange);
 	$("camp-members-body").addEventListener("click", onMemberRevoke);
@@ -458,6 +462,15 @@ function renderSheet() {
 	body.append(section("Ties", relList(selected.relationships || [])));
 	body.append(section("Appearances", eventList(selected.events || [])));
 
+	// The faction page (MAD-366): dossier, live edges and — for the DM —
+	// the plans with their progress. Rendered async into its own section.
+	if (selected.kind === "faction") {
+		const mount = el("div", { class: "camp-faction", attrs: { id: "camp-faction-body" } });
+		mount.append(el("p", { class: "camp-status", text: "Opening the dossier…" }));
+		body.append(mount);
+		loadFactionDossier(selected.id);
+	}
+
 	if (isDM()) {
 		const form = $("camp-fact-form");
 		form.hidden = false;
@@ -746,6 +759,26 @@ async function onAdvanceClock(e) {
 }
 
 async function onSheetClick(e) {
+	const activate = e.target.closest("[data-plan-activate]");
+	if (activate) {
+		try {
+			await api.campaignFactionPlanUpdate(current.id, activate.dataset.planActivate, { status: "active" });
+			await refreshFactionDossier();
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	const move = e.target.closest("[data-plan-move]");
+	if (move) {
+		try {
+			await api.campaignFactionPlanTransition(current.id, move.dataset.planMove, move.dataset.moveTo, "moved from the sheet");
+			await refreshFactionDossier();
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
 	const aware = e.target.closest("[data-aware]");
 	if (aware) {
 		const fid = aware.closest("[data-fid]").dataset.fid;
@@ -1045,6 +1078,228 @@ async function loadInvites() {
 	const box = $("camp-invites");
 	for (const inv of data.invites || []) {
 		box.append(el("p", { class: "camp-invite-row", text: `${inv.campaign_role} — ${inv.status}` }));
+	}
+}
+
+/* ---------- the faction page (MAD-366) ---------- */
+
+// The dossier is a read, not a write: territory, leaders, members, allies
+// and enemies arrive as live graph edges the server categorized at the
+// caller's scope; the plans are DM-only and simply absent from a player's
+// payload. This module renders whatever comes back and decides nothing.
+let factionDossier = null; // the last dossier body for the selected faction
+
+async function loadFactionDossier(eid) {
+	const mount = document.getElementById("camp-faction-body");
+	if (!mount || !current || !selected || selected.id !== eid) return;
+	let data;
+	try {
+		data = await api.campaignFaction(current.id, eid);
+	} catch (err) {
+		clear(mount).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	if (!selected || selected.id !== eid) return; // the sheet moved on
+	factionDossier = data.faction;
+	renderFactionDossier(clear(mount));
+}
+
+async function refreshFactionDossier() {
+	if (selected && selected.kind === "faction") await loadFactionDossier(selected.id);
+}
+
+function renderFactionDossier(mount) {
+	const f = factionDossier;
+	if (!f) return;
+	const wrap = el("div", { class: "camp-faction-body" });
+
+	// The interior: the DM reads the whole agent block, a player reads the
+	// public face and the reputation — the server already drew that line.
+	const face = el("div", { class: "camp-faction-face" });
+	if (isDM() && f.agent) {
+		const a = f.agent;
+		if (a.public_face) face.append(el("p", { class: "camp-fact-statement prose", text: a.public_face }));
+		if (a.private_truth) face.append(el("p", { class: "camp-faction-truth prose", text: `Private truth: ${a.private_truth}` }));
+		if (a.doctrine) face.append(el("p", { class: "prose", text: a.doctrine }));
+		if ((a.goals || []).length) {
+			const goals = el("ol", { class: "camp-faction-goals" });
+			for (const g of a.goals) goals.append(el("li", { text: g }));
+			face.append(el("p", { class: "camp-sheet-heading", text: "Goals, first pursued first" }), goals);
+		}
+		if (a.reputation) face.append(el("p", { class: "prose", text: `Reputation: ${a.reputation}` }));
+		if ((a.internal_conflicts || []).length) {
+			face.append(el("p", { class: "prose", text: `Fault lines: ${a.internal_conflicts.join("; ")}` }));
+		}
+		const scores = el("div", { class: "camp-fact-chips" });
+		for (const [label, v] of [["military", a.military], ["economic", a.economic], ["reach", a.reach]]) {
+			scores.append(el("span", { class: "enc-chip", text: `${label} ${v}` }));
+		}
+		face.append(scores);
+	} else {
+		if (f.public_face) face.append(el("p", { class: "camp-fact-statement prose", text: f.public_face }));
+		if (f.reputation) face.append(el("p", { class: "prose", text: `Reputation: ${f.reputation}` }));
+	}
+	if (face.children.length > 0) wrap.append(section("The face it shows", face));
+
+	// The graph position: live edges, named where the scope can read them.
+	const nameOf = (id) => f.roster?.[id]?.name || entities.find((x) => x.id === id)?.name || id.slice(0, 8);
+	const ties = el("div", { class: "camp-faction-ties" });
+	const groups = [
+		["Territory", f.edges?.territory],
+		["Leaders", f.edges?.leaders],
+		["Members", f.edges?.members],
+		["Allies", f.edges?.allies],
+		["Enemies", f.edges?.enemies],
+		["Pulls the strings of", f.edges?.puppets],
+	];
+	let anyTie = false;
+	for (const [label, ids] of groups) {
+		if (!ids || ids.length === 0) continue;
+		anyTie = true;
+		const chips = el("div", { class: "camp-fact-chips" });
+		for (const id of ids) chips.append(el("span", { class: "enc-chip", text: nameOf(id) }));
+		ties.append(el("p", { class: "camp-sheet-heading", text: label }), chips);
+	}
+	if (anyTie) wrap.append(section("Where it stands", ties));
+
+	// The plans: progress bar, step list, and the DM's controls. Absent
+	// entirely at a player scope — the server never sends them.
+	if (isDM()) {
+		const plans = el("div", { class: "camp-plans" });
+		for (const p of f.plans || []) plans.append(planCard(p));
+		wrap.append(section("Plans", plans));
+		const form = planCreateForm();
+		wrap.append(form);
+	}
+	mount.append(wrap);
+}
+
+// planCard renders one plan: name, status, the bar, the checklist and the
+// legal next moves as buttons — the server only offers states the machine
+// declares, so the buttons cannot offer an illegal move.
+function planCard(p) {
+	const card = el("div", { class: "camp-plan", attrs: { "data-pid": p.id } });
+	const head = el("div", { class: "camp-fact-chips" });
+	head.append(el("span", { class: "enc-chip is-on", text: p.status }));
+	if (p.visibility === "secret") head.append(el("span", { class: "enc-chip", text: "secret" }));
+	head.append(el("span", { class: "enc-chip", text: `${p.rate_per_day}/day` }));
+	if (p.last_advanced_day != null) head.append(el("span", { class: "enc-chip", text: `advanced day ${p.last_advanced_day}` }));
+	card.append(el("p", { class: "camp-sheet-heading", text: p.name }), head);
+
+	const pct = Math.round((p.percent || 0) * 100);
+	const bar = el("div", { class: "camp-plan-bar", attrs: { role: "progressbar", "aria-valuenow": String(pct), "aria-valuemin": "0", "aria-valuemax": "100", "aria-label": `${p.name} progress` } });
+	bar.append(el("div", { class: "camp-plan-bar-fill", attrs: { style: `width:${pct}%` } }));
+	const line = el("div", { class: "camp-plan-state" });
+	line.append(el("span", { class: "camp-plan-state-name", text: p.current_state }));
+	line.append(el("span", { class: "camp-status", text: `${pct}%` }));
+	card.append(bar, line);
+
+	const list = el("ul", { class: "camp-plan-steps" });
+	for (const s of p.steps || []) {
+		const row = el("li", { class: "camp-plan-step" + (s.done ? " is-done" : "") });
+		const mark = el("span", { class: "camp-plan-mark", text: s.done ? "x" : " " });
+		const label = s.name || s.state;
+		const cost = typeof s.cost === "number" && Number.isFinite(s.cost) ? String(Math.round(s.cost * 100) / 100) : "?";
+		row.append(mark, el("span", { class: "camp-plan-step-name", text: label }), el("span", { class: "camp-plan-step-cost", text: `cost ${cost}` }));
+		for (const req of s.requires || []) {
+			row.append(el("span", {
+				class: "enc-chip" + (req.met ? "" : " is-on"),
+				text: `${req.requirement?.label || "precondition"} ${req.met ? "holds" : "broken"}`,
+				attrs: { title: req.why || "" },
+			}));
+		}
+		list.append(row);
+	}
+	card.append(list);
+
+	if (isDM()) {
+		const controls = el("div", { class: "camp-fact-chips" });
+		const status = el("select", { class: "enc-field camp-plan-status", attrs: { "aria-label": `Status of ${p.name}`, "data-plan-status": p.id } });
+		for (const s of ["dormant", "active", "stalled", "complete", "abandoned"]) {
+			const opt = el("option", { text: s });
+			opt.value = s;
+			if (s === p.status) opt.selected = true;
+			status.append(opt);
+		}
+		controls.append(status);
+		if (p.status === "dormant" || p.status === "stalled") {
+			controls.append(el("button", { class: "enc-chip is-on", text: "activate", attrs: { type: "button", "data-plan-activate": p.id } }));
+		}
+		for (const to of p.next_states || []) {
+			controls.append(el("button", { class: "enc-chip", text: `→ ${to}`, attrs: { type: "button", "data-plan-move": p.id, "data-move-to": to } }));
+		}
+		if (controls.children.length > 0) card.append(controls);
+	}
+	return card;
+}
+
+// planCreateForm builds the DM's plan authoring form: name, rate, the
+// initial state, and one line per step — "state cost [name]" — from which
+// the linear machine is derived. Branching machines are an API affordance.
+function planCreateForm() {
+	const form = el("form", { class: "camp-plan-form", attrs: { id: "camp-plan-form" } });
+	form.append(el("h4", { class: "camp-sheet-heading", text: "Author a plan" }));
+	form.append(
+		el("input", { class: "enc-field camp-plan-name", attrs: { type: "text", required: true, placeholder: "The Root Takes Hold", "aria-label": "Plan name" } }),
+		el("input", { class: "enc-field camp-plan-rate", attrs: { type: "number", step: "0.5", min: "0", value: "1", "aria-label": "Progress per day" } }),
+		el("input", { class: "enc-field camp-plan-initial", attrs: { type: "text", required: true, placeholder: "mustering", "aria-label": "Initial state" } }),
+		el("textarea", {
+			class: "enc-field camp-plan-steps",
+			attrs: { rows: "3", placeholder: "infiltrated 10 Infiltrate the mines\nbloomed 10 Bloom beneath Blackwater", "aria-label": "Steps — one per line: state cost [name]" },
+		}),
+		el("button", { class: "enc-btn", text: "Set the plan", attrs: { type: "submit" } }),
+	);
+	return form;
+}
+
+async function onFactionPlanSubmit(e) {
+	const form = e.target.closest("#camp-plan-form");
+	if (!form) return;
+	e.preventDefault();
+	if (!current || !selected) return;
+	const name = form.querySelector(".camp-plan-name").value.trim();
+	const initial = form.querySelector(".camp-plan-initial").value.trim();
+	const rate = parseFloat(form.querySelector(".camp-plan-rate").value) || 1;
+	const steps = [];
+	for (const line of form.querySelector(".camp-plan-steps").value.split("\n")) {
+		const parts = line.trim().split(/\s+/);
+		if (parts.length < 2 || parts[0] === "") continue;
+		const state = parts[0];
+		const cost = parseFloat(parts[1]);
+		if (!Number.isFinite(cost) || cost <= 0) continue;
+		steps.push({ state, cost, name: parts.slice(2).join(" ") });
+	}
+	if (!name || !initial || steps.length === 0) {
+		renderMeta("A plan needs a name, an initial state and at least one 'state cost' line.", true);
+		return;
+	}
+	// The machine is the linear chain of the steps: initial -> s1 -> s2...
+	const states = [initial, ...steps.map((s) => s.state)];
+	const edges = [];
+	for (let i = 0; i < states.length - 1; i++) edges.push({ from: states[i], to: states[i + 1] });
+	try {
+		await api.campaignFactionPlanCreate(current.id, selected.id, {
+			name,
+			rate_per_day: rate,
+			state_machine: { initial, states, edges },
+			steps,
+		});
+		renderMeta("The plan is set.");
+		await refreshFactionDossier();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+async function onFactionPlanStatusChange(e) {
+	const sel = e.target.closest("[data-plan-status]");
+	if (!sel) return;
+	try {
+		await api.campaignFactionPlanUpdate(current.id, sel.dataset.planStatus, { status: sel.value });
+		renderMeta("Plan status set.");
+		await refreshFactionDossier();
+	} catch (err) {
+		renderMeta(err.message, true);
 	}
 }
 

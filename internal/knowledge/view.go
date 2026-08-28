@@ -780,3 +780,35 @@ func (s *Store) SearchProse(ctx context.Context, scope Scope, campaignID, query 
 func (s *Store) SearchProseRelaxed(ctx context.Context, scope Scope, campaignID, query string, limit int) ([]ProseHit, error) {
 	return s.searchProse(ctx, scope, campaignID, query, limit, false, true)
 }
+
+// FactionFacade returns a faction's player-facing self-presentation from its
+// payload's agent block: the public face and the reputation, and nothing
+// else. The entity must be visible at the scope; every other payload field —
+// PrivateTruth above all — is DM structure this method has no way to return,
+// which is the whole point: the player dossier reads a faction's face
+// without the payload ever crossing the scope line.
+func (s *Store) FactionFacade(ctx context.Context, scope Scope, campaignID, id string) (face, reputation string, err error) {
+	e, err := s.entity(ctx, scope, campaignID, id, true)
+	if err != nil {
+		return "", "", err
+	}
+	if e.Kind != campaign.KindFaction {
+		return "", "", fmt.Errorf("%w: %s is a %s, not a faction", ErrInvalid, id, e.Kind)
+	}
+	var payload string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT payload FROM entities WHERE id = ? AND campaign_id = ?`, id, campaignID).Scan(&payload); err != nil {
+		return "", "", fmt.Errorf("faction facade: %w", err)
+	}
+	var payloadBlock struct {
+		Agent struct {
+			PublicFace string `json:"public_face"`
+			Reputation string `json:"reputation"`
+		} `json:"agent"`
+	}
+	// A payload without an agent block renders as an unwritten face, not an
+	// error: a faction with no authored interior still has a dossier.
+	_ = json.Unmarshal([]byte(payload), &payloadBlock)
+	return strings.Join(strings.Fields(payloadBlock.Agent.PublicFace), " "),
+		strings.Join(strings.Fields(payloadBlock.Agent.Reputation), " "), nil
+}
