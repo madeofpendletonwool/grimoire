@@ -114,6 +114,35 @@ export const api = {
 		return fetch(`/api/reader/page?${params}`, { signal }).then(json);
 	},
 
+	// Campaign OS interface state (MAD-366): saved workspace layouts and the
+	// small preferences that used to live in localStorage. Per user, per
+	// corpus — switching games swaps the whole set of workspaces.
+	//
+	// Saves are fire-and-forget on the caller's side: a layout that fails to
+	// reach the server is a lost arrangement, never a lost window, so the
+	// window manager never waits on one.
+	uiLayouts: (corpus, signal) =>
+		fetch(`/api/ui/layouts?corpus=${encodeURIComponent(corpus)}`, { signal }).then(json),
+
+	uiSaveLayout: (corpus, slot, name, tree) =>
+		fetch("/api/ui/layouts", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ corpus, slot, name, tree }),
+		}).then(json),
+
+	uiDeleteLayout: (corpus, slot) =>
+		fetch(`/api/ui/layouts/${slot}?corpus=${encodeURIComponent(corpus)}`, { method: "DELETE" }).then(json),
+
+	uiPrefs: (signal) => fetch("/api/ui/prefs", { signal }).then(json),
+
+	uiSavePrefs: (prefs) =>
+		fetch("/api/ui/prefs", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ prefs }),
+		}).then(json),
+
 	// Index rebuild — admin only. Start returns 202 and the rebuild continues
 	// in the background; poll status until running turns false.
 	reindexStart: () => fetch("/api/admin/reindex", { method: "POST" }).then(json),

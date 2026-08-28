@@ -77,6 +77,7 @@ thing goes soft. Current pairs, all clean:
 | page | `6 2 8 2 fill` | `12px 4px 16px 4px` | 2× |
 | cover | `28 fill` | `28px` | 1× (sprite is pre-doubled 2×) |
 | bar | `1 3 1 3 fill` | `2px 6px` | 2× |
+| tab / titleplate | `3 fill` | `6px` | 2× |
 
 **2. A framed surface carries no `background-color` and no `border-radius`.**
 The sprite supplies both. A stray radius clips the sprite's own corners off.
@@ -153,37 +154,91 @@ icons are CC BY 3.0 and attribution is per-icon.
 
 ---
 
-## Adding a new surface
+## Adding a tool
 
-Worked example — a framed panel on stone:
+Everything below the topbar is a workspace of tiled windows, managed by
+`web/static/js/wm/`. A tool is one entry in the registry plus one module.
 
-1. **Layout and type in style.css.** No background, no border, no radius.
-   ```css
-   .my-panel {
-       padding: var(--sp-3);
-       font-family: var(--font-prose);
-       color: var(--parchment);
-   }
-   ```
-2. **Frame it in pixel.css.** Add the selector to the shared reset list *and*
-   to the frame rule it adopts:
-   ```css
-   .nine, …, .my-panel { border-style: solid; border-radius: 0; … }
+**1. Register it** in `web/static/js/wm/registry.js`:
 
-   .f-stone, .palette-box, .settings-popup, .my-panel {
-       border-width: 6px;
-       border-image-source: var(--frame-stone);
-       border-image-slice: 3 fill;
-   }
-   ```
-   Use `var(--frame-*)`, never a direct file path — that is what makes it
-   follow the theme.
-3. **Check it against a theme and against bare stone**, not just the default.
+```js
+seats: {
+    title: "Seats", icon: "shield", corpus: "mtg", accel: "t",
+    instances: "single", min: [420, 320],
+    blurb: "Who is at the table and what they can see",
+    load: () => import("../seats.js"),
+},
+```
 
-**Which frame?** `--frame-stone` for chrome panels · `panel-parchment` for
-content the user reads · `--frame-field` for text input · `button` for primary
-actions · `chip` for inline pills · `page` for the drawer · `cover` for the
-gate.
+That one entry gives it a rail button (filtered to its game), a command-menu
+row, a `Ctrl+G` accelerator, a line in the keyboard cheat sheet, and permission
+to appear in a saved layout. `corpus` is the whole of Magic/D&D separation —
+there is no list of surfaces to close on a game switch, and no
+`html[data-corpus]` rule to write.
+
+**2. Export the contract** from the module:
+
+```js
+export const tool = {
+    mount(host, ctx) {
+        host.append($("seats-view"));      // adopted from #wm-stash
+        $("seats-view").hidden = false;
+        return { destroy() { abort?.abort(); } };
+    },
+};
+```
+
+`mount` is called when a window opens, `destroy` when it closes — which is also
+where in-flight requests get aborted. The markup lives in `#wm-stash` in
+index.html while the window is closed, and the window manager returns it there
+on close, so a reopened tool finds its state intact.
+
+New tools should build their markup from a `<template>` rather than a stashed
+section, which is what `instances: "multi"` will need. Existing tools adopt a
+section because that let nine surfaces migrate without rewriting the thousands
+of `$("id")` lookups inside them.
+
+**3. Nothing else.** No `index.html` button, no `app.js` edit, no `style.css`
+rule, no `pixel.css` registration. If a step turns out to be missing from this
+list, that is a bug in the registry, not a step to add here.
+
+### Framing a surface
+
+Reach for a `f-*` utility class; they work standalone:
+
+```html
+<div class="my-panel f-stone">    <!-- chrome -->
+<div class="my-page f-parchment"> <!-- content the user reads -->
+<input class="my-field f-field">  <!-- text input -->
+```
+
+| Utility | Use for |
+|---|---|
+| `f-stone` / `f-stone-active` | chrome panels; active is the focused window |
+| `f-parchment` | content the reader reads |
+| `f-field` | text input |
+| `f-button` | primary actions |
+| `f-chip` | inline pills |
+| `f-bar` | gutters and thin rules |
+| `f-titleplate` | a window's title bar |
+| `f-tab` / `f-tab-active` | a tabbed container's tabs |
+| `f-page` | the drawer · `f-cover` the gate |
+
+Then in `style.css`, layout and type only — **no background, no border, no
+radius**; the sprite supplies all three:
+
+```css
+.my-panel {
+    padding: var(--sp-3);
+    font-family: var(--font-prose);
+    color: var(--parchment);
+}
+```
+
+The long selector lists in pixel.css predate the utilities and are kept for the
+components already on them. Do not extend them.
+
+**Check it against a theme and against bare stone**, not just the default.
 
 ### Typography
 

@@ -135,7 +135,7 @@ The rules corpora are fetched and indexed at first run; the live lookups run at 
 
 | Variable              | Default                                        | Notes                                                   |
 | --------------------- | ---------------------------------------------- | ------------------------------------------------------- |
-| `MTG_RULES_URL`       | the official Comprehensive Rules               | Source of the MTG rules text.                           |
+| `MTG_RULES_URL`       | auto-discovered from the official rules page   | Source of the MTG rules text. The current file's URL is scraped from the Wizards rules page at index time (Wizards rotates the date-stamped filename on every update); the bundled URL is a fallback, and an explicit value is used as-is. |
 | `MTGJSON_URL`         | `https://mtgjson.com/api/v5/AtomicCards.json.gz` | Card database + card-name dictionary (mention detection, deck builder). |
 | `DND_REPO`            | the community 5e SRD repo                      | GitHub repo (`owner/name`) the SRD markdown is fetched from. |
 | `DND_REF`             | the repo's default branch                      | Branch/tag to fetch the SRD from.                       |

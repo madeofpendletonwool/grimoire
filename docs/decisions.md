@@ -566,3 +566,71 @@ its own seat's rows.
 - Identity-bearing events (`CARD_KNOWN`, `LOOK`) choose their visibility at
   submission: spoken at the table is public, typed on your own screen is
   seat-visible.
+
+---
+
+## ADR 14 — `node --test` for DOM-free front-end modules
+
+**Status:** accepted · **Date:** 2026-08-28 · **Issue:** MAD-366
+
+### Context
+
+[ADR 8](#adr-8--the-testing-policy-for-the-campaign-work) ruled out browser and
+UI end-to-end tests: the front end has no build step and no framework, so a
+harness would cost more than it catches. That reasoning is about **rendering** —
+asserting on a DOM the browser builds — and it still holds.
+
+The Campaign OS window manager introduces something ADR 8 did not anticipate: a
+**layout tree** (`web/static/js/wm/tree.js`) that is pure data in, data out. It
+splits containers, collapses them when their last child leaves, renormalises
+fractions, moves focus directionally through a tree, and parses hostile stored
+JSON. None of it touches the document.
+
+It is also the exact case ADR 8 makes *for* testing the consistency engine: an
+untested rule is worse than no rule, because it is trusted. A tiling bug that
+drops a window or corrupts a tree is invisible until the user reloads and finds
+their workspace gone, and the corrupted tree is by then in the database.
+
+### Decision
+
+`node --test` may run front-end modules that **import no DOM**. Tests live in
+`jstest/`, outside `web/static/` so they are not embedded in the binary by
+`//go:embed all:static`.
+
+A root `package.json` declares `"type": "module"` — nothing more. It has **no
+dependencies and no install step**; it exists so Node reads the same `.js` ES
+modules the browser loads directly.
+
+```bash
+node --test "jstest/**/*.test.js"
+```
+
+The rule stays narrow: **if a module imports from `dom.js`, or touches
+`document` or `window`, it does not get tests.** That is still ADR 8's
+territory and ADR 8 still governs it.
+
+### Why
+
+- The property under test is algebraic, not visual. "Removing a window never
+  loses another window" is a statement about a tree, provable in milliseconds
+  with no browser.
+- Node's runner is built in. No Jest, no Vitest, no jsdom, no bundler, no
+  `node_modules` — the objection ADR 8 raised (harness cost) does not apply.
+- Node is a **dev and CI** dependency only. The binary is unchanged, ships the
+  same files, and still runs on a machine with no route to the internet.
+- The layout tree is also the one front-end module whose output is persisted
+  and re-parsed later, so a defect outlives the session that caused it.
+
+### Consequences
+
+- `.github/workflows/ci.yml` gains a Node step. It is fast and needs no cache.
+- `web/static/js/wm/tree.js` must stay DOM-free. Rendering lives in `wm.js`,
+  which is not tested — the split is the point, and it is load-bearing rather
+  than stylistic.
+- `internal/uistate` validates the same tree independently, in Go, with its own
+  tests. The duplication is deliberate: the client repairs what it can so a
+  stale layout costs one window, the server refuses what is malformed so the
+  table never holds a tree the shell cannot parse. Neither trusts the other.
+- The precedent is bounded. A future module wanting tests must first be
+  DOM-free; "make it testable" is a design constraint, not a licence to add a
+  harness.

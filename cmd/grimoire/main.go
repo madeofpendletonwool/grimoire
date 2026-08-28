@@ -91,6 +91,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
+	"github.com/madeofpendletonwool/grimoire/internal/uistate"
 )
 
 func main() {
@@ -1295,6 +1296,7 @@ func runServe() error {
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)
+	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {
 		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)

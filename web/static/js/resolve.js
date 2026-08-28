@@ -54,7 +54,9 @@ export function initResolve() {
 		ta.addEventListener("input", () => autosize(ta));
 	}
 
-	document.querySelectorAll(".mode-opt").forEach((btn) => {
+	// Scoped to the topbar toggle: the campaign view reuses .mode-opt for its
+	// hops buttons, which carry data-hops, not data-mode.
+	document.querySelectorAll("#mode-toggle .mode-opt").forEach((btn) => {
 		btn.addEventListener("click", () => setMode(btn.dataset.mode));
 	});
 }
@@ -101,7 +103,7 @@ export function syncModeChrome() {
 	}
 
 	$("mode-toggle").hidden = !mtg;
-	document.querySelectorAll(".mode-opt").forEach((btn) => {
+	document.querySelectorAll("#mode-toggle .mode-opt").forEach((btn) => {
 		const on = btn.dataset.mode === state.mode;
 		btn.classList.toggle("is-active", on);
 		btn.setAttribute("aria-checked", on ? "true" : "false");

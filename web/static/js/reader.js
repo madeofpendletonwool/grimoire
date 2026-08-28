@@ -9,6 +9,7 @@
 // transcript, so leaving it restores the open conversation exactly.
 
 import { $, el, clear, isNarrow } from "./dom.js";
+import { openTool, isOpen, focusedTool } from "./wm/wm.js";
 import { api } from "./api.js";
 import { state, activeCorpus, corpusLabel } from "./state.js";
 import { renderMarkdown } from "./markdown.js";
@@ -21,9 +22,7 @@ let toc = []; // the selected guide's stops
 let number = ""; // the stop currently on the page
 let abort = null; // cancels a page fetch superseded by another click
 
-export function initReader() {
-	$("rail-reader").addEventListener("click", () => openReader());
-	$("reader-close").addEventListener("click", closeReader);
+function wire() {
 
 	// Guide tabs and TOC entries are delegated so re-renders keep working.
 	$("reader-guides").addEventListener("click", (e) => {
@@ -45,13 +44,13 @@ export function initReader() {
 	// open, the same move study mode makes.
 	document.querySelectorAll(".corpus-opt").forEach((btn) => {
 		btn.addEventListener("click", () => {
-			if (state.readerOpen) openReader(btn.dataset.corpus);
+			if (isOpen("reader")) openReader(btn.dataset.corpus);
 		});
 	});
 
 	// Page-turn keys, unless the reader is typing somewhere.
 	document.addEventListener("keydown", (e) => {
-		if (!state.readerOpen || e.altKey || e.ctrlKey || e.metaKey) return;
+		if (focusedTool() !== "reader" || e.altKey || e.ctrlKey || e.metaKey) return;
 		const tag = (document.activeElement && document.activeElement.tagName) || "";
 		if (tag === "INPUT" || tag === "TEXTAREA") return;
 		const page = $("reader-page");
@@ -76,12 +75,8 @@ export function initReader() {
  * number from a citation) — and otherwise resumes wherever the reader last
  * was in the corpus.
  */
-export async function openReader(c, target) {
+async function openReader(c, target) {
 	corpus = c || activeCorpus();
-	state.readerOpen = true;
-	if (isNarrow()) $("app").classList.add("rail-hidden");
-	$("reader-view").hidden = false;
-	$("main").classList.add("is-reading");
 	$("reader-title").textContent = `${corpusLabel(corpus)} — read`;
 	try {
 		const data = await api.readerGuides(corpus);
@@ -117,13 +112,9 @@ export async function openReader(c, target) {
 }
 
 /** Drop back to the transcript; a queued fetch is cancelled with it. */
-export function closeReader() {
+function closeReader() {
 	if (abort) abort.abort();
-	state.readerOpen = false;
-	$("reader-view").hidden = true;
 	$("reader-view").classList.remove("toc-open");
-	$("main").classList.remove("is-reading");
-	$("rail-reader").focus();
 }
 
 /** Load one guide: its contents, and either the target stop or the cover. */
@@ -293,4 +284,47 @@ function renderEmptyGuide() {
 			el("p", { class: "reader-empty-sub", text: "This volume's contents came through empty." }),
 		),
 	);
+}
+
+/* ---------- the window-manager contract ---------- */
+
+// mount() adopts the surface that already exists in index.html rather than
+// building one, which is what made migrating nine surfaces tractable: every
+// $("reader-toc") lookup inside this module keeps working untouched. The
+// cost is one window per tool; see the note on `instances` in wm/registry.js.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("reader-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		flushRead();
+		return { destroy: closeReader };
+	},
+};
+
+/**
+ * Open the reading surface at a citation — the drawer's "Read this in the
+ * book". The target is parked rather than passed, because opening the tool may
+ * mount it, and mount() runs the load itself; handing it a pending target
+ * means the page is fetched once whether the window was already up or not.
+ */
+let pendingRead = null;
+
+export function readAt(corpus, target) {
+	pendingRead = { corpus, target };
+	const already = isOpen("reader");
+	openTool("reader");
+	if (already) flushRead();
+}
+
+function flushRead() {
+	const p = pendingRead;
+	pendingRead = null;
+	return openReader(p?.corpus, p?.target);
 }

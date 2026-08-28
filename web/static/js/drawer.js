@@ -5,7 +5,7 @@ import { $, clear, el, isNarrow } from "./dom.js";
 import { api } from "./api.js";
 import { ruleCard, cardView } from "./render.js";
 import { registerRefHandlers } from "./refs.js";
-import { openReader } from "./reader.js";
+import { readAt } from "./reader.js";
 import { activeCorpus } from "./state.js";
 
 let lastFocus = null;
@@ -88,7 +88,7 @@ function readLink(corpus, number) {
 		on: {
 			click: () => {
 				closeDrawer();
-				openReader(corpus, { number });
+				readAt(corpus, { number });
 			},
 		},
 	});

@@ -22,6 +22,9 @@
 	--frame-field: url("/static/assets/ui/field.png");
 	--frame-field-focus: url("/static/assets/ui/field-focus.png");
 	--frame-bar: url("/static/assets/ui/bar.png");
+	--frame-tab: url("/static/assets/ui/tab.png");
+	--frame-tab-active: url("/static/assets/ui/tab-active.png");
+	--frame-titleplate: url("/static/assets/ui/titleplate.png");
 
 	/* One transform, applied to both the scene layers and the sky behind them
 	   so the two cannot drift apart. Light on the sepia — each scene keeps its
@@ -81,6 +84,25 @@
    so the pairing is visible in one place. */
 
 .nine,
+
+/* The f-* utilities are listed here so they work on their own. They were not,
+   which is why nothing adopted them and this list grew into a manifest every
+   new component had to be added to by hand — a shape that does not survive a
+   window manager whose whole promise is that adding a tool touches one file.
+   New chrome should reach for a utility, not extend the list below. */
+.f-parchment,
+.f-stone,
+.f-stone-active,
+.f-field,
+.f-chip,
+.f-button,
+.f-page,
+.f-cover,
+.f-bar,
+.f-tab,
+.f-tab-active,
+.f-titleplate,
+
 .msg-sage .bubble,
 .gate-page,
 .rule-ref,
@@ -266,6 +288,30 @@
 	border-width: 2px 6px;
 	border-image-source: var(--frame-bar);
 	border-image-slice: 1 3 1 3 fill;
+}
+
+/* Tabs and title bars, cut from the Pixel RPG UI Pack's plate: a border, a
+   dark inset line, then fill, in concentric rings — so 3 slices against a 6px
+   border is the same clean 2x every other frame here uses.
+
+   A tabbed container and a window's title bar are the two things the old
+   chrome had no art for. Tabs borrowed the chip sprite meant for inline pills
+   and title bars used the 2px progress bar; neither was drawn to be what it
+   was doing. */
+.f-tab,
+.f-titleplate {
+	border-width: 6px;
+	border-image-source: var(--frame-tab);
+	border-image-slice: 3 fill;
+}
+.f-titleplate { border-image-source: var(--frame-titleplate); }
+
+/* The selected tab takes gold on its inset line — the same "this is the live
+   one" gold field-focus uses, so the two agree rather than each inventing a
+   way to say it. */
+.f-tab-active,
+.f-tab.is-active {
+	border-image-source: var(--frame-tab-active);
 }
 
 /* Rule references in the prose: a bracketed number, not a button-shaped

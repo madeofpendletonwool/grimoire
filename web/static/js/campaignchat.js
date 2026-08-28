@@ -5,10 +5,11 @@
 // itself. "You don't know that" is the record speaking, not the model
 // improvising.
 
+import { openTool } from "./wm/wm.js";
 import { $, el, clear, isNarrow } from "./dom.js";
 import { api, streamCampaignAnswer } from "./api.js";
 import { renderAnswer, renderCitations } from "./render.js";
-import { openReviewFor } from "./review.js";
+import { reviewFor } from "./review.js";
 
 let campaigns = [];
 let campaignID = null; // { id, my_role }
@@ -17,9 +18,7 @@ let threads = [];
 let streaming = false;
 let abort = null;
 
-export function initCampaignChat() {
-	$("rail-cchat").addEventListener("click", openCampaignChat);
-	$("cchat-close").addEventListener("click", closeCampaignChat);
+function wire() {
 	$("cchat-campaign").addEventListener("change", onPickCampaign);
 	$("cchat-new").addEventListener("click", onNewThread);
 	$("cchat-composer").addEventListener("submit", onSubmit);
@@ -27,8 +26,7 @@ export function initCampaignChat() {
 	$("cchat-history").addEventListener("click", onHistoryClick);
 	$("cchat-transcript").addEventListener("click", onCommandStripClick);
 	$("cchat-go-campaign").addEventListener("click", () => {
-		closeCampaignChat();
-		document.getElementById("rail-campaign").click();
+		openTool("campaign");
 	});
 	$("cchat-input").addEventListener("keydown", (e) => {
 		if (e.key === "Enter" && !e.shiftKey) {
@@ -38,18 +36,12 @@ export function initCampaignChat() {
 	});
 }
 
-export async function openCampaignChat() {
-	if (isNarrow()) $("app").classList.add("rail-hidden");
-	$("cchat-view").hidden = false;
-	$("main").classList.add("is-cchat");
+async function openCampaignChat() {
 	await loadCampaigns();
 }
 
-export function closeCampaignChat() {
+function closeCampaignChat() {
 	stopStreaming();
-	$("cchat-view").hidden = true;
-	$("main").classList.remove("is-cchat");
-	$("rail-cchat").focus();
 }
 
 /* ---------- campaigns and threads ---------- */
@@ -387,7 +379,7 @@ function stopStreaming() {
 function onCommandStripClick(e) {
 	const review = e.target.closest("[data-cmd-review]");
 	if (review) {
-		openReviewFor(campaignID);
+		reviewFor(campaignID);
 		return;
 	}
 	const name = e.target.closest("[data-cmd-name]");
@@ -422,3 +414,25 @@ function renderPerspective(perspective) {
 		renderMeta(`Player Grimoire — what ${perspective} has learned.`);
 	}
 }
+
+/* ---------- the window-manager contract ---------- */
+
+// mount() adopts the surface that already exists in index.html rather than
+// building one, which is what made migrating nine surfaces tractable: every
+// $("cchat-transcript") lookup inside this module keeps working untouched. The
+// cost is one window per tool; see the note on `instances` in wm/registry.js.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("cchat-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		openCampaignChat();
+		return { destroy: closeCampaignChat };
+	},
+};

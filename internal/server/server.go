@@ -36,6 +36,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
+	"github.com/madeofpendletonwool/grimoire/internal/uistate"
 	"github.com/madeofpendletonwool/grimoire/web"
 )
 
@@ -83,9 +84,13 @@ type Server struct {
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
-	transcribe       *transcribe.Client
-	transcribeOpts   TranscribeOptions
-	transcribeWork   transcribeWorkState
+	transcribe     *transcribe.Client
+	transcribeOpts TranscribeOptions
+	transcribeWork transcribeWorkState
+	// The Campaign OS layout store (MAD-366): saved workspaces and interface
+	// preferences, per user. Wired with WithUIState; nil keeps the window
+	// manager's layouts in the browser instead.
+	ui               *uistate.Store
 	openRegistration bool
 	tmpl             *template.Template
 	static           fs.FS
@@ -152,6 +157,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/chats/{id}/messages", s.handleChatMessage)
 	mux.HandleFunc("GET /api/study/queue", s.handleStudyQueue)
 	mux.HandleFunc("POST /api/study/grade", s.handleStudyGrade)
+
+	// Campaign OS interface state: which tools are open and where, plus the
+	// small preferences that used to live in localStorage. Per user, never
+	// per campaign — a layout follows the account across devices.
+	mux.HandleFunc("GET /api/ui/layouts", s.handleUILayouts)
+	mux.HandleFunc("PUT /api/ui/layouts", s.handleUISaveLayout)
+	mux.HandleFunc("DELETE /api/ui/layouts/{slot}", s.handleUIDeleteLayout)
+	mux.HandleFunc("GET /api/ui/prefs", s.handleUIPrefs)
+	mux.HandleFunc("PUT /api/ui/prefs", s.handleUISavePrefs)
 	mux.HandleFunc("GET /api/reader/guides", s.handleReaderGuides)
 	mux.HandleFunc("GET /api/reader/toc", s.handleReaderTOC)
 	mux.HandleFunc("GET /api/reader/page", s.handleReaderPage)

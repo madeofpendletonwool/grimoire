@@ -1,5 +1,6 @@
 // The conversation: transcript, composer, streaming, and saved history.
 
+import { openTool } from "./wm/wm.js";
 import { $, el, clear, isNarrow } from "./dom.js";
 import { api, streamAnswer } from "./api.js";
 import { state, activeCorpus, corpusLabel, supportsCards, saveCorpusPreference } from "./state.js";
@@ -35,7 +36,7 @@ const SLASH = [
 
 /* ---------- Setup ---------- */
 
-export function initChat() {
+function wire() {
 	const form = $("composer");
 	const input = $("composer-input");
 
@@ -51,7 +52,6 @@ export function initChat() {
 	input.addEventListener("keydown", onComposerKeydown);
 
 	$("stop-btn").addEventListener("click", stopStreaming);
-	$("new-chat").addEventListener("click", () => startNewChat());
 	$("topbar-rename").addEventListener("click", renameCurrent);
 	$("topbar-delete").addEventListener("click", deleteCurrent);
 
@@ -61,6 +61,10 @@ export function initChat() {
 /* ---------- Conversation lifecycle ---------- */
 
 export function startNewChat() {
+	// Reachable from the rail while the chat window is closed, so open it
+	// first: otherwise the conversation loads into markup sitting in the
+	// stash, and the click does nothing visible.
+	openTool("chat");
 	if (state.streaming) stopStreaming();
 	state.mode = "ask"; // "New chat" is a saved conversation; leave resolve mode.
 	state.chat = null;
@@ -74,6 +78,7 @@ export function startNewChat() {
 }
 
 export async function openChat(id) {
+	openTool("chat");   // the sidebar history reaches here with no window up
 	if (state.streaming) stopStreaming();
 	try {
 		const data = await api.getChat(id);
@@ -534,3 +539,29 @@ function stickyScroll() {
 		if (follow) t.scrollTop = t.scrollHeight;
 	};
 }
+
+/* ---------- the window-manager contract ---------- */
+
+// Chat is a tool like the rest now, rather than the page every other surface
+// covered up. Its transcript and composer travel together into the window;
+// the conversation's own header (title, corpus chip, Ask/Resolve) went with
+// them, because that header describes a conversation, not the application.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("chat-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		syncChrome();
+		if (!isNarrow()) focusComposer();
+		// Streaming is deliberately not aborted on close: a window closed
+		// mid-answer should still have the answer waiting when it is reopened,
+		// which is the opposite of the surfaces that abort a search.
+		return { destroy() {} };
+	},
+};

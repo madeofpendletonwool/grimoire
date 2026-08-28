@@ -9,8 +9,20 @@ import (
 	"strings"
 )
 
-// mtgDefaultURL is the canonical MTG Comprehensive Rules text file.
+// mtgRulesPageURL is the canonical Wizards rules page; it always links the
+// current Comprehensive Rules text file.
+const mtgRulesPageURL = "https://magic.wizards.com/en/rules"
+
+// mtgDefaultURL is a pinned fallback for the MTG Comprehensive Rules text
+// file. Wizards rotates the date-stamped filename on every rules update, so
+// the live link is discovered from mtgRulesPageURL and this is used only if
+// discovery fails.
 const mtgDefaultURL = "https://media.wizards.com/2026/downloads/MagicCompRules%2020260807.txt"
+
+// mtgRulesLinkRe extracts the comp-rules .txt link from the rules page. The
+// href contains a literal (unencoded) space in the filename, which callers
+// encode before fetching.
+var mtgRulesLinkRe = regexp.MustCompile(`https://[^"']*MagicCompRules[^"']*\.txt`)
 
 // mtgReaderGuide identifies the Comprehensive Rules reader guide.
 const mtgReaderGuide = "rules"

@@ -82,6 +82,13 @@ def unpack(work):
     subprocess.run(["bsdtar", "-xf", need("Complete_UI_Book_Styles_Pack_Free.7z"),
                     "-C", ui], check=True)
 
+    # Pixel RPG UI Pack: one sheet, from which we take the plate the window
+    # manager's tabs and title bars are cut from. bsdtar reads rar as well as
+    # 7z, so no second extractor.
+    rpg = os.path.join(work, "rpg")
+    os.makedirs(rpg, exist_ok=True)
+    subprocess.run(["bsdtar", "-xf", need("Pixel RPG UI Pack.rar"), "-C", rpg], check=True)
+
     scenes = {}
     for key, name in SCENES.items():
         d = os.path.join(work, "scene-" + key)
@@ -96,6 +103,7 @@ def unpack(work):
         "ui": os.path.join(
             ui, "Complete_UI_Book_Styles_Pack_Free_v1.0",
             "01_TravelBookLite", "Sprites"),
+        "rpg": os.path.join(rpg, "Ui.png"),
         "scenes": scenes,
     }
 
@@ -187,9 +195,44 @@ def stone_frames(sprite, stone, outdir):
     }))
 
 
-def build_frames(ui, themes):
+# The Pixel RPG UI Pack's plate, at (747, 372) on its sheet: 46x12, and
+# exactly two colours arranged in concentric rings — border, a dark inset
+# line, then fill. That ring structure is what makes it sliceable at 3 on all
+# four sides (`border-image-slice: 3 fill` against `border-width: 6px`, the 2x
+# every other frame here uses), and it is the same shape make-field-sprites.py
+# had to rebuild the field frames into by hand. This one arrives that way.
+PLATE = (747, 372, 46, 12)
+PLATE_EDGE, PLATE_LINE = "#6d4e54", "#201727"
+
+
+def plate_frames(plate, stone, outdir):
+    """Tabs and title bars, recoloured onto a theme's stone ladder.
+
+    A tabbed container and a window's title bar are the two places the old
+    chrome had nothing to say: tabs borrowed the chip sprite meant for inline
+    pills, and title bars used the 2px progress bar. Both now get a plate that
+    was drawn as a plate.
+    """
+    os.makedirs(outdir, exist_ok=True)
+
+    def emit(name, mapping):
+        pngkit.write(os.path.join(outdir, name + ".png"), plate.recolour(mapping))
+
+    # An unselected tab recedes into the chrome behind it.
+    emit("tab", {PLATE_EDGE: stone["600"], PLATE_LINE: stone["900"]})
+    # The selected one takes gold on its inset line — the same "this is the
+    # live one" gold that field-focus uses, so the two agree.
+    emit("tab-active", {PLATE_EDGE: stone["500"], PLATE_LINE: GOLD["dim"]})
+    # A title bar sits on the window's own fill (stone 700), so it steps one
+    # rung up to separate from it without becoming a second surface.
+    emit("titleplate", {PLATE_EDGE: stone["600"], PLATE_LINE: stone["800"]})
+
+
+def build_frames(ui, rpg, themes):
     def sprite(name):
         return pngkit.read(os.path.join(ui, f"UI_TravelBook_{name}.png"))
+
+    plate = pngkit.read(rpg).crop(*PLATE)
 
     os.makedirs(os.path.join(OUT, "ui"), exist_ok=True)
 
@@ -234,8 +277,10 @@ def build_frames(ui, themes):
 
     # The default (no backdrop) chrome, then one set per theme.
     stone_frames(sprite, STONE, os.path.join(OUT, "ui"))
+    plate_frames(plate, STONE, os.path.join(OUT, "ui"))
     for key, theme in themes.items():
         stone_frames(sprite, theme["stone"], os.path.join(OUT, "ui", key))
+        plate_frames(plate, theme["stone"], os.path.join(OUT, "ui", key))
 
 
 # ------------------------------------------------------------------ scenes
@@ -350,6 +395,9 @@ html[data-scene="{key}"] {{
 \t--frame-field: url("/static/assets/ui/{key}/field.png");
 \t--frame-field-focus: url("/static/assets/ui/{key}/field-focus.png");
 \t--frame-bar: url("/static/assets/ui/{key}/bar.png");
+\t--frame-tab: url("/static/assets/ui/{key}/tab.png");
+\t--frame-tab-active: url("/static/assets/ui/{key}/tab-active.png");
+\t--frame-titleplate: url("/static/assets/ui/{key}/titleplate.png");
 }}""")
     open(THEMES_CSS, "w").write("\n".join(out) + "\n")
     print(f"  themes.css: {len(themes)} themes")
@@ -368,7 +416,7 @@ def main():
         print("scenes:")
         themes = build_scenes(src["scenes"])
         print("frames:")
-        build_frames(src["ui"], themes)
+        build_frames(src["ui"], src["rpg"], themes)
         shared = len([f for f in os.listdir(os.path.join(OUT, "ui"))
                       if f.endswith(".png")])
         print(f"  {shared} shared, {len(themes)} themed sets")

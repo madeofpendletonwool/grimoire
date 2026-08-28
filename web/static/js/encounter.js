@@ -43,9 +43,7 @@ const SEEDS = [
 	"guardians of a sealed door",
 ];
 
-export function initEncounter() {
-	$("rail-encounter").addEventListener("click", openEncounter);
-	$("encounter-close").addEventListener("click", closeEncounter);
+function wire() {
 
 	renderBands();
 	renderSeeds();
@@ -123,23 +121,15 @@ export function initEncounter() {
 }
 
 /** Open the builder surface. */
-export function openEncounter() {
-	state.encounterOpen = true;
-	if (isNarrow()) $("app").classList.add("rail-hidden");
-	$("encounter-view").hidden = false;
-	$("main").classList.add("is-encountering");
+function openEncounter() {
 	loadSavedList();
 	refresh();
 	$("enc-idea").focus();
 }
 
 /** Drop back to the transcript. */
-export function closeEncounter() {
-	state.encounterOpen = false;
+function closeEncounter() {
 	for (const c of [evalAbort, searchAbort, designAbort, budgetAbort]) if (c) c.abort();
-	$("encounter-view").hidden = true;
-	$("main").classList.remove("is-encountering");
-	$("rail-encounter").focus();
 }
 
 /* ---------- The brief ---------- */
@@ -780,3 +770,25 @@ function askSage() {
 	input.dispatchEvent(new Event("input", { bubbles: true }));
 	input.focus();
 }
+
+/* ---------- the window-manager contract ---------- */
+
+// mount() adopts the surface that already exists in index.html rather than
+// building one, which is what made migrating nine surfaces tractable: every
+// $("enc-party") lookup inside this module keeps working untouched. The
+// cost is one window per tool; see the note on `instances` in wm/registry.js.
+let wired = false;
+
+export const tool = {
+	mount(host) {
+		const view = $("encounter-view");
+		host.append(view);
+		view.hidden = false;
+		if (!wired) {
+			wire();
+			wired = true;
+		}
+		openEncounter();
+		return { destroy: closeEncounter };
+	},
+};

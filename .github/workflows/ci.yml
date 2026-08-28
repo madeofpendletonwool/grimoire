@@ -36,3 +36,14 @@ jobs:
 
       - name: Test
         run: go test -race -count=1 ./...
+
+      # The DOM-free front-end modules (ADR 14) — today the window manager's
+      # layout tree. No install step: there are no dependencies, and the root
+      # package.json exists only to mark the .js files as ES modules.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test front-end layout engine
+        run: node --test "jstest/**/*.test.js"
