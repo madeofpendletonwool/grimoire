@@ -112,6 +112,7 @@ nav:
       - Epistemics: campaign/epistemics.md
       - The Clock: campaign/clock.md
       - Factions: campaign/factions.md
+      - The Simulation Tick: campaign/simulation.md
   - Table Play:
       - Data Model: table/model.md
       - Interaction: table/interaction.md

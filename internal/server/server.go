@@ -34,6 +34,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
+	"github.com/madeofpendletonwool/grimoire/internal/sim"
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
@@ -86,6 +87,10 @@ type Server struct {
 	// deterministic planner helpers. Wired with WithStory; nil disables the
 	// story endpoints.
 	stories *story.Store
+	// The simulation tick (MAD-367): advance the world by N days. Wired
+	// with WithSim (needs the canon engine, the faction plans and the
+	// campaign store); nil disables the simulate endpoints.
+	sims *sim.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -254,6 +259,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/campaigns/{id}/schedule/{sid}", s.handleUpdateCampaignSchedule)
 	mux.HandleFunc("DELETE /api/campaigns/{id}/schedule/{sid}", s.handleDeleteCampaignSchedule)
 	mux.HandleFunc("POST /api/campaigns/{id}/travel", s.handleCampaignTravel)
+	// The simulation tick (MAD-367): preview a window of world-state
+	// outcomes, then stage them as one proposal batch behind the review
+	// gate. Accepting the batch — on the ordinary batch surface — moves
+	// the clock by exactly the window, exactly once. DM-only.
+	mux.HandleFunc("POST /api/campaigns/{id}/simulate", s.handleCampaignSimulate)
+	mux.HandleFunc("POST /api/campaigns/{id}/simulate/{tid}/stage", s.handleCampaignSimulateStage)
 	mux.HandleFunc("GET /api/campaigns/{id}/graph", s.handleCampaignGraph)
 	mux.HandleFunc("GET /api/campaigns/{id}/search", s.handleCampaignSearch)
 	// The campaign chat (MAD-311): the DM Grimoire and the Player Grimoire.

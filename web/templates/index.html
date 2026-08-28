@@ -525,6 +525,24 @@
 						</div>
 						<button type="submit" class="enc-btn">Move the days</button>
 					</form>
+					<!-- The simulation tick (MAD-367): a deterministic
+					     preview of what N days of plans, schedule and
+					     NPC goals produce, staged as a proposal only when
+					     the DM asks for it. The clock never moves on its
+					     own. -->
+					<form class="camp-simulate-form" id="camp-simulate-form" autocomplete="off" hidden>
+						<h4 class="camp-sheet-heading">Advance the world</h4>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Days</span>
+								<input id="camp-simulate-days" class="enc-field" type="number" placeholder="14" aria-label="Days to simulate">
+							</label>
+							<label class="camp-field"><span>Seed (optional)</span>
+								<input id="camp-simulate-seed" class="enc-field" type="number" aria-label="Seed">
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Simulate</button>
+						<div class="camp-simulate-result" id="camp-simulate-result" hidden></div>
+					</form>
 				</div>
 				<div class="camp-panel camp-graph-panel">
 						<h3 class="enc-heading">The map</h3>
