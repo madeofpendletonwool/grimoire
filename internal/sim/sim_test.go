@@ -357,7 +357,7 @@ func TestTickSecretPlanMoveIsNotPublicized(t *testing.T) {
 	copy(plans, in.plans)
 	plans[0].Visibility = campaign.VisibilitySecret
 	res := Tick(in.snapshot, in.calendar, plans, in.entries, 4, 9)
-	items := batchItems(&res)
+	items := batchItems(&res, "")
 	for _, it := range items {
 		if it.Kind == "fact" {
 			t.Fatalf("a secret plan move was publicized: %+v", it)

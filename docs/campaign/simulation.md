@@ -96,5 +96,5 @@ for a DM who wants the answer without touching the review queue.
 No timer. The world advances when the DM asks it to, on the DM's clock,
 never on a schedule of its own — a campaign that moves while nobody is
 looking is a campaign the DM has to re-read before every session. Downtime
-resolution (players spending days on their own projects) is the next stage;
-this issue is the world's half of "time passes."
+resolution ([the character's half of "time passes"](downtime.md)) points
+this same tick at one character; this issue is the world's half.
