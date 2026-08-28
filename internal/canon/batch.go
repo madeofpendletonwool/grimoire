@@ -75,12 +75,14 @@ const (
 	BatchSourceNLCommand   = "nl_command"
 	BatchSourceSessionPrep = "session_prep"
 	BatchSourceTick        = "tick"
+	BatchSourceDowntime    = "downtime"
 )
 
 // batchSources is the validated source vocabulary.
 var batchSources = map[string]bool{
 	BatchSourceSkeleton: true, BatchSourceStoryPlan: true, BatchSourceScene: true,
 	BatchSourceNLCommand: true, BatchSourceSessionPrep: true, BatchSourceTick: true,
+	BatchSourceDowntime: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -751,21 +753,32 @@ func (s *Store) DecideBatch(ctx context.Context, campaignID, batchID, decision s
 	return s.finishDecide(ctx, campaignID, batch, res, decision)
 }
 
-// finishDecide wraps finishBatchDecision with the tick completion: a tick
-// batch that leaves open hands off to the tick finalizer — the campaign
-// clock's move by exactly the window and the sim_ticks row's status flip —
-// whatever path decided it. The finalizer is idempotent (guarded on the
-// sim_ticks row's own status), so a failed completion heals on the decision
-// retry a decided batch allows.
+// finishDecide wraps finishBatchDecision with the source-specific
+// completions: a tick batch that leaves open hands off to the tick finalizer
+// — the campaign clock's move by exactly the window and the sim_ticks row's
+// status flip — and a downtime batch to the downtime finalizer, same
+// contract under reason 'downtime'. Whatever path decided it. The finalizers
+// are idempotent (guarded on their own rows' statuses), so a failed
+// completion heals on the decision retry a decided batch allows.
 func (s *Store) finishDecide(ctx context.Context, campaignID string, batch *Batch, res *BatchDecision, decision string) (*BatchDecision, error) {
 	out, err := s.finishBatchDecision(ctx, campaignID, batch, res, decision)
 	if err != nil {
 		return nil, err
 	}
-	if out.Batch != nil && out.Batch.Source == BatchSourceTick &&
-		out.Batch.Status != BatchOpen && s.tickFinalizer != nil {
-		if err := s.tickFinalizer.FinalizeTickBatch(ctx, out.Batch); err != nil {
-			return nil, fmt.Errorf("finish tick batch %s: %w", out.Batch.ID, err)
+	if out.Batch != nil && out.Batch.Status != BatchOpen {
+		switch out.Batch.Source {
+		case BatchSourceTick:
+			if s.tickFinalizer != nil {
+				if err := s.tickFinalizer.FinalizeTickBatch(ctx, out.Batch); err != nil {
+					return nil, fmt.Errorf("finish tick batch %s: %w", out.Batch.ID, err)
+				}
+			}
+		case BatchSourceDowntime:
+			if s.downtimeFinalizer != nil {
+				if err := s.downtimeFinalizer.FinalizeDowntimeBatch(ctx, out.Batch); err != nil {
+					return nil, fmt.Errorf("finish downtime batch %s: %w", out.Batch.ID, err)
+				}
+			}
 		}
 	}
 	return out, nil
@@ -1159,7 +1172,9 @@ func numField(v any) float64 {
 }
 
 // applyGeneratedDiscovery records the accepted discovery with its awareness
-// row. The fact may be one this same batch created.
+// row. The fact may be one this same batch created; the event the discovery
+// happened at may be a sibling this same batch applied (since_event carries
+// its local id).
 func (s *Store) applyGeneratedDiscovery(ctx context.Context, rev *Review, p map[string]any, decidedBy string, res *batchResolution) (string, error) {
 	factRef := str(p, "fact")
 	if factRef == "" {
@@ -1176,6 +1191,10 @@ func (s *Store) applyGeneratedDiscovery(ctx context.Context, rev *Review, p map[
 			return "", err
 		}
 	}
+	var sinceEvent string
+	if ref := str(p, "since_event"); ref != "" && res != nil {
+		sinceEvent = res.events[ref]
+	}
 	confidence := 1.0
 	if c, ok := p["confidence"].(float64); ok && c >= 0 && c <= 1 {
 		confidence = c
@@ -1188,6 +1207,7 @@ func (s *Store) applyGeneratedDiscovery(ctx context.Context, rev *Review, p map[
 		Confidence:   confidence,
 		AcceptedBy:   decidedBy,
 		Stance:       str(p, "stance"),
+		SinceEvent:   sinceEvent,
 	})
 	if err != nil {
 		return "", fmt.Errorf("accept discovery: %w", err)

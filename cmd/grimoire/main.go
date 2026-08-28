@@ -78,6 +78,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
+	"github.com/madeofpendletonwool/grimoire/internal/downtime"
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
@@ -1523,6 +1524,15 @@ func runServe() error {
 	}
 	canonEngine = canonEngine.WithTickFinalizer(simEngine)
 
+	// Downtime resolution (MAD-368): the tick pointed at one character,
+	// same gate, reason 'downtime' on the clock. Its store is the downtime
+	// finalizer.
+	downtimeEngine, err := downtime.New(store.DB(), campaigns, factions, canonEngine)
+	if err != nil {
+		return err
+	}
+	canonEngine = canonEngine.WithDowntimeFinalizer(downtimeEngine)
+
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
 		func(ctx context.Context) error { return buildIndex(ctx, store) })
@@ -1536,7 +1546,7 @@ func runServe() error {
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)
-	srv = srv.WithSim(simEngine)
+	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {

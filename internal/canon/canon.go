@@ -241,6 +241,11 @@ type Store struct {
 	// the clock move and the sim_ticks status flip. Wired with
 	// WithTickFinalizer; internal/sim implements it.
 	tickFinalizer TickFinalizer
+	// downtimeFinalizer, when wired, completes a decided downtime batch —
+	// the clock move under reason 'downtime' and the downtime_requests
+	// status flip. Wired with WithDowntimeFinalizer; internal/downtime
+	// implements it.
+	downtimeFinalizer DowntimeFinalizer
 }
 
 // New builds a canon store on an open, migrated database handle with the

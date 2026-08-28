@@ -24,6 +24,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
+	"github.com/madeofpendletonwool/grimoire/internal/downtime"
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
@@ -91,6 +92,10 @@ type Server struct {
 	// with WithSim (needs the canon engine, the faction plans and the
 	// campaign store); nil disables the simulate endpoints.
 	sims *sim.Store
+	// Downtime resolution (MAD-368): the tick pointed at one character.
+	// Wired with WithDowntime (needs everything the tick needs); nil
+	// disables the downtime endpoints.
+	downtime *downtime.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -265,6 +270,13 @@ func (s *Server) Handler() http.Handler {
 	// the clock by exactly the window, exactly once. DM-only.
 	mux.HandleFunc("POST /api/campaigns/{id}/simulate", s.handleCampaignSimulate)
 	mux.HandleFunc("POST /api/campaigns/{id}/simulate/{tid}/stage", s.handleCampaignSimulateStage)
+	// Downtime resolution (MAD-368): the tick pointed at one character. A
+	// player may request it for their own character; the outcome is a
+	// proposal the DM stages and decides. The player response carries the
+	// request, never the computed result — what they find out is the DM's
+	// to reveal.
+	mux.HandleFunc("POST /api/campaigns/{id}/downtime", s.handleCampaignDowntime)
+	mux.HandleFunc("POST /api/campaigns/{id}/downtime/{did}/stage", s.handleCampaignDowntimeStage)
 	mux.HandleFunc("GET /api/campaigns/{id}/graph", s.handleCampaignGraph)
 	mux.HandleFunc("GET /api/campaigns/{id}/search", s.handleCampaignSearch)
 	// The campaign chat (MAD-311): the DM Grimoire and the Player Grimoire.

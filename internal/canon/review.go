@@ -219,6 +219,22 @@ func (s *Store) WithTickFinalizer(f TickFinalizer) *Store {
 	return s
 }
 
+// DowntimeFinalizer completes a decided downtime batch (MAD-368): the same
+// one write — the campaign clock moves by exactly the window, reason
+// 'downtime' — plus the downtime_requests row's status flip. Implemented by
+// internal/downtime's store and wired with WithDowntimeFinalizer; the same
+// idempotency contract as the tick finalizer.
+type DowntimeFinalizer interface {
+	FinalizeDowntimeBatch(ctx context.Context, batch *Batch) error
+}
+
+// WithDowntimeFinalizer wires the downtime completion. Without it downtime
+// batches are still decidable, but their clock moves go unrecorded.
+func (s *Store) WithDowntimeFinalizer(f DowntimeFinalizer) *Store {
+	s.downtimeFinalizer = f
+	return s
+}
+
 /* ---------- building the queue ---------- */
 
 // BuildQueue creates queue items for every finding the three upstream passes

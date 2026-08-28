@@ -230,16 +230,16 @@ func (s *Store) flavour(ctx context.Context, res *Result) (map[string]string, bo
 		if !res.Plans[i].Moved {
 			continue
 		}
-		outs = append(outs, outcome{id: planItemID(res.Plans[i].PlanID), summary: res.Plans[i].Progression.Summary()})
+		outs = append(outs, outcome{id: planItemID("", res.Plans[i].PlanID), summary: res.Plans[i].Progression.Summary()})
 	}
 	for _, d := range res.Due {
-		outs = append(outs, outcome{id: dueItemID(d.EntryID, d.Day), summary: fmt.Sprintf("%s happens as scheduled.", d.Name)})
+		outs = append(outs, outcome{id: dueItemID("", d.EntryID, d.Day), summary: fmt.Sprintf("%s happens as scheduled.", d.Name)})
 	}
 	for _, a := range res.Actions {
-		outs = append(outs, outcome{id: actionItemID(a.NPC), summary: a.Summary})
+		outs = append(outs, outcome{id: actionItemID("", a.NPC), summary: a.Summary})
 	}
 	for _, c := range res.Consequences {
-		outs = append(outs, outcome{id: reactItemID(c.Reactor, c.PlanID), summary: c.Summary})
+		outs = append(outs, outcome{id: reactItemID("", c.Reactor, c.PlanID), summary: c.Summary})
 	}
 	if len(outs) == 0 {
 		return nil, true // nothing to narrate; deterministic summary is the whole answer
@@ -312,7 +312,7 @@ func (s *Store) StageTick(ctx context.Context, campaignID, tickID, userID string
 		return nil, nil, fmt.Errorf("%w: the campaign has changed since this preview; run a new simulation",
 			campaign.ErrInvalid)
 	}
-	items := batchItems(&res)
+	items := batchItems(&res, "")
 	if len(items) == 0 {
 		return nil, nil, fmt.Errorf("%w: the window produced no outcomes; there is nothing to stage", campaign.ErrInvalid)
 	}
@@ -433,15 +433,23 @@ func (s *Store) Ticks(ctx context.Context, campaignID string) ([]TickRow, error)
 
 /* ---------- the batch items ---------- */
 
-func planItemID(planID string) string     { return "plan-" + planID }
-func planMoveItemID(planID string) string { return "planmove-" + planID }
-func planFactItemID(planID string) string { return "planfact-" + planID }
-func dueItemID(entryID string, day int64) string {
-	return fmt.Sprintf("due-%s-%d", entryID, day)
+func planItemID(prefix, planID string) string     { return prefix + "plan-" + planID }
+func planMoveItemID(prefix, planID string) string { return prefix + "planmove-" + planID }
+func planFactItemID(prefix, planID string) string { return prefix + "planfact-" + planID }
+func dueItemID(prefix, entryID string, day int64) string {
+	return fmt.Sprintf("%sdue-%s-%d", prefix, entryID, day)
 }
-func actionItemID(npc string) string { return "npcact-" + npc }
-func reactItemID(reactor, planID string) string {
-	return "react-" + reactor + "-" + planID
+func actionItemID(prefix, npc string) string { return prefix + "npcact-" + npc }
+func reactItemID(prefix, reactor, planID string) string {
+	return prefix + "react-" + reactor + "-" + planID
+}
+
+// BatchItems turns the tick's outcomes into one proposal batch's items,
+// under a caller-chosen item-id prefix ("" for the tick's own staging;
+// internal/downtime prefixes its copy so the two never share dedup keys).
+// See the unexported batchItems for the item graph's shape.
+func BatchItems(res *Result, prefix string) []canon.BatchItemInput {
+	return batchItems(res, prefix)
 }
 
 // batchItems turns the tick's outcomes into one proposal batch's items:
@@ -459,7 +467,7 @@ func reactItemID(reactor, planID string) string {
 // depends_on is the causality: dismissing a plan move refuses its NPC
 // actions, dismissing the public fact refuses the reactions — MAD-359's
 // cascade, consumed as designed.
-func batchItems(res *Result) []canon.BatchItemInput {
+func batchItems(res *Result, prefix string) []canon.BatchItemInput {
 	var items []canon.BatchItemInput
 	for i := range res.Plans {
 		pa := &res.Plans[i]
@@ -469,11 +477,11 @@ func batchItems(res *Result) []canon.BatchItemInput {
 		pr := pa.Progression
 		summary := fmt.Sprintf("%s: %s", pa.Name, pr.Summary())
 		items = append(items, canon.BatchItemInput{
-			ID: planItemID(pa.PlanID), Kind: "event",
+			ID: planItemID(prefix, pa.PlanID), Kind: "event",
 			Subject: fmt.Sprintf("%s: %s advances", pa.FactionName, pa.Name),
 			Summary: summary,
 			Payload: map[string]any{
-				"local_id": planItemID(pa.PlanID),
+				"local_id": planItemID(prefix, pa.PlanID),
 				"summary":  summary,
 				"clock_at": res.ToDay,
 				"participants": []map[string]any{
@@ -490,7 +498,7 @@ func batchItems(res *Result) []canon.BatchItemInput {
 			"days":          pr.Days,
 			"gain":          pr.Gain,
 			"clock_day":     res.ToDay,
-			"event":         planItemID(pa.PlanID),
+			"event":         planItemID(prefix, pa.PlanID),
 		}
 		if pr.Halted != "" {
 			payload["halted"] = pr.Halted
@@ -510,34 +518,34 @@ func batchItems(res *Result) []canon.BatchItemInput {
 			payload["terms"] = terms
 		}
 		items = append(items, canon.BatchItemInput{
-			ID: planMoveItemID(pa.PlanID), Kind: "plan_transition",
+			ID: planMoveItemID(prefix, pa.PlanID), Kind: "plan_transition",
 			Subject:   fmt.Sprintf("%s: %s — %s -> %s", pa.FactionName, pa.Name, pr.FromState, pr.ToState),
 			Summary:   summary,
 			Payload:   payload,
-			DependsOn: []string{planItemID(pa.PlanID)},
+			DependsOn: []string{planItemID(prefix, pa.PlanID)},
 		})
 		if pa.Advanced.Visibility == campaign.VisibilityPublic {
 			statement := fmt.Sprintf("%s advances its plan to %s.", pa.FactionName, pr.ToState)
 			items = append(items, canon.BatchItemInput{
-				ID: planFactItemID(pa.PlanID), Kind: "fact",
+				ID: planFactItemID(prefix, pa.PlanID), Kind: "fact",
 				Subject: fmt.Sprintf("%s's plan reaches %s", pa.FactionName, pr.ToState),
 				Summary: statement,
 				Payload: map[string]any{
-					"local_id":       planFactItemID(pa.PlanID),
+					"local_id":       planFactItemID(prefix, pa.PlanID),
 					"statement":      statement,
 					"subject":        pa.FactionEntity,
 					"predicate":      "plan_reached",
 					"object_literal": pr.ToState,
 					"visibility":     campaign.VisibilityPublic,
 				},
-				DependsOn: []string{planMoveItemID(pa.PlanID)},
+				DependsOn: []string{planMoveItemID(prefix, pa.PlanID)},
 			})
 		}
 	}
 	for _, d := range res.Due {
 		summary := fmt.Sprintf("%s happens as scheduled.", d.Name)
 		payload := map[string]any{
-			"local_id": dueItemID(d.EntryID, d.Day),
+			"local_id": dueItemID(prefix, d.EntryID, d.Day),
 			"summary":  summary,
 			"clock_at": d.Day,
 		}
@@ -552,40 +560,40 @@ func batchItems(res *Result) []canon.BatchItemInput {
 			subject += " (secret)"
 		}
 		items = append(items, canon.BatchItemInput{
-			ID: dueItemID(d.EntryID, d.Day), Kind: "event",
+			ID: dueItemID(prefix, d.EntryID, d.Day), Kind: "event",
 			Subject: subject, Summary: summary, Payload: payload,
 		})
 	}
 	for _, a := range res.Actions {
 		items = append(items, canon.BatchItemInput{
-			ID: actionItemID(a.NPC), Kind: "event",
+			ID: actionItemID(prefix, a.NPC), Kind: "event",
 			Subject: fmt.Sprintf("%s acts", a.NPCName),
 			Summary: a.Summary,
 			Payload: map[string]any{
-				"local_id": actionItemID(a.NPC),
+				"local_id": actionItemID(prefix, a.NPC),
 				"summary":  a.Summary,
 				"clock_at": a.Day,
 				"participants": []map[string]any{
 					{"entity": a.NPC, "role": "actor"},
 				},
 			},
-			DependsOn: []string{planMoveItemID(a.TriggerPlanID)},
+			DependsOn: []string{planMoveItemID(prefix, a.TriggerPlanID)},
 		})
 	}
 	for _, c := range res.Consequences {
 		items = append(items, canon.BatchItemInput{
-			ID: reactItemID(c.Reactor, c.PlanID), Kind: "event",
+			ID: reactItemID(prefix, c.Reactor, c.PlanID), Kind: "event",
 			Subject: fmt.Sprintf("%s reacts", c.ReactorName),
 			Summary: c.Summary,
 			Payload: map[string]any{
-				"local_id": reactItemID(c.Reactor, c.PlanID),
+				"local_id": reactItemID(prefix, c.Reactor, c.PlanID),
 				"summary":  c.Summary,
 				"clock_at": c.Day,
 				"participants": []map[string]any{
 					{"entity": c.Reactor, "role": "faction"},
 				},
 			},
-			DependsOn: []string{planFactItemID(c.PlanID)},
+			DependsOn: []string{planFactItemID(prefix, c.PlanID)},
 		})
 	}
 	return items
