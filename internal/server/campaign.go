@@ -27,6 +27,7 @@ import (
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/clock"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 )
 
@@ -313,6 +314,7 @@ type eventView struct {
 	ID           string                 `json:"id"`
 	Summary      string                 `json:"summary"`
 	ClockAt      *int64                 `json:"clock_at,omitempty"`
+	Date         string                 `json:"date,omitempty"` // clock_at formatted through the campaign calendar
 	RealOrdinal  int64                  `json:"real_ordinal"`
 	Location     string                 `json:"location_entity,omitempty"`
 	SessionID    string                 `json:"session_id,omitempty"`
@@ -322,11 +324,22 @@ type eventView struct {
 }
 
 func toEventView(e *campaign.Event, keepLinks bool) eventView {
+	return toEventViewCal(e, keepLinks, nil)
+}
+
+// toEventViewCal renders an event with its clock day formatted through the
+// campaign's calendar — "day 4,102" is not a date. A nil calendar (the
+// campaign somehow has none) leaves date empty and the caller falls back to
+// the bare number.
+func toEventViewCal(e *campaign.Event, keepLinks bool, cal *clock.Calendar) eventView {
 	v := eventView{
 		ID: e.ID, Summary: e.Summary, ClockAt: e.ClockAt, RealOrdinal: e.RealOrdinal,
 		Location: e.LocationEntity, SessionID: e.SessionID,
 		Participants: make([]eventParticipantView, 0, len(e.Participants)),
 		CreatedAt:    e.CreatedAt.Format(http.TimeFormat),
+	}
+	if e.ClockAt != nil && cal != nil {
+		v.Date = cal.Format(*e.ClockAt)
 	}
 	for _, p := range e.Participants {
 		v.Participants = append(v.Participants, eventParticipantView{EntityID: p.EntityID, Role: p.Role})
@@ -776,6 +789,7 @@ func (s *Server) handleCampaignEntity(w http.ResponseWriter, r *http.Request) {
 	}
 	eid := r.PathValue("eid")
 	ctx := r.Context()
+	cal := s.campaignCalendar(ctx, a.campaign.ID)
 	var detail entityDetail
 	if a.isDM() {
 		e, err := s.campaigns.GetEntity(ctx, campaign.ScopeDM, a.campaign.ID, eid)
@@ -834,7 +848,7 @@ func (s *Server) handleCampaignEntity(w http.ResponseWriter, r *http.Request) {
 		}
 		for i := range events {
 			if eventTouches(&events[i], eid) {
-				detail.Events = append(detail.Events, toEventView(&events[i], false))
+				detail.Events = append(detail.Events, toEventViewCal(&events[i], false, cal))
 			}
 		}
 	} else {
@@ -884,7 +898,7 @@ func (s *Server) handleCampaignEntity(w http.ResponseWriter, r *http.Request) {
 		}
 		for i := range events {
 			if eventTouches(&events[i], eid) {
-				detail.Events = append(detail.Events, toEventView(&events[i], false))
+				detail.Events = append(detail.Events, toEventViewCal(&events[i], false, cal))
 			}
 		}
 	}
@@ -1184,9 +1198,10 @@ func (s *Server) handleCampaignTimeline(w http.ResponseWriter, r *http.Request) 
 		}
 		events = list
 	}
+	cal := s.campaignCalendar(ctx, a.campaign.ID)
 	views := make([]eventView, 0, len(events))
 	for i := range events {
-		views = append(views, toEventView(&events[i], a.isDM()))
+		views = append(views, toEventViewCal(&events[i], a.isDM(), cal))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": views})
 }
@@ -1227,7 +1242,7 @@ func (s *Server) handleCreateCampaignEvent(w http.ResponseWriter, r *http.Reques
 	if e2, err := s.campaigns.GetEvent(r.Context(), campaign.ScopeDM, a.campaign.ID, e.ID); err == nil {
 		e = e2
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"event": toEventView(e, true)})
+	writeJSON(w, http.StatusCreated, map[string]any{"event": toEventViewCal(e, true, s.campaignCalendar(r.Context(), a.campaign.ID))})
 }
 
 func (s *Server) handleAddEventParticipant(w http.ResponseWriter, r *http.Request) {

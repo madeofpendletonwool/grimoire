@@ -265,6 +265,65 @@ export const api = {
 	campaignGraph: (cid, center, hops) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/graph?center=${encodeURIComponent(center)}&hops=${hops}`).then(json),
 
+	// The campaign clock (MAD-365): calendar, clock+weather+strip, the
+	// schedule, and travel. Reads the calendar so dates are legible to
+	// players too; everything that moves time is DM-only server-side.
+	campaignCalendar: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/calendar`).then(json),
+
+	campaignCalendarPut: (cid, calendar, seed) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/calendar`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ calendar, seed }),
+		}).then(json),
+
+	campaignClock: (cid, stripDays, dueDays, location) => {
+		const q = new URLSearchParams();
+		if (stripDays) q.set("strip", stripDays);
+		if (dueDays) q.set("due", dueDays);
+		if (location) q.set("location", location);
+		const qs = q.toString();
+		return fetch(`/api/campaigns/${encodeURIComponent(cid)}/clock${qs ? `?${qs}` : ""}`).then(json);
+	},
+
+	campaignClockAdvance: (cid, move, reason, note) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/clock/advance`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ ...move, reason, note }),
+		}).then(json),
+
+	campaignSchedule: (cid, dueDays) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/schedule` +
+			(dueDays ? `?due=${dueDays}` : "")).then(json),
+
+	campaignScheduleCreate: (cid, entry) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/schedule`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(entry),
+		}).then(json),
+
+	campaignScheduleUpdate: (cid, sid, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/schedule/${encodeURIComponent(sid)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	campaignScheduleDelete: (cid, sid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/schedule/${encodeURIComponent(sid)}`, {
+			method: "DELETE",
+		}).then(json),
+
+	campaignTravel: (cid, from, to, days) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/travel`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ from, to, ...(days != null ? { days } : {}) }),
+		}).then(json),
+
 	// The campaign chat (MAD-311): threads pinned to the campaign and to the
 	// caller's resolved scope. The scope is decided server-side from the
 	// membership row — this surface never chooses a perspective.

@@ -115,7 +115,18 @@ func (s *Store) CheckCampaign(ctx context.Context, campaignID string, opts Check
 // refreshFlags applies the ledger semantics to one run's findings, in one
 // transaction: insert new findings as open, refresh still-reported rows,
 // never clobber a decision, clear the ones that stopped coming.
+//
+// Info-severity findings (MAD-365's clock_never_advanced is the first) are
+// nudges, not decisions waiting to happen — they ride the finding list, not
+// the ledger.
 func (s *Store) refreshFlags(ctx context.Context, campaignID string, findings []campaign.Finding) error {
+	reportable := make([]campaign.Finding, 0, len(findings))
+	for _, fd := range findings {
+		if fd.Severity != campaign.SeverityInfo {
+			reportable = append(reportable, fd)
+		}
+	}
+	findings = reportable
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("flags tx: %w", err)

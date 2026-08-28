@@ -19,6 +19,9 @@ let kindFilter = "";
 let hops = 1;
 let supersedeTarget = null; // fact id the fact form will replace, if any
 let loadSeq = 0; // guards stale entity-list fetches
+let clockInfo = null; // the last GET /clock body (date, weather, strip, due)
+let scheduleEntries = []; // the schedule at the caller's scope
+let editingScheduleID = null; // the entry whose inline editor is open
 
 export function initCampaign() {
 	$("rail-campaign").addEventListener("click", openCampaign);
@@ -52,6 +55,12 @@ export function initCampaign() {
 	});
 	$("camp-new-entity").addEventListener("submit", onCreateEntity);
 	$("camp-fact-form").addEventListener("submit", onSubmitFact);
+	// The calendar (MAD-365): clock reads, schedule writes and inline edits,
+	// and advancing the days — all delegated so re-renders need no re-binds.
+	$("camp-schedule-form").addEventListener("submit", onCreateScheduleEntry);
+	$("camp-advance-form").addEventListener("submit", onAdvanceClock);
+	$("camp-schedule").addEventListener("click", onScheduleClick);
+	$("camp-schedule").addEventListener("submit", onScheduleInlineSubmit);
 	for (const radio of document.querySelectorAll('input[name="camp-object"]')) {
 		radio.addEventListener("change", () => syncObjectKind());
 	}
@@ -143,7 +152,10 @@ async function selectCampaign(id) {
 	if (!isDM()) $("camp-cmd-result").hidden = true;
 	kindFilter = "";
 	renderKindChips();
+	editingScheduleID = null;
 	await loadEntities();
+	loadClock();
+	loadSchedule();
 	if (isDM()) {
 		loadMembers();
 		loadInvites();
@@ -507,10 +519,238 @@ function relList(rels) {
 function eventList(events) {
 	const list = el("ul", { class: "camp-events" });
 	for (const ev of events) {
-		const day = ev.clock_at != null ? `day ${ev.clock_at}` : "";
-		list.append(el("li", { class: "camp-event", text: `${day ? day + " — " : ""}${ev.summary}` }));
+		// The server formatted the day through the campaign calendar; the
+		// bare number is the fallback, never the first choice.
+		const when = ev.date || (ev.clock_at != null ? `day ${ev.clock_at}` : "");
+		list.append(el("li", { class: "camp-event", text: `${when ? when + " — " : ""}${ev.summary}` }));
 	}
 	return list;
+}
+
+/* ---------- the calendar (MAD-365) ---------- */
+
+// The clock face: today's date, the weather, and a strip of coming days with
+// the schedule's due marks. Every date string arrives formatted by the
+// server through the campaign's own calendar — this module does zero
+// calendar math, so a DM's thirteen-month wheel renders as happily as the
+// default Common Reckoning.
+async function loadClock() {
+	if (!current) return;
+	let data;
+	try {
+		data = await api.campaignClock(current.id, 14, 30);
+	} catch (err) {
+		clockInfo = null;
+		clear($("camp-clock")).append(el("p", { class: "camp-status warn", text: err.message }));
+		clear($("camp-clock-strip"));
+		return;
+	}
+	clockInfo = data.clock;
+	renderClock();
+}
+
+async function loadSchedule() {
+	if (!current) return;
+	let data;
+	try {
+		data = await api.campaignSchedule(current.id, 30);
+	} catch (err) {
+		scheduleEntries = [];
+		renderSchedule();
+		return;
+	}
+	scheduleEntries = data.entries || [];
+	renderSchedule();
+}
+
+function weatherLine(clock) {
+	const w = clock.weather;
+	if (!w) return clock.season || "";
+	const season = clock.season ? ` ${clock.season}` : "";
+	return `${w.summary}, ${w.temp_c}°, ${w.wind}${season}${clock.climate ? ` (${clock.climate})` : ""}`;
+}
+
+function renderClock() {
+	const box = clear($("camp-clock"));
+	if (!clockInfo) return;
+	box.append(
+		el("p", { class: "camp-clock-date", text: clockInfo.date }),
+		el("p", { class: "camp-clock-weather", text: weatherLine(clockInfo) }),
+	);
+	const strip = clear($("camp-clock-strip"));
+	const due = clockInfo.due || [];
+	for (const d of clockInfo.strip || []) {
+		const marks = due.filter((x) => x.day === d.day);
+		const cell = el("div", {
+			class: "camp-strip-day" + (d.today ? " is-today" : "") + (d.month_start ? " is-month-start" : ""),
+			attrs: { role: "listitem", title: d.label + (marks.length ? ` — ${marks.map((m) => m.name).join(", ")}` : "") },
+		});
+		cell.append(
+			el("span", { class: "camp-strip-weekday", text: d.weekday }),
+			el("span", { class: "camp-strip-daynum", text: String(d.day_of_month) }),
+		);
+		if (d.month_start) cell.append(el("span", { class: "camp-strip-month", text: d.month }));
+		if (marks.length) cell.append(el("span", { class: "camp-strip-marks", text: "•".repeat(marks.length) }));
+		strip.append(cell);
+	}
+	$("camp-advance-form").hidden = !isDM();
+}
+
+// recurrences renders a recurrence value ("every_n_days:7") as a chip label.
+function recurrenceLabel(rec) {
+	if (!rec || rec === "none") return "";
+	if (rec === "yearly") return "yearly";
+	if (rec === "monthly") return "monthly";
+	if (rec.startsWith("every_n_days:")) return `every ${rec.split(":")[1]} days`;
+	return rec;
+}
+
+function renderSchedule() {
+	const box = clear($("camp-schedule"));
+	box.append(el("h4", { class: "camp-sheet-heading", text: "The schedule" }));
+	if ((scheduleEntries || []).length === 0) {
+		box.append(el("p", { class: "camp-status", text: "Nothing on the calendar yet." }));
+	} else {
+		for (const e of scheduleEntries) box.append(scheduleRow(e));
+	}
+	const form = $("camp-schedule-form");
+	form.hidden = !isDM();
+	if (isDM()) fillScheduleEntityOptions();
+}
+
+function scheduleRow(e) {
+	if (editingScheduleID === e.id) return scheduleEditor(e);
+	const row = el("div", { class: "camp-sched-entry", attrs: { "data-sid": e.id } });
+	const chips = el("span", { class: "camp-fact-chips" });
+	const rec = recurrenceLabel(e.recurrence);
+	if (rec) chips.append(el("span", { class: "enc-chip", text: rec }));
+	if (e.visibility === "secret") chips.append(el("span", { class: "enc-chip", text: "secret" }));
+	if (e.status && e.status !== "pending") chips.append(el("span", { class: "enc-chip is-on", text: e.status }));
+	row.append(
+		el("span", { class: "camp-sched-when", text: e.date || `day ${e.day}` }),
+		el("span", { class: "camp-sched-name", text: e.name }),
+		chips,
+	);
+	if (isDM()) {
+		row.append(
+			el("button", { class: "enc-chip", text: "edit", attrs: { type: "button", "data-edit-sid": e.id } }),
+			el("button", { class: "enc-chip", text: "remove", attrs: { type: "button", "data-del-sid": e.id } }),
+		);
+	}
+	return row;
+}
+
+// scheduleEditor is the inline patch form: name, day, recurrence, status.
+function scheduleEditor(e) {
+	const form = el("form", { class: "camp-sched-edit", attrs: { "data-sid": e.id } });
+	const rec = e.recurrence || "none";
+	const recSelect = el("select", { class: "enc-field camp-sched-edit-rec", attrs: { "aria-label": "Recurrence" } });
+	for (const r of ["none", "yearly", "monthly", "every_n_days:7", "every_n_days:10", "every_n_days:30"]) {
+		const opt = el("option", { text: r === "none" ? "never" : recurrenceLabel(r) });
+		opt.value = r;
+		if (r === rec) opt.selected = true;
+		recSelect.append(opt);
+	}
+	const statusSelect = el("select", { class: "enc-field camp-sched-edit-status", attrs: { "aria-label": "Status" } });
+	for (const s of ["pending", "fired", "cancelled", "missed"]) {
+		const opt = el("option", { text: s });
+		opt.value = s;
+		if (s === e.status) opt.selected = true;
+		statusSelect.append(opt);
+	}
+	form.append(
+		el("input", { class: "enc-field camp-sched-edit-name", attrs: { type: "text", value: e.name, "aria-label": "Name" } }),
+		el("input", { class: "enc-field camp-sched-edit-day", attrs: { type: "number", value: String(e.day), "aria-label": "Day" } }),
+		recSelect,
+		statusSelect,
+		el("button", { class: "enc-chip is-on", text: "save", attrs: { type: "submit", "data-save-sid": e.id } }),
+		el("button", { class: "enc-chip", text: "cancel", attrs: { type: "button", "data-cancel-edit": e.id } }),
+	);
+	return form;
+}
+
+function fillScheduleEntityOptions() {
+	const select = clear($("camp-schedule-entity"));
+	select.append(el("option", { text: "—", attrs: { value: "" } }));
+	for (const ent of entities) {
+		select.append(el("option", { text: `${ent.name} (${ent.kind})`, attrs: { value: ent.id } }));
+	}
+}
+
+function onScheduleClick(e) {
+	const del = e.target.closest("[data-del-sid]");
+	if (del) {
+		api.campaignScheduleDelete(current.id, del.dataset.delSid)
+			.then(() => loadSchedule().then(() => loadClock()))
+			.catch((err) => renderMeta(err.message, true));
+		return;
+	}
+	const edit = e.target.closest("[data-edit-sid]");
+	if (edit) {
+		editingScheduleID = edit.dataset.editSid;
+		renderSchedule();
+		return;
+	}
+	const cancel = e.target.closest("[data-cancel-edit]");
+	if (cancel) {
+		editingScheduleID = null;
+		renderSchedule();
+	}
+}
+
+function onScheduleInlineSubmit(e) {
+	e.preventDefault();
+	const form = e.target.closest("[data-sid]");
+	if (!form) return;
+	const sid = form.dataset.sid;
+	const patch = {
+		name: form.querySelector(".camp-sched-edit-name").value.trim(),
+		day: parseInt(form.querySelector(".camp-sched-edit-day").value, 10),
+		recurrence: form.querySelector(".camp-sched-edit-rec").value,
+		status: form.querySelector(".camp-sched-edit-status").value,
+	};
+	api.campaignScheduleUpdate(current.id, sid, patch)
+		.then(() => {
+			editingScheduleID = null;
+			return loadSchedule().then(() => loadClock());
+		})
+		.catch((err) => renderMeta(err.message, true));
+}
+
+async function onCreateScheduleEntry(e) {
+	e.preventDefault();
+	const entry = {
+		name: $("camp-schedule-name").value.trim(),
+		day: parseInt($("camp-schedule-day").value, 10),
+		recurrence: $("camp-schedule-recurrence").value,
+		visibility: $("camp-schedule-visibility").value,
+	};
+	const whose = $("camp-schedule-entity").value;
+	if (whose) entry.entity_id = whose;
+	try {
+		await api.campaignScheduleCreate(current.id, entry);
+		$("camp-schedule-name").value = "";
+		$("camp-schedule-day").value = "";
+		await Promise.all([loadSchedule(), loadClock()]);
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+async function onAdvanceClock(e) {
+	e.preventDefault();
+	const raw = $("camp-advance-days").value.trim();
+	if (!raw) return;
+	const by = parseInt(raw, 10);
+	if (!Number.isFinite(by)) return;
+	try {
+		const data = await api.campaignClockAdvance(current.id, { by }, $("camp-advance-reason").value, "");
+		if (data.clock) renderMeta(`The days move to ${data.clock.date}.`);
+		$("camp-advance-days").value = "";
+		await Promise.all([loadClock(), loadSchedule()]);
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
 }
 
 async function onSheetClick(e) {
