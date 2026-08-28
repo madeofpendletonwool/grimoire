@@ -216,6 +216,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/quests", s.handleCreateCampaignQuest)
 	mux.HandleFunc("GET /api/campaigns/{id}/quests/{qid}", s.handleCampaignQuest)
 	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/transition", s.handleQuestTransition)
+	// The campaign clock (MAD-365): calendar, clock ledger, schedule, travel.
+	mux.HandleFunc("GET /api/campaigns/{id}/calendar", s.handleCampaignCalendar)
+	mux.HandleFunc("PUT /api/campaigns/{id}/calendar", s.handlePutCampaignCalendar)
+	mux.HandleFunc("GET /api/campaigns/{id}/clock", s.handleCampaignClock)
+	mux.HandleFunc("POST /api/campaigns/{id}/clock/advance", s.handleCampaignClockAdvance)
+	mux.HandleFunc("GET /api/campaigns/{id}/schedule", s.handleCampaignSchedule)
+	mux.HandleFunc("POST /api/campaigns/{id}/schedule", s.handleCreateCampaignSchedule)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/schedule/{sid}", s.handleUpdateCampaignSchedule)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/schedule/{sid}", s.handleDeleteCampaignSchedule)
+	mux.HandleFunc("POST /api/campaigns/{id}/travel", s.handleCampaignTravel)
 	mux.HandleFunc("GET /api/campaigns/{id}/graph", s.handleCampaignGraph)
 	mux.HandleFunc("GET /api/campaigns/{id}/search", s.handleCampaignSearch)
 	// The campaign chat (MAD-311): the DM Grimoire and the Player Grimoire.

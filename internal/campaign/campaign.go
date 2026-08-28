@@ -313,7 +313,12 @@ func (s *Store) ListCampaigns(ctx context.Context, userID string) ([]Campaign, e
 // UpdateCampaign replaces the mutable fields of a campaign owned by ownerID.
 // nil arguments leave the corresponding field alone; a nil settings map leaves
 // settings alone rather than clearing them.
-func (s *Store) UpdateCampaign(ctx context.Context, ownerID, id string, name, system, premise *string, clock *int64, settings map[string]any) (*Campaign, error) {
+//
+// The clock is a ledger, not a settable integer: a PATCH that changes it
+// records a 'manual' clock_advances row in the same transaction and sets
+// campaigns.clock to the new head. A backwards move is legal (a DM fixing a
+// typo) and recorded exactly like a forward one.
+func (s *Store) UpdateCampaign(ctx context.Context, ownerID, id string, name, system, premise *string, clockSet *int64, settings map[string]any) (*Campaign, error) {
 	c, err := s.GetCampaign(ctx, id)
 	if err != nil {
 		return nil, err
@@ -333,8 +338,9 @@ func (s *Store) UpdateCampaign(ctx context.Context, ownerID, id string, name, sy
 	if premise != nil {
 		c.Premise = *premise
 	}
-	if clock != nil {
-		c.Clock = *clock
+	priorClock := c.Clock
+	if clockSet != nil {
+		c.Clock = *clockSet
 	}
 	settingsJSON := ""
 	if settings != nil {
@@ -349,7 +355,12 @@ func (s *Store) UpdateCampaign(ctx context.Context, ownerID, id string, name, sy
 	}
 	settingsJSON = string(b)
 	c.UpdatedAt = time.Now().UTC()
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("campaign tx: %w", err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `
 		UPDATE campaigns SET name = ?, system = ?, premise = ?, clock = ?, settings = ?, updated_at = ?
 		 WHERE id = ? AND owner_id = ?`,
 		c.Name, c.System, c.Premise, c.Clock, settingsJSON, c.UpdatedAt.UnixMilli(), id, ownerID)
@@ -358,6 +369,18 @@ func (s *Store) UpdateCampaign(ctx context.Context, ownerID, id string, name, sy
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, fmt.Errorf("%w: campaign %s", ErrNotFound, id)
+	}
+	if clockSet != nil && *clockSet != priorClock {
+		// The ledger row: what moved, from where, to where, by whom.
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO clock_advances (id, campaign_id, from_day, to_day, reason, note, session_id, created_by, created_at)
+			VALUES (?, ?, ?, ?, 'manual', 'campaign PATCH', NULL, ?, ?)`,
+			uuid.NewString(), id, priorClock, *clockSet, ownerID, c.UpdatedAt.UnixMilli()); err != nil {
+			return nil, fmt.Errorf("record manual advance: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("campaign commit: %w", err)
 	}
 	return c, nil
 }

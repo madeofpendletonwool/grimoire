@@ -10,13 +10,15 @@ import (
 
 // Severity of an integrity finding. Errors mean the graph contradicts its own
 // rules; reviews mean a human should look; warnings are soft signals (none
-// exist yet — awareness-dependent checks land with the knowledge layer).
+// exist yet — awareness-dependent checks land with the knowledge layer);
+// infos are nudges, not problems.
 type Severity string
 
 const (
 	SeverityError  Severity = "error"
 	SeverityReview Severity = "review"
 	SeverityWarn   Severity = "warning"
+	SeverityInfo   Severity = "info"
 )
 
 // Finding is one integrity result: a check code, how bad it is, which record
@@ -39,6 +41,9 @@ const (
 	CheckContradictoryFacts     = "contradictory_facts"
 	CheckEntityMergeCandidate   = "entity_merge_candidate"
 	CheckDuplicateFact          = "duplicate_fact"
+	CheckEventAfterClock        = "event_after_clock"
+	CheckMissedSchedule         = "missed_schedule"
+	CheckClockNeverAdvanced     = "clock_never_advanced"
 )
 
 // Snapshot is a campaign's whole graph in memory. Check is pure over this
@@ -59,6 +64,16 @@ type Snapshot struct {
 	Relationships    []Relationship
 	Quests           []Quest
 	QuestTransitions []QuestTransition
+	// Clock is the campaign's current in-world day; the schedule and
+	// event-dating checks read it (MAD-365).
+	Clock int64
+	// SessionCount is how many game_sessions the campaign has played.
+	SessionCount int
+	// AdvanceCount is how many clock_advances rows exist — "has the clock
+	// ever moved on purpose".
+	AdvanceCount int
+	// Schedule is the campaign's scheduled_events.
+	Schedule []ScheduledEvent
 }
 
 // Integrity loads a campaign snapshot and runs every check over it. It is
@@ -324,6 +339,41 @@ func LoadSnapshot(ctx context.Context, scope Scope, db *sql.DB, campaignID strin
 	for i := range s.Events {
 		s.Events[i].Links = eventLinks[s.Events[i].ID]
 	}
+
+	// The clock face: current day, whether time has ever been moved on
+	// purpose, and the schedule waiting on it (MAD-365).
+	if err := db.QueryRowContext(ctx,
+		`SELECT clock FROM campaigns WHERE id = ?`, campaignID).Scan(&s.Clock); err != nil {
+		return nil, fmt.Errorf("integrity clock: %w", err)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM game_sessions WHERE campaign_id = ?`, campaignID).Scan(&s.SessionCount); err != nil {
+		return nil, fmt.Errorf("integrity sessions: %w", err)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM clock_advances WHERE campaign_id = ?`, campaignID).Scan(&s.AdvanceCount); err != nil {
+		return nil, fmt.Errorf("integrity advances: %w", err)
+	}
+
+	rows, err = db.QueryContext(ctx,
+		`SELECT `+scheduleCols+` FROM scheduled_events WHERE campaign_id = ?`, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("integrity schedule: %w", err)
+	}
+	for rows.Next() {
+		e, err := scanScheduledEvent(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		s.Schedule = append(s.Schedule, *e)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
 	return s, nil
 }
 
@@ -338,6 +388,9 @@ func Check(snap *Snapshot) []Finding {
 	out = append(out, checkContradictoryFacts(snap)...)
 	out = append(out, checkEntityMergeCandidate(snap)...)
 	out = append(out, checkDuplicateFact(snap)...)
+	out = append(out, checkEventAfterClock(snap)...)
+	out = append(out, checkMissedSchedule(snap)...)
+	out = append(out, checkClockNeverAdvanced(snap)...)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Check != out[j].Check {
 			return out[i].Check < out[j].Check
@@ -598,4 +651,58 @@ func checkDuplicateFact(snap *Snapshot) []Finding {
 		seen[k] = f.ID
 	}
 	return out
+}
+
+// checkEventAfterClock: an event dated past the campaign's current day. A
+// warning, not an error — the DM may be recording something the table has
+// not lived through yet (a prophecy, a flash-forward), but it deserves a
+// look because events are meant to have happened.
+func checkEventAfterClock(snap *Snapshot) []Finding {
+	var out []Finding
+	for _, e := range snap.Events {
+		if e.ClockAt == nil || *e.ClockAt <= snap.Clock {
+			continue
+		}
+		out = append(out, Finding{
+			Check: CheckEventAfterClock, Severity: SeverityWarn,
+			RecordKind: "event", RecordID: e.ID,
+			Message: fmt.Sprintf("%q is dated to clock day %d, past the campaign's current day %d",
+				e.Summary, *e.ClockAt, snap.Clock),
+		})
+	}
+	return out
+}
+
+// checkMissedSchedule: a pending schedule entry whose day is behind the
+// clock. The world moved past a plan nobody resolved: fire it, cancel it, or
+// mark it missed — but decide.
+func checkMissedSchedule(snap *Snapshot) []Finding {
+	var out []Finding
+	for _, e := range snap.Schedule {
+		if e.Status != SchedulePending || e.Day >= snap.Clock {
+			continue
+		}
+		out = append(out, Finding{
+			Check: CheckMissedSchedule, Severity: SeverityWarn,
+			RecordKind: "scheduled_event", RecordID: e.ID,
+			Message: fmt.Sprintf("%q (day %d) is still pending behind the clock at day %d; fire, cancel or miss it",
+				e.Name, e.Day, snap.Clock),
+		})
+	}
+	return out
+}
+
+// checkClockNeverAdvanced: sessions played while the clock sits at the start.
+// An info, not an accusation — some tables genuinely never track time — but
+// every other clock feature silently degrades when this is true.
+func checkClockNeverAdvanced(snap *Snapshot) []Finding {
+	if snap.SessionCount == 0 || snap.Clock != 0 || snap.AdvanceCount > 0 {
+		return nil
+	}
+	return []Finding{{
+		Check: CheckClockNeverAdvanced, Severity: SeverityInfo,
+		RecordKind: "campaign", RecordID: snap.CampaignID,
+		Message: fmt.Sprintf("%d session(s) played and the clock has never left day 0; advancing it unlocks dates, travel and the schedule",
+			snap.SessionCount),
+	}}
 }

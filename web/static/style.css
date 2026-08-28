@@ -2974,6 +2974,53 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .camp-status { color: var(--parchment); opacity: 0.6; font-size: var(--fs-sm); }
 .study-meta.warn { color: var(--gold-bright); }
 
+/* The calendar (MAD-365): the clock face on stone, the day strip drawn on
+   its own parchment slip like the map, and the schedule beneath. Dates
+   arrive pre-formatted by the server — this surface draws strings, it never
+   computes them. */
+.camp-calendar-panel { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-clock { display: flex; flex-direction: column; gap: 0.1rem; }
+.camp-clock-date {
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: var(--fs-md);
+	letter-spacing: 0.03em;
+	color: var(--gold-bright);
+}
+.camp-clock-weather { margin: 0; color: var(--parchment); opacity: 0.75; font-size: var(--fs-xs); font-family: var(--font-prose); }
+.camp-clock-strip {
+	display: flex;
+	gap: 0.3rem;
+	overflow-x: auto;
+	padding: var(--sp-2) var(--sp-3);
+}
+.camp-strip-day {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.05rem;
+	min-width: 3.2rem;
+	padding: 0.3rem 0.25rem;
+	color: var(--ink-soft);
+}
+.camp-strip-day.is-today { color: var(--ink); box-shadow: inset 0 -3px 0 var(--gold); }
+.camp-strip-day.is-month-start { box-shadow: inset 0 0 0 1px var(--ink-soft); }
+.camp-strip-day.is-today.is-month-start { box-shadow: inset 0 0 0 1px var(--ink), inset 0 -3px 0 var(--gold); }
+.camp-strip-weekday { font-family: var(--font-pixel); font-size: var(--fs-xs); letter-spacing: 0.04em; opacity: 0.7; }
+.camp-strip-daynum { font-family: var(--font-display); font-size: var(--fs-md); color: inherit; }
+.camp-strip-month { font-family: var(--font-pixel); font-size: var(--fs-xs); color: var(--ink); opacity: 0.85; }
+.camp-strip-marks { color: var(--gold-dim); font-size: var(--fs-sm); line-height: 1; }
+.camp-schedule { display: flex; flex-direction: column; gap: var(--sp-1); }
+.camp-sched-entry { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; font-size: var(--fs-sm); }
+.camp-sched-when { font-family: var(--font-pixel); font-size: var(--fs-xs); color: var(--gold-bright); opacity: 0.85; letter-spacing: 0.04em; }
+.camp-sched-name { flex: 1; min-width: 8rem; color: var(--parchment); font-family: var(--font-prose); }
+.camp-sched-edit { display: flex; gap: var(--sp-1); flex-wrap: wrap; align-items: center; }
+.camp-sched-edit .enc-field { width: auto; min-width: 0; }
+.camp-sched-edit-name { flex: 1; min-width: 8rem; }
+.camp-sched-edit-day { width: 5rem; }
+.camp-advance-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-1); }
+.camp-schedule-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
+
 /* Parchment-context text: the sheet and the map carry their status lines in
    ink-soft, not parchment-on-parchment. */
 .camp-sheet { color: var(--ink); font-family: var(--font-prose); min-height: 12rem; }

@@ -477,11 +477,72 @@
 					</form>
 				</div>
 
-				<!-- The map and the table. The graph is the connected
+			<!-- The map and the table. The graph is the connected
 				     neighbourhood of the selected entity — a map drawn on
 				     parchment, not a force-directed blob. -->
-				<div class="camp-col camp-col-side">
-					<div class="camp-panel camp-graph-panel">
+			<div class="camp-col camp-col-side">
+				<div class="camp-panel camp-calendar-panel">
+					<h3 class="enc-heading">The calendar</h3>
+					<!-- The clock face (MAD-365): today's date, the
+					     weather, and the coming days as a strip. The
+					     server formats every date through the
+					     campaign's calendar; this surface never does
+					     calendar math. -->
+					<div class="camp-clock" id="camp-clock" aria-live="polite"></div>
+					<div class="camp-clock-strip f-parchment" id="camp-clock-strip" role="list" aria-label="Coming days"></div>
+					<div class="camp-schedule" id="camp-schedule" aria-label="Schedule"></div>
+					<form class="camp-schedule-form" id="camp-schedule-form" autocomplete="off" hidden>
+						<h4 class="camp-sheet-heading">Schedule something</h4>
+						<label class="camp-field"><span>Name</span>
+							<input id="camp-schedule-name" class="enc-field" type="text" required placeholder="The Lamplight Festival" aria-label="Schedule name">
+						</label>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Day</span>
+								<input id="camp-schedule-day" class="enc-field" type="number" required aria-label="Day number">
+							</label>
+							<label class="camp-field"><span>Repeats</span>
+								<select id="camp-schedule-recurrence" class="enc-field" aria-label="Recurrence">
+									<option value="none">never</option>
+									<option value="yearly">yearly</option>
+									<option value="monthly">monthly</option>
+									<option value="every_n_days:7">every 7 days</option>
+									<option value="every_n_days:10">every 10 days</option>
+									<option value="every_n_days:30">every 30 days</option>
+								</select>
+							</label>
+						</div>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Visibility</span>
+								<select id="camp-schedule-visibility" class="enc-field" aria-label="Visibility">
+									<option value="public">public</option>
+									<option value="secret">secret</option>
+								</select>
+							</label>
+							<label class="camp-field"><span>Whose</span>
+								<select id="camp-schedule-entity" class="enc-field" aria-label="Whose routine"></select>
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Put it on the calendar</button>
+					</form>
+					<form class="camp-advance-form" id="camp-advance-form" autocomplete="off" hidden>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Advance days</span>
+								<input id="camp-advance-days" class="enc-field" type="number" placeholder="7" aria-label="Days to advance">
+							</label>
+							<label class="camp-field"><span>Reason</span>
+								<select id="camp-advance-reason" class="enc-field" aria-label="Reason">
+									<option value="manual">manual</option>
+									<option value="session">session</option>
+									<option value="downtime">downtime</option>
+									<option value="travel">travel</option>
+									<option value="tick">tick</option>
+								</select>
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Move the days</button>
+					</form>
+				</div>
+				<div class="camp-panel camp-graph-panel">
 						<h3 class="enc-heading">The map</h3>
 						<div class="camp-graph-controls">
 							<div class="mode-toggle camp-hops" role="radiogroup" aria-label="Hops">
