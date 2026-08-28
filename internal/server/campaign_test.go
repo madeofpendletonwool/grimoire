@@ -15,6 +15,7 @@ import (
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -68,11 +69,15 @@ func newCampaignServer(t *testing.T) (*Server, *campaign.Store, *knowledge.Store
 	if err != nil {
 		t.Fatalf("open knowledge store: %v", err)
 	}
+	factions, err := faction.New(store.DB())
+	if err != nil {
+		t.Fatalf("open faction store: %v", err)
+	}
 	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, nil, Auth{Users: users}, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
-	s = s.WithCampaigns(campaigns, knowledgeStore)
+	s = s.WithCampaigns(campaigns, knowledgeStore).WithFactions(factions)
 	return s, campaigns, knowledgeStore, users
 }
 

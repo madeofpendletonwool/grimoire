@@ -3,6 +3,7 @@ package campaign
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -44,6 +45,10 @@ const (
 	CheckEventAfterClock        = "event_after_clock"
 	CheckMissedSchedule         = "missed_schedule"
 	CheckClockNeverAdvanced     = "clock_never_advanced"
+	CheckPlanIllegalState       = "plan_illegal_state"
+	CheckPlanWithoutFaction     = "plan_without_faction"
+	CheckPlanStalled            = "plan_stalled"
+	CheckFactionNoAntagonist    = "faction_no_antagonist"
 )
 
 // Snapshot is a campaign's whole graph in memory. Check is pure over this
@@ -74,7 +79,35 @@ type Snapshot struct {
 	AdvanceCount int
 	// Schedule is the campaign's scheduled_events.
 	Schedule []ScheduledEvent
+	// FactionPlans is the campaign's faction_plans, the lean projection the
+	// plan checks read (MAD-366). The full progression model is
+	// internal/faction; this view carries only what the rules need.
+	FactionPlans []FactionPlanView
 }
+
+// FactionPlanView is one faction plan as the integrity checks see it: ids,
+// the machine, the rate, the day columns, and whether any step declares an
+// opposing (enemy_plan) precondition. Loaded directly from the migration's
+// tables so campaign never imports the progression package.
+type FactionPlanView struct {
+	ID            string
+	FactionEntity string
+	Name          string
+	CurrentState  string
+	Status        string
+	Machine       StateMachine
+	RatePerDay    float64
+	StartedDay    *int64
+	LastAdvanced  *int64
+	// HasEnemyRequirement reports whether any step carries an enemy_plan
+	// precondition — the "opposing precondition" of faction_no_antagonist.
+	HasEnemyRequirement bool
+}
+
+// StalledAfterDays is how long an active, positive-rate plan may sit without
+// advancing before plan_stalled fires. A planning constant, not a rule of
+// the world: a month of in-world silence is the signal a DM asked for.
+const StalledAfterDays = 30
 
 // Integrity loads a campaign snapshot and runs every check over it. It is
 // deliberately read-only: findings are information, and the DM decides what
@@ -374,7 +407,83 @@ func LoadSnapshot(ctx context.Context, scope Scope, db *sql.DB, campaignID strin
 	}
 	rows.Close()
 
+	// Faction plans and whether any step declares an enemy_plan precondition.
+	rows, err = db.QueryContext(ctx, `
+		SELECT p.id, p.faction_entity, p.name, p.state_machine, p.current_state, p.status,
+		       p.rate_per_day, p.started_day, p.last_advanced_day, s.requires_json
+		  FROM faction_plans p
+		  LEFT JOIN faction_plan_steps s ON s.plan_id = p.id
+		 WHERE p.campaign_id = ?
+		 ORDER BY p.id, s.rowid`, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("integrity faction plans: %w", err)
+	}
+	byPlan := map[string]*FactionPlanView{}
+	var order []string
+	for rows.Next() {
+		var (
+			id, faction, name, machineJSON, current, status string
+			rate                                            float64
+			started, lastAdvanced                           sql.NullInt64
+			requires                                        sql.NullString
+		)
+		if err := rows.Scan(&id, &faction, &name, &machineJSON, &current, &status,
+			&rate, &started, &lastAdvanced, &requires); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		view, ok := byPlan[id]
+		if !ok {
+			view = &FactionPlanView{
+				ID: id, FactionEntity: faction, Name: name,
+				CurrentState: current, Status: status, RatePerDay: rate,
+			}
+			// A machine that no longer parses reads as an empty machine:
+			// plan_illegal_state fires, which is the honest finding.
+			if m, err := ParseStateMachine(machineJSON); err == nil {
+				view.Machine = m
+			}
+			if started.Valid {
+				v := started.Int64
+				view.StartedDay = &v
+			}
+			if lastAdvanced.Valid {
+				v := lastAdvanced.Int64
+				view.LastAdvanced = &v
+			}
+			byPlan[id] = view
+			order = append(order, id)
+		}
+		if requires.Valid && requires.String != "" && requiresJSONHasEnemy(requires.String) {
+			view.HasEnemyRequirement = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	for _, id := range order {
+		s.FactionPlans = append(s.FactionPlans, *byPlan[id])
+	}
+
 	return s, nil
+}
+
+// requiresJSONHasEnemy reports whether a step's requires_json declares an
+// enemy_plan clause. Parsed, not substring-matched: hand-edited JSON is the
+// normal case this survives.
+func requiresJSONHasEnemy(raw string) bool {
+	var reqs []map[string]any
+	if err := json.Unmarshal([]byte(raw), &reqs); err != nil {
+		return false
+	}
+	for _, req := range reqs {
+		if clause, ok := req["enemy_plan"]; ok && clause != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // Check runs every integrity rule over a snapshot, pure and deterministic.
@@ -391,6 +500,10 @@ func Check(snap *Snapshot) []Finding {
 	out = append(out, checkEventAfterClock(snap)...)
 	out = append(out, checkMissedSchedule(snap)...)
 	out = append(out, checkClockNeverAdvanced(snap)...)
+	out = append(out, checkPlanIllegalState(snap)...)
+	out = append(out, checkPlanWithoutFaction(snap)...)
+	out = append(out, checkPlanStalled(snap)...)
+	out = append(out, checkFactionNoAntagonist(snap)...)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Check != out[j].Check {
 			return out[i].Check < out[j].Check
@@ -705,4 +818,136 @@ func checkClockNeverAdvanced(snap *Snapshot) []Finding {
 		Message: fmt.Sprintf("%d session(s) played and the clock has never left day 0; advancing it unlocks dates, travel and the schedule",
 			snap.SessionCount),
 	}}
+}
+
+// checkPlanIllegalState: a faction plan sitting in a state its own machine
+// does not declare — the plan analogue of the quest check. A machine that no
+// longer parses reads as empty and fires here too, which is the honest
+// finding for hand-edited JSON.
+func checkPlanIllegalState(snap *Snapshot) []Finding {
+	var out []Finding
+	for _, p := range snap.FactionPlans {
+		declared := map[string]bool{}
+		for _, st := range p.Machine.States {
+			declared[st] = true
+		}
+		if declared[p.CurrentState] {
+			continue
+		}
+		out = append(out, Finding{
+			Check: CheckPlanIllegalState, Severity: SeverityError,
+			RecordKind: "faction_plan", RecordID: p.ID,
+			Message: fmt.Sprintf("plan %q sits in state %q, which its state machine does not declare", p.Name, p.CurrentState),
+		})
+	}
+	return out
+}
+
+// checkPlanWithoutFaction: a plan whose owner is not a live faction —
+// missing, a different kind, or destroyed. The write path refuses all three;
+// this catches whatever bypassed it.
+func checkPlanWithoutFaction(snap *Snapshot) []Finding {
+	var out []Finding
+	entities := map[string]Entity{}
+	for _, e := range snap.Entities {
+		entities[e.ID] = e
+	}
+	for _, p := range snap.FactionPlans {
+		owner, ok := entities[p.FactionEntity]
+		if !ok {
+			out = append(out, Finding{
+				Check: CheckPlanWithoutFaction, Severity: SeverityError,
+				RecordKind: "faction_plan", RecordID: p.ID,
+				Message: fmt.Sprintf("plan %q is owned by entity %s, which does not exist", p.Name, p.FactionEntity),
+			})
+			continue
+		}
+		if owner.Kind != KindFaction {
+			out = append(out, Finding{
+				Check: CheckPlanWithoutFaction, Severity: SeverityError,
+				RecordKind: "faction_plan", RecordID: p.ID,
+				Message: fmt.Sprintf("plan %q is owned by %q, which is a %s, not a faction", p.Name, owner.Name, owner.Kind),
+			})
+			continue
+		}
+		if owner.Status == StatusDestroyed {
+			out = append(out, Finding{
+				Check: CheckPlanWithoutFaction, Severity: SeverityError,
+				RecordKind: "faction_plan", RecordID: p.ID,
+				Message: fmt.Sprintf("plan %q belongs to %q, which is destroyed", p.Name, owner.Name),
+			})
+		}
+	}
+	return out
+}
+
+// checkPlanStalled: an active plan with a positive rate that has not advanced
+// in StalledAfterDays in-world days. Measured from the last advance, or from
+// the day it started when it has never advanced. A warning, not an error —
+// the world may simply have been busy elsewhere — but a plan that claims to
+// move and does not deserves a look.
+func checkPlanStalled(snap *Snapshot) []Finding {
+	var out []Finding
+	for _, p := range snap.FactionPlans {
+		if p.Status != PlanActive || p.RatePerDay <= 0 {
+			continue
+		}
+		ref := p.LastAdvanced
+		if ref == nil {
+			ref = p.StartedDay
+		}
+		if ref == nil {
+			continue // never started counting; nothing to measure against
+		}
+		if snap.Clock-*ref < StalledAfterDays {
+			continue
+		}
+		out = append(out, Finding{
+			Check: CheckPlanStalled, Severity: SeverityWarn,
+			RecordKind: "faction_plan", RecordID: p.ID,
+			Message: fmt.Sprintf("plan %q is active at %s/day but has not advanced since day %d (the clock is at %d)",
+				p.Name, formatRate(p.RatePerDay), *ref, snap.Clock),
+		})
+	}
+	return out
+}
+
+// checkFactionNoAntagonist: an active plan whose faction has no enemy_of
+// edge and no step carrying an opposing precondition. Nobody is in its way,
+// which is either a boring world or a missing edge — an info either way.
+func checkFactionNoAntagonist(snap *Snapshot) []Finding {
+	var out []Finding
+	for _, p := range snap.FactionPlans {
+		if p.Status != PlanActive || p.HasEnemyRequirement {
+			continue
+		}
+		blocked := false
+		for _, r := range snap.Relationships {
+			if r.RelType != "enemy_of" {
+				continue
+			}
+			if r.FromEntity == p.FactionEntity || r.ToEntity == p.FactionEntity {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+		out = append(out, Finding{
+			Check: CheckFactionNoAntagonist, Severity: SeverityInfo,
+			RecordKind: "faction_plan", RecordID: p.ID,
+			Message: fmt.Sprintf("plan %q is active with no enemy in its way; add an enemy_of edge or an opposing step precondition, or it will simply happen",
+				p.Name),
+		})
+	}
+	return out
+}
+
+// formatRate renders a rate without trailing zeros for finding prose.
+func formatRate(v float64) string {
+	if v == float64(int64(v)) {
+		return fmt.Sprintf("%d", int64(v))
+	}
+	return fmt.Sprintf("%g", v)
 }

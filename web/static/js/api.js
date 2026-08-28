@@ -324,6 +324,39 @@ export const api = {
 			body: JSON.stringify({ from, to, ...(days != null ? { days } : {}) }),
 		}).then(json),
 
+	// The faction surface (MAD-366): the scope-filtered dossier and the
+	// DM-only plans. A player's dossier carries the public face and aware
+	// edges; plans never cross a player scope, server-side by construction.
+	campaignFactions: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/factions`).then(json),
+
+	campaignFaction: (cid, eid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/factions/${encodeURIComponent(eid)}`).then(json),
+
+	campaignFactionPlans: (cid, eid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/factions/${encodeURIComponent(eid)}/plans`).then(json),
+
+	campaignFactionPlanCreate: (cid, eid, plan) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/factions/${encodeURIComponent(eid)}/plans`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(plan),
+		}).then(json),
+
+	campaignFactionPlanUpdate: (cid, pid, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/plans/${encodeURIComponent(pid)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	campaignFactionPlanTransition: (cid, pid, to, reason) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/plans/${encodeURIComponent(pid)}/transition`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ to, reason }),
+		}).then(json),
+
 	// The campaign chat (MAD-311): threads pinned to the campaign and to the
 	// caller's resolved scope. The scope is decided server-side from the
 	// membership row — this surface never chooses a perspective.

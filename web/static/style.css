@@ -3494,3 +3494,24 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	padding: 0;
 }
 .planner-icon-btn:hover { opacity: 1; }
+
+/* ---------- the faction page (MAD-366) ---------- */
+
+.camp-faction { margin-top: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-faction-face { display: flex; flex-direction: column; gap: var(--sp-1); }
+.camp-faction-truth { color: var(--ink-soft); font-style: italic; }
+.camp-faction-goals { margin: 0; padding-left: 1.2rem; }
+.camp-faction-ties { display: flex; flex-direction: column; gap: var(--sp-1); }
+.camp-plan { border: 1px solid var(--ink-soft); padding: var(--sp-2); margin-bottom: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-1); }
+.camp-plan-bar { height: 0.55rem; background: color-mix(in srgb, var(--ink) 8%, transparent); border: 1px solid var(--ink-soft); }
+.camp-plan-bar-fill { height: 100%; background: var(--gold); }
+.camp-plan-state { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-2); }
+.camp-plan-state-name { font-family: var(--font-pixel); font-size: var(--fs-xs); letter-spacing: 0.04em; color: var(--gold-bright); }
+.camp-plan-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.camp-plan-step { display: flex; align-items: baseline; gap: var(--sp-1); flex-wrap: wrap; font-size: var(--fs-sm); }
+.camp-plan-step.is-done .camp-plan-step-name { text-decoration: line-through; opacity: 0.6; }
+.camp-plan-mark { font-family: var(--font-pixel); font-size: var(--fs-xs); color: var(--gold-bright); width: 1ch; }
+.camp-plan-step-name { flex: 1; min-width: 8rem; }
+.camp-plan-step-cost { color: var(--ink-soft); font-size: var(--fs-xs); }
+.camp-plan-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
+.camp-plan-form .enc-field { width: 100%; }
