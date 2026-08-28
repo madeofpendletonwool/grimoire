@@ -76,17 +76,17 @@ func TestAdvanceTable(t *testing.T) {
 		},
 		{
 			name: "accelerating modifier doubles the gain", plan: threeStepPlan(), days: 10,
-			mods: []Modifier{{Label: "shrine_destroyed", Factor: 2, Reason: "the cult accelerates"}},
+			mods:   []Modifier{{Label: "shrine_destroyed", Factor: 2, Reason: "the cult accelerates"}},
 			wantTo: "seed_the_mines", wantProgress: 10, wantMoves: 1, wantGain: 20,
 		},
 		{
 			name: "halting modifier banks nothing new", plan: progress(threeStepPlan(), 4), days: 10,
-			mods: []Modifier{{Label: "mine_closed", Factor: 0}},
+			mods:   []Modifier{{Label: "mine_closed", Factor: 0}},
 			wantTo: "mustering", wantProgress: 4, wantGain: 0,
 		},
 		{
 			name: "setback modifier cannot go below zero", plan: threeStepPlan(), days: 10,
-			mods: []Modifier{{Label: "cell_exposed", Factor: -2}},
+			mods:   []Modifier{{Label: "cell_exposed", Factor: -2}},
 			wantTo: "mustering", wantProgress: 0, wantGain: -20,
 		},
 		{

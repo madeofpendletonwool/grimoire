@@ -272,8 +272,8 @@ func TestAdvancePlanDerivesModifiersFromGraph(t *testing.T) {
 	t.Run("a broken fact requirement reacts as authored", func(t *testing.T) {
 		in := planInput(fx)
 		in.Steps[0].Requires = []Requirement{{
-			Label: "the god still answers",
-			Fact:  &FactReq{Subject: fx.cult, Predicate: "seeks", Object: "the Verdant God's return"},
+			Label:    "the god still answers",
+			Fact:     &FactReq{Subject: fx.cult, Predicate: "seeks", Object: "the Verdant God's return"},
 			IfBroken: &Reaction{Factor: -1, Reason: "the silence undoes weeks of work"},
 		}}
 		p := mustActivate(t, s, fx, mustCreatePlan(t, s, fx, in))
