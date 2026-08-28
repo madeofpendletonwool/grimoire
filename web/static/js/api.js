@@ -353,6 +353,22 @@ export const api = {
 			body: JSON.stringify({ from, to, ...(days != null ? { days } : {}) }),
 		}).then(json),
 
+	// The simulation tick (MAD-367): preview a window of world-state
+	// outcomes (nothing written but the tick's own row), then stage it as
+	// one proposal batch behind the review gate. Deciding that batch — on
+	// the ordinary proposals surface — moves the clock.
+	campaignSimulate: (cid, days, seed) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/simulate`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ days, ...(seed != null ? { seed } : {}) }),
+		}).then(json),
+
+	campaignSimulateStage: (cid, tickID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/simulate/${encodeURIComponent(tickID)}/stage`, {
+			method: "POST",
+		}).then(json),
+
 	// The faction surface (MAD-366): the scope-filtered dossier and the
 	// DM-only plans. A player's dossier carries the public face and aware
 	// edges; plans never cross a player scope, server-side by construction.

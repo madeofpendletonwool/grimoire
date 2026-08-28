@@ -19,6 +19,7 @@ const KIND_LABEL = {
 	proposed_discovery: "Discovery",
 	proposed_relationship: "Relationship",
 	proposed_entity: "Entity",
+	proposed_plan_transition: "Plan transition",
 	low_agreement: "Low agreement",
 	contradiction: "Contradiction",
 	engine_flag: "Engine flag",
@@ -33,6 +34,7 @@ const SOURCE_LABEL = {
 	scene: "Scene",
 	nl_command: "Command",
 	session_prep: "Session prep",
+	tick: "Simulation tick",
 };
 
 function wire() {

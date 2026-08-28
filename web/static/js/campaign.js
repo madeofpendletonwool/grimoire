@@ -59,6 +59,11 @@ function wire() {
 	$("camp-advance-form").addEventListener("submit", onAdvanceClock);
 	$("camp-schedule").addEventListener("click", onScheduleClick);
 	$("camp-schedule").addEventListener("submit", onScheduleInlineSubmit);
+	// The simulation tick (MAD-367): preview, then optionally stage the
+	// outcomes as a proposal — the clock only moves once the DM accepts
+	// that proposal on the ordinary review queue.
+	$("camp-simulate-form").addEventListener("submit", onSimulate);
+	$("camp-simulate-result").addEventListener("click", onSimulateResultClick);
 	for (const radio of document.querySelectorAll('input[name="camp-object"]')) {
 		radio.addEventListener("change", () => syncObjectKind());
 	}
@@ -599,6 +604,7 @@ function renderClock() {
 		strip.append(cell);
 	}
 	$("camp-advance-form").hidden = !isDM();
+	$("camp-simulate-form").hidden = !isDM();
 }
 
 // recurrences renders a recurrence value ("every_n_days:7") as a chip label.
@@ -753,6 +759,75 @@ async function onAdvanceClock(e) {
 		if (data.clock) renderMeta(`The days move to ${data.clock.date}.`);
 		$("camp-advance-days").value = "";
 		await Promise.all([loadClock(), loadSchedule()]);
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+// The simulation tick (MAD-367): a deterministic preview of one window —
+// nothing written to the graph but the tick's own row — with a "stage as
+// proposal" hand-off into the review queue. Accepting that proposal is what
+// actually moves the clock.
+let simulateTickID = null;
+
+async function onSimulate(e) {
+	e.preventDefault();
+	const days = parseInt($("camp-simulate-days").value, 10) || 14;
+	const rawSeed = $("camp-simulate-seed").value.trim();
+	const seed = rawSeed ? parseInt(rawSeed, 10) : undefined;
+	try {
+		const data = await api.campaignSimulate(current.id, days, seed);
+		simulateTickID = data.tick?.id || null;
+		renderSimulateResult(data);
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+function renderSimulateResult(data) {
+	const box = clear($("camp-simulate-result"));
+	box.hidden = false;
+	const r = data.result || {};
+	box.append(el("p", { class: "camp-status", text: `Day ${r.from_day} → ${r.to_day} (seed ${r.seed})${data.offline ? " — offline, deterministic summary only" : ""}` }));
+	const flavour = data.flavour || {};
+	const line = (id, fallback) => flavour[id] || fallback;
+	for (const p of r.plans || []) {
+		if (!p.moved) continue;
+		const id = `plan-${p.plan_id}`;
+		const fallback = `moves from ${p.progression.from_state} to ${p.progression.to_state} (gain ${p.progression.gain}).`;
+		box.append(el("p", { class: "camp-sim-line", text: `⛭ ${p.faction_name}: ${p.name} — ${line(id, fallback)}` }));
+	}
+	for (const d of r.due || []) {
+		const id = `due-${d.entry_id}-${d.day}`;
+		box.append(el("p", { class: "camp-sim-line", text: `☾ day ${d.day}: ${line(id, `${d.name} happens as scheduled.`)}` }));
+	}
+	for (const m of r.missed || []) {
+		box.append(el("p", { class: "camp-sim-line camp-sim-warn", text: `⚠ ${m.name} (day ${m.day}) is still pending, behind the clock.` }));
+	}
+	for (const a of r.actions || []) {
+		const id = `npcact-${a.npc}`;
+		box.append(el("p", { class: "camp-sim-line", text: `☺ day ${a.day}: ${line(id, a.summary)}` }));
+	}
+	for (const c of r.consequences || []) {
+		const id = `react-${c.reactor}-${c.plan_id}`;
+		box.append(el("p", { class: "camp-sim-line", text: `⚔ day ${c.day}: ${line(id, c.summary)}` }));
+	}
+	if (!(r.plans?.some((p) => p.moved) || r.due?.length || r.actions?.length || r.consequences?.length)) {
+		box.append(el("p", { class: "camp-status", text: "Nothing moves in this window." }));
+	} else {
+		box.append(el("button", { class: "enc-btn primary", text: "Stage as proposal", attrs: { type: "button", "data-act": "stage-tick" } }));
+	}
+}
+
+async function onSimulateResultClick(e) {
+	const btn = e.target.closest("[data-act='stage-tick']");
+	if (!btn || !simulateTickID) return;
+	try {
+		await api.campaignSimulateStage(current.id, simulateTickID);
+		renderMeta("Staged — decide it on the review queue.");
+		$("camp-simulate-result").hidden = true;
+		simulateTickID = null;
+		reviewFor(current.id);
 	} catch (err) {
 		renderMeta(err.message, true);
 	}

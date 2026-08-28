@@ -49,6 +49,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 )
 
@@ -73,12 +74,13 @@ const (
 	BatchSourceScene       = "scene"
 	BatchSourceNLCommand   = "nl_command"
 	BatchSourceSessionPrep = "session_prep"
+	BatchSourceTick        = "tick"
 )
 
 // batchSources is the validated source vocabulary.
 var batchSources = map[string]bool{
 	BatchSourceSkeleton: true, BatchSourceStoryPlan: true, BatchSourceScene: true,
-	BatchSourceNLCommand: true, BatchSourceSessionPrep: true,
+	BatchSourceNLCommand: true, BatchSourceSessionPrep: true, BatchSourceTick: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -168,6 +170,8 @@ func reviewKindForBatchItem(kind string) (string, bool) {
 	case ReviewProposedFact, ReviewProposedEvent, ReviewProposedDiscovery,
 		ReviewProposedRelationship, ReviewProposedEntity:
 		return kind, true
+	case KindPlanTransition, ReviewProposedPlanTransition:
+		return ReviewProposedPlanTransition, true
 	}
 	return "", false
 }
@@ -578,7 +582,7 @@ func (s *Store) DecideBatch(ctx context.Context, campaignID, batchID, decision s
 		toApply = append(toApply, &batchPlan{review: r})
 	}
 	if len(toApply) == 0 {
-		return s.finishBatchDecision(ctx, campaignID, batch, res, decision)
+		return s.finishDecide(ctx, campaignID, batch, res, decision)
 	}
 
 	// The refusal pass: an item whose dependency is (or becomes) dismissed,
@@ -744,7 +748,27 @@ func (s *Store) DecideBatch(ctx context.Context, campaignID, batchID, decision s
 		outcome[r.ID].ResultRef = resultRef
 	}
 
-	return s.finishBatchDecision(ctx, campaignID, batch, res, decision)
+	return s.finishDecide(ctx, campaignID, batch, res, decision)
+}
+
+// finishDecide wraps finishBatchDecision with the tick completion: a tick
+// batch that leaves open hands off to the tick finalizer — the campaign
+// clock's move by exactly the window and the sim_ticks row's status flip —
+// whatever path decided it. The finalizer is idempotent (guarded on the
+// sim_ticks row's own status), so a failed completion heals on the decision
+// retry a decided batch allows.
+func (s *Store) finishDecide(ctx context.Context, campaignID string, batch *Batch, res *BatchDecision, decision string) (*BatchDecision, error) {
+	out, err := s.finishBatchDecision(ctx, campaignID, batch, res, decision)
+	if err != nil {
+		return nil, err
+	}
+	if out.Batch != nil && out.Batch.Source == BatchSourceTick &&
+		out.Batch.Status != BatchOpen && s.tickFinalizer != nil {
+		if err := s.tickFinalizer.FinalizeTickBatch(ctx, out.Batch); err != nil {
+			return nil, fmt.Errorf("finish tick batch %s: %w", out.Batch.ID, err)
+		}
+	}
+	return out, nil
 }
 
 // batchItemBefore orders two independent items: entities first, then facts,
@@ -837,15 +861,22 @@ func (s *Store) finishBatchDecision(ctx context.Context, campaignID string, batc
 
 // batchResolution remembers what this batch's applied items created, so a
 // later item's references resolve against them: entity names and local ids,
-// fact statements and local ids. Lookup is case-insensitive on names (the
-// "Duke Aldric" case), exact on local ids.
+// fact statements and local ids, event local ids. Lookup is
+// case-insensitive on names (the "Duke Aldric" case), exact on local ids.
 type batchResolution struct {
 	entities map[string]string
 	facts    map[string]string
+	events   map[string]string
 }
 
 func newBatchResolution() *batchResolution {
-	return &batchResolution{entities: map[string]string{}, facts: map[string]string{}}
+	return &batchResolution{entities: map[string]string{}, facts: map[string]string{}, events: map[string]string{}}
+}
+
+func (b *batchResolution) noteEvent(localID, id string) {
+	if localID != "" {
+		b.events[localID] = id
+	}
 }
 
 func (b *batchResolution) noteEntity(localID, name, id string) {
@@ -906,6 +937,8 @@ func (s *Store) applyBatchItem(ctx context.Context, rev *Review, p map[string]an
 		return s.applyGeneratedEvent(ctx, rev, p, decidedBy, res)
 	case ReviewProposedDiscovery:
 		return s.applyGeneratedDiscovery(ctx, rev, p, decidedBy, res)
+	case ReviewProposedPlanTransition:
+		return s.applyGeneratedPlanTransition(ctx, rev, p, decidedBy, res)
 	default:
 		return "", fmt.Errorf("%w: batch item kind %s cannot be accepted here", ErrInvalid, rev.Kind)
 	}
@@ -1049,12 +1082,80 @@ func (s *Store) applyGeneratedEvent(ctx context.Context, rev *Review, p map[stri
 	if err != nil {
 		return "", fmt.Errorf("accept event: %w", err)
 	}
+	res.noteEvent(str(p, "local_id"), ev.ID)
 	for _, part := range parts {
 		if err := s.campaigns.AddParticipant(ctx, rev.CampaignID, ev.ID, part.entity, part.role); err != nil {
 			return "", fmt.Errorf("accept event participant: %w", err)
 		}
 	}
 	return ev.ID, nil
+}
+
+// applyGeneratedPlanTransition applies an accepted tick advance to its plan
+// through the faction store — the same persistence AdvancePlan writes, minus
+// re-deriving the arithmetic, which the tick already did deterministically.
+// The payload is the whole advance: from/to state, the carried progress, the
+// moves with their carries, and the event that caused it (a sibling local
+// id this batch already applied). The plan must still sit where the advance
+// was computed from; if the world moved it since, the accept fails loudly
+// and nothing is written.
+func (s *Store) applyGeneratedPlanTransition(ctx context.Context, rev *Review, p map[string]any, decidedBy string, res *batchResolution) (string, error) {
+	if err := s.requireFactions(); err != nil {
+		return "", err
+	}
+	planID := str(p, "plan_id")
+	if planID == "" {
+		return "", fmt.Errorf("%w: plan transition payload has no plan_id", ErrInvalid)
+	}
+	pr := faction.Progression{
+		FromState:    str(p, "from_state"),
+		ToState:      str(p, "to_state"),
+		FromProgress: numField(p["from_progress"]),
+		ToProgress:   numField(p["to_progress"]),
+		Days:         int(numField(p["days"])),
+		Gain:         numField(p["gain"]),
+		Halted:       str(p, "halted"),
+	}
+	if arr, ok := p["moves"].([]any); ok {
+		for _, item := range arr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			pr.Moves = append(pr.Moves, faction.StepMove{
+				To:    str(m, "to"),
+				Carry: numField(m["carry"]),
+			})
+		}
+	}
+	if arr, ok := p["terms"].([]any); ok {
+		for _, item := range arr {
+			t, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			pr.Terms = append(pr.Terms, faction.Term{
+				Label: str(t, "label"), Delta: numField(t["delta"]), Reason: str(t, "reason"),
+			})
+		}
+	}
+	eventID := ""
+	if ref := str(p, "event"); ref != "" && res != nil {
+		eventID = res.events[ref]
+	}
+	plan, err := s.factions.ApplyAdvance(ctx, rev.CampaignID, planID, pr, eventID)
+	if err != nil {
+		return "", fmt.Errorf("accept plan transition: %w", err)
+	}
+	return plan.ID, nil
+}
+
+// numField reads a JSON number field, 0 when absent or not a number.
+func numField(v any) float64 {
+	if n, ok := v.(float64); ok {
+		return n
+	}
+	return 0
 }
 
 // applyGeneratedDiscovery records the accepted discovery with its awareness

@@ -37,6 +37,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 )
 
@@ -46,15 +47,16 @@ import (
 // carry a flag_id; contradiction items carry their sides in detail; npc_reveal
 // items carry their proposed fact in detail (see reveal.go).
 const (
-	ReviewProposedFact         = "proposed_fact"
-	ReviewProposedEvent        = "proposed_event"
-	ReviewProposedDiscovery    = "proposed_discovery"
-	ReviewProposedRelationship = "proposed_relationship"
-	ReviewProposedEntity       = "proposed_entity"
-	ReviewLowAgreement         = "low_agreement"
-	ReviewContradiction        = "contradiction"
-	ReviewEngineFlag           = "engine_flag"
-	ReviewNPCReveal            = "npc_reveal"
+	ReviewProposedFact           = "proposed_fact"
+	ReviewProposedEvent          = "proposed_event"
+	ReviewProposedDiscovery      = "proposed_discovery"
+	ReviewProposedRelationship   = "proposed_relationship"
+	ReviewProposedEntity         = "proposed_entity"
+	ReviewProposedPlanTransition = "proposed_plan_transition"
+	ReviewLowAgreement           = "low_agreement"
+	ReviewContradiction          = "contradiction"
+	ReviewEngineFlag             = "engine_flag"
+	ReviewNPCReveal              = "npc_reveal"
 )
 
 // Review statuses. A decision is terminal: once accepted, modified or
@@ -181,6 +183,40 @@ func (s *Store) requireGraphStores() error {
 		return errors.New("canon: no graph stores wired (accepting needs campaign and knowledge stores)")
 	}
 	return nil
+}
+
+// WithFactions wires the faction plan store a staged plan transition applies
+// through (MAD-367). Only deciding proposed_plan_transition items needs it;
+// every other surface works unwired.
+func (s *Store) WithFactions(f *faction.Store) *Store {
+	s.factions = f
+	return s
+}
+
+func (s *Store) requireFactions() error {
+	if s.factions == nil {
+		return errors.New("canon: no faction store wired (plan transitions need internal/faction)")
+	}
+	return nil
+}
+
+// TickFinalizer completes a decided simulation tick batch (MAD-367): the one
+// write a tick batch cannot carry itself — moving the campaign clock by its
+// window exactly once — plus the sim_ticks row's status flip. Implemented by
+// internal/sim's store and wired with WithTickFinalizer; the finalizer must
+// be idempotent, because a decided batch may be re-read (and a failed
+// completion retried) without re-deciding anything.
+type TickFinalizer interface {
+	FinalizeTickBatch(ctx context.Context, batch *Batch) error
+}
+
+// WithTickFinalizer wires the tick completion. Without it tick batches are
+// still decidable — their graph writes are ordinary batch items — but their
+// clock moves go unrecorded, so every wiring that stages ticks must wire
+// one.
+func (s *Store) WithTickFinalizer(f TickFinalizer) *Store {
+	s.tickFinalizer = f
+	return s
 }
 
 /* ---------- building the queue ---------- */
@@ -1193,6 +1229,8 @@ func renderCandidate(c Candidate) (subject, summary string) {
 		return "Relationship", fmt.Sprintf("%s — %s — %s", strv("from_entity"), strv("rel_type"), strv("to_entity"))
 	case KindEntity:
 		return "Entity — " + strv("kind"), strv("name") + ": " + strv("summary")
+	case KindPlanTransition:
+		return "Plan transition", fmt.Sprintf("%s — %s -> %s", strv("plan_id"), strv("from_state"), strv("to_state"))
 	default:
 		return "Proposal", string(c.Payload)
 	}
@@ -1274,11 +1312,12 @@ func intField(v any) (int64, bool) {
 // before the facts, relationships and events about them, and discoveries
 // (which reference facts) last.
 var acceptPriority = map[string]int{
-	ReviewProposedEntity:       0,
-	ReviewProposedFact:         1,
-	ReviewProposedRelationship: 2,
-	ReviewProposedEvent:        3,
-	ReviewProposedDiscovery:    4,
+	ReviewProposedEntity:         0,
+	ReviewProposedFact:           1,
+	ReviewProposedRelationship:   2,
+	ReviewProposedEvent:          3,
+	ReviewProposedDiscovery:      4,
+	ReviewProposedPlanTransition: 5,
 }
 
 // BatchFailure is one item a batch accept could not apply.

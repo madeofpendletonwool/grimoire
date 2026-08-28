@@ -485,6 +485,28 @@ func (p Plan) afterTransition(to string) Plan {
 	return next
 }
 
+// afterMoves is afterTransition for a whole advance: the final state plus
+// every state the moves entered, so a multi-step advance reads as complete
+// when its last step is entered.
+func (p Plan) afterMoves(moves []StepMove, to string) Plan {
+	next := p.afterTransition(to)
+	reached := append([]string{}, p.Reached...)
+	for _, m := range moves {
+		known := false
+		for _, r := range reached {
+			if r == m.To {
+				known = true
+				break
+			}
+		}
+		if !known {
+			reached = append(reached, m.To)
+		}
+	}
+	next.Reached = reached
+	return next
+}
+
 /* ---------- modifiers: interference is a rule, not a mood ---------- */
 
 // RequirementStatus is one evaluated precondition: whether it currently
@@ -663,41 +685,8 @@ func (s *Store) AdvancePlan(ctx context.Context, campaignID, planID string, days
 		if err != nil {
 			return nil, nil, err
 		}
-		now := time.Now().UTC().UnixMilli()
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return nil, nil, fmt.Errorf("advance tx: %w", err)
-		}
-		defer tx.Rollback()
-		from := p.CurrentState
-		reason := pr.Summary()
-		for i, m := range pr.Moves {
-			r := reason
-			if i > 0 {
-				r = fmt.Sprintf("entered %s (carry %s)", m.To, formatNum(m.Carry))
-			}
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO faction_plan_transitions (id, plan_id, from_state, to_state, event_id, clock_day, reason, created_at)
-				VALUES (?, ?, ?, ?, NULL, ?, ?, ?)`,
-				uuid.NewString(), planID, from, m.To, day, r, now); err != nil {
-				return nil, nil, fmt.Errorf("insert plan transition: %w", err)
-			}
-			from = m.To
-		}
-		status := p.Status
-		next := p.afterTransition(pr.ToState)
-		next.Progress = pr.ToProgress
-		if next.ActiveStep() == nil && len(p.Steps) > 0 {
-			status = PlanComplete
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE faction_plans SET current_state = ?, progress = ?, status = ?, last_advanced_day = ?, updated_at = ?
-			 WHERE id = ? AND campaign_id = ?`,
-			pr.ToState, pr.ToProgress, status, day, now, planID, campaignID); err != nil {
-			return nil, nil, fmt.Errorf("update plan: %w", err)
-		}
-		if err := tx.Commit(); err != nil {
-			return nil, nil, fmt.Errorf("advance commit: %w", err)
+		if err := s.persistAdvance(ctx, campaignID, p, &pr, day, ""); err != nil {
+			return nil, nil, err
 		}
 	}
 	updated, err := s.planInCampaign(ctx, planID, campaignID)
@@ -705,6 +694,84 @@ func (s *Store) AdvancePlan(ctx context.Context, campaignID, planID string, days
 		return nil, nil, err
 	}
 	return updated, &pr, nil
+}
+
+// ApplyAdvance persists an already-computed advance — the shape the
+// simulation tick's staged plan-transition items take. The progression must
+// start where the plan currently sits (a plan that moved since it was
+// computed is a stale proposal, refused loudly); every move is checked
+// against the machine's declared edges from the running state, the same
+// rule TransitionPlan enforces. eventID, when set, cites the event that
+// caused the advance on the transitions rows.
+func (s *Store) ApplyAdvance(ctx context.Context, campaignID, planID string, pr Progression, eventID string) (*Plan, error) {
+	p, err := s.planInCampaign(ctx, planID, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	if pr.FromState != p.CurrentState {
+		return nil, fmt.Errorf("%w: plan %q sits at %s, not %s; the advance was computed against an older state",
+			campaign.ErrInvalid, p.Name, p.CurrentState, pr.FromState)
+	}
+	from := p.CurrentState
+	for _, m := range pr.Moves {
+		if !p.Machine.HasEdge(from, m.To) {
+			return nil, fmt.Errorf("%w: plan %q cannot move %s -> %s; the machine has no such edge",
+				campaign.ErrInvalid, p.Name, from, m.To)
+		}
+		from = m.To
+	}
+	day, err := s.campaignClock(ctx, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.persistAdvance(ctx, campaignID, p, &pr, day, eventID); err != nil {
+		return nil, err
+	}
+	return s.planInCampaign(ctx, planID, campaignID)
+}
+
+// persistAdvance writes one advance's outcome: a transitions row per state
+// entered (the first carries the arithmetic, the rest their carry), the new
+// state and progress, the completed status when every step is entered, and
+// last_advanced_day — one transaction.
+func (s *Store) persistAdvance(ctx context.Context, campaignID string, p *Plan, pr *Progression, day int64, eventID string) error {
+	now := time.Now().UTC().UnixMilli()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("advance tx: %w", err)
+	}
+	defer tx.Rollback()
+	from := p.CurrentState
+	reason := pr.Summary()
+	for i, m := range pr.Moves {
+		r := reason
+		if i > 0 {
+			r = fmt.Sprintf("entered %s (carry %s)", m.To, formatNum(m.Carry))
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO faction_plan_transitions (id, plan_id, from_state, to_state, event_id, clock_day, reason, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(), p.ID, from, m.To, nullString(eventID), day, r, now); err != nil {
+			return fmt.Errorf("insert plan transition: %w", err)
+		}
+		from = m.To
+	}
+	status := p.Status
+	next := p.afterMoves(pr.Moves, pr.ToState)
+	next.Progress = pr.ToProgress
+	if next.ActiveStep() == nil && len(p.Steps) > 0 {
+		status = PlanComplete
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE faction_plans SET current_state = ?, progress = ?, status = ?, last_advanced_day = ?, updated_at = ?
+		 WHERE id = ? AND campaign_id = ?`,
+		pr.ToState, pr.ToProgress, status, day, now, p.ID, campaignID); err != nil {
+		return fmt.Errorf("update plan: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("advance commit: %w", err)
+	}
+	return nil
 }
 
 /* ---------- shared helpers ---------- */

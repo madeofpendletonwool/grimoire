@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 )
@@ -53,11 +54,12 @@ var (
 
 // vocabularies for candidate kinds.
 const (
-	KindFact         = "fact"
-	KindEvent        = "event"
-	KindDiscovery    = "discovery"
-	KindRelationship = "relationship"
-	KindEntity       = "entity"
+	KindFact           = "fact"
+	KindEvent          = "event"
+	KindDiscovery      = "discovery"
+	KindRelationship   = "relationship"
+	KindEntity         = "entity"
+	KindPlanTransition = "plan_transition"
 )
 
 // Drop reasons — the vocabulary logged per dropped candidate and counted in
@@ -232,6 +234,13 @@ type Store struct {
 	// queue-read surfaces working while accepting is refused.
 	campaigns *campaign.Store
 	knowledge *knowledge.Store
+	// The faction plan store a staged plan transition applies through
+	// (MAD-367). Wired with WithFactions; only deciding those items needs it.
+	factions *faction.Store
+	// tickFinalizer, when wired, completes a decided simulation tick batch —
+	// the clock move and the sim_ticks status flip. Wired with
+	// WithTickFinalizer; internal/sim implements it.
+	tickFinalizer TickFinalizer
 }
 
 // New builds a canon store on an open, migrated database handle with the

@@ -7,9 +7,10 @@
 //	grimoire migrate status show which schema migrations have been applied
 //	grimoire migrate up     apply pending schema migrations and exit
 //	grimoire migrate down   roll back the most recent migration and exit
-//	grimoire campaign check run the campaign-graph integrity checks
-//	grimoire campaign plans list a campaign's faction plans
-//	grimoire canon check    run the canon engine's deterministic checks
+//	grimoire campaign check    run the campaign-graph integrity checks
+//	grimoire campaign plans    list a campaign's faction plans
+//	grimoire campaign simulate preview a simulation tick — advance the world by N days
+//	grimoire canon check       run the canon engine's deterministic checks
 //	grimoire [-h]           help
 //
 // Configuration is via environment variables (see .env.example):
@@ -90,6 +91,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/server"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
+	"github.com/madeofpendletonwool/grimoire/internal/sim"
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
@@ -144,6 +146,7 @@ Usage:
   grimoire migrate status|up|down   inspect or move the database schema
   grimoire campaign check [id]      run campaign integrity checks
   grimoire campaign plans [id]      list a campaign's faction plans
+  grimoire campaign simulate <id> --days 14 --seed N   preview a simulation tick, offline
   grimoire canon check [id]                 run the deterministic canon checks
   grimoire canon continuity [flags] <id> <prep.json>   pre-session continuity check
   grimoire canon entail [flags] <id> <prose.txt>       entailment pass over prose
@@ -496,18 +499,148 @@ func runMigrate(args []string) error {
 // check reports an error-severity finding, so a cron or pre-session ritual
 // can gate on it. `campaign plans` lists one campaign's faction plans — a
 // read-only view of plan state, inspectable with no server and no key.
+// `campaign simulate` previews one tick window the same way: pure
+// arithmetic, nothing written, no key needed.
 func runCampaign(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: grimoire campaign check [campaign-id] | grimoire campaign plans <campaign-id>")
+		return fmt.Errorf("usage: grimoire campaign check [campaign-id] | grimoire campaign plans <campaign-id> | grimoire campaign simulate <campaign-id> --days 14 --seed N")
 	}
 	switch args[0] {
 	case "check":
 		return runCampaignCheck(args[1:])
 	case "plans":
 		return runCampaignPlans(args[1:])
+	case "simulate":
+		return runCampaignSimulate(args[1:])
 	default:
-		return fmt.Errorf("unknown campaign subcommand %q (want check or plans)", args[0])
+		return fmt.Errorf("unknown campaign subcommand %q (want check, plans or simulate)", args[0])
 	}
+}
+
+// simulateArgs splits the simulate subcommand's flags out of its arguments.
+// Both "--days 14" and "--days=14" forms are accepted.
+func simulateArgs(args []string) (days int, seed int64, seedSet bool, rest []string) {
+	days = 14
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		flag, value, hasValue := strings.Cut(a, "=")
+		switch flag {
+		case "--offline":
+			// accepted for symmetry with the canon subcommands; the tick
+			// is always offline
+		case "--days":
+			if !hasValue && i+1 < len(args) {
+				i++
+				value = args[i]
+			}
+			if v, err := strconv.Atoi(value); err == nil {
+				days = v
+			}
+		case "--seed":
+			if !hasValue && i+1 < len(args) {
+				i++
+				value = args[i]
+			}
+			if v, err := strconv.ParseInt(value, 10, 64); err == nil {
+				seed, seedSet = v, true
+			}
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return days, seed, seedSet, rest
+}
+
+// runCampaignSimulate previews the deterministic outcome of advancing the
+// world: grimoire campaign simulate <campaign-id> --days 14 --seed N. The
+// online surface's preview is the same computation plus a row; this one
+// writes nothing at all — the offline, no-key path beside campaign check.
+func runCampaignSimulate(args []string) error {
+	days, seed, seedSet, rest := simulateArgs(args)
+	if len(rest) != 1 {
+		return fmt.Errorf("usage: grimoire campaign simulate <campaign-id> --days 14 --seed N")
+	}
+	campaignID := rest[0]
+	if err := ensureDBDir(); err != nil {
+		return err
+	}
+	db, err := index.OpenDB(dbPath())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := migrate.Up(db); err != nil {
+		return err
+	}
+	camps, err := campaign.New(db)
+	if err != nil {
+		return err
+	}
+	factions, err := faction.New(db)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	c, err := camps.GetCampaign(ctx, campaignID)
+	if err != nil {
+		return err
+	}
+	cal, _, err := camps.GetCalendar(ctx, campaignID)
+	if err != nil {
+		return err
+	}
+	snap, err := canon.LoadSnapshot(ctx, db, campaignID)
+	if err != nil {
+		return err
+	}
+	snap.Clock = c.Clock
+	plans, err := factions.ListPlans(ctx, campaign.ScopeDM, campaignID)
+	if err != nil {
+		return err
+	}
+	entries, err := camps.ListScheduledEvents(ctx, campaignID, true)
+	if err != nil {
+		return err
+	}
+	if !seedSet {
+		seed = sim.DefaultSeed(campaignID, c.Clock, days)
+	}
+	res := sim.Tick(snap, cal, plans, entries, days, seed)
+
+	log.Printf("%s (%s): day %s -> %s (%dd, seed %d), digest %s",
+		c.Name, campaignID, cal.FormatShort(res.FromDay), cal.FormatShort(res.ToDay), days, seed, res.Digest)
+	nameOf := func(id string) string {
+		for _, e := range snap.Entities {
+			if e.ID == id {
+				return e.Name
+			}
+		}
+		return id
+	}
+	for _, pa := range res.Plans {
+		status := "unchanged"
+		if pa.Moved {
+			status = "moved"
+		}
+		log.Printf("  [plan/%s] %s — %q (%s -> %s)", status, nameOf(pa.FactionEntity), pa.Name,
+			pa.Progression.FromState, pa.Progression.ToState)
+		log.Printf("    %s", pa.Progression.Summary())
+	}
+	for _, d := range res.Due {
+		log.Printf("  [due] %s — %s", cal.FormatShort(d.Day), d.Name)
+	}
+	for _, m := range res.Missed {
+		log.Printf("  [missed] %s — %s (day %d, still pending behind the clock)", cal.FormatShort(m.Day), m.Name, m.Day)
+	}
+	for _, a := range res.Actions {
+		log.Printf("  [npc] %s (day %d) — %s", a.NPCName, a.Day, a.Summary)
+	}
+	for _, c := range res.Consequences {
+		log.Printf("  [reaction] %s (day %d) — %s", c.ReactorName, c.Day, c.Summary)
+	}
+	wrote := "nothing is written; stage the outcomes through the API to propose them"
+	log.Printf("  %s", wrote)
+	return nil
 }
 
 // runCampaignPlans prints a campaign's faction plans: owner, status, state,
@@ -1378,7 +1511,17 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
-	canonEngine = canonEngine.WithGraphStores(campaigns, knowledge)
+	canonEngine = canonEngine.WithGraphStores(campaigns, knowledge).WithFactions(factions)
+
+	// The simulation tick (MAD-367): pure arithmetic over the campaign
+	// snapshot, staged through the proposal gate. Its store completes a
+	// decided tick batch — the clock move — so it is wired back onto the
+	// canon engine as the tick finalizer.
+	simEngine, err := sim.New(store.DB(), campaigns, factions, canonEngine)
+	if err != nil {
+		return err
+	}
+	canonEngine = canonEngine.WithTickFinalizer(simEngine)
 
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
@@ -1393,6 +1536,7 @@ func runServe() error {
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)
+	srv = srv.WithSim(simEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {
