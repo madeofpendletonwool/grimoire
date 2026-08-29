@@ -90,7 +90,7 @@ func TestCheckDanglingReferenceTable(t *testing.T) {
 			name: "transition tied to a missing event",
 			snap: &Snapshot{Entities: []Entity{alive},
 				Quests: []Quest{{ID: "q1", CampaignID: "c1", Name: "q", CurrentState: "b",
-					Machine: StateMachine{Initial: "a", States: []string{"a", "b"},
+					Machine: StateMachine{Initial: "a", States: States("a", "b"),
 						Edges: []StateEdge{{From: "a", To: "b"}}}}},
 				QuestTransitions: []QuestTransition{{ID: "t1", QuestID: "q1", FromState: "a", ToState: "b", EventID: "gone"}}},
 			want: 1,
@@ -164,7 +164,7 @@ func TestCheckCauseAfterEffectTable(t *testing.T) {
 func TestCheckQuestTransitionInvalidTable(t *testing.T) {
 	machine := StateMachine{
 		Initial: "a",
-		States:  []string{"a", "b", "c"},
+		States:  States("a", "b", "c"),
 		Edges:   []StateEdge{{From: "a", To: "b"}, {From: "b", To: "c"}},
 	}
 	quest := Quest{ID: "q1", CampaignID: "c1", Name: "q", CurrentState: "b", Machine: machine}

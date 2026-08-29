@@ -10,7 +10,7 @@ func planView(id, faction, current, status string, rate float64, lastAdvanced *i
 		Status: status, RatePerDay: rate, LastAdvanced: lastAdvanced,
 		HasEnemyRequirement: enemyReq,
 		Machine: StateMachine{
-			Initial: "mustering", States: []string{"mustering", "infiltrated", "bloomed"},
+			Initial: "mustering", States: States("mustering", "infiltrated", "bloomed"),
 			Edges: []StateEdge{
 				{From: "mustering", To: "infiltrated"}, {From: "infiltrated", To: "bloomed"},
 			},

@@ -89,7 +89,7 @@ func planInput(fx fixture) PlanInput {
 		Name: "The Root Takes Hold",
 		Machine: campaign.StateMachine{
 			Initial: "mustering",
-			States:  []string{"mustering", "infiltrated", "bloomed"},
+			States:  campaign.States("mustering", "infiltrated", "bloomed"),
 			Edges: []campaign.StateEdge{
 				{From: "mustering", To: "infiltrated"},
 				{From: "infiltrated", To: "bloomed"},
@@ -321,7 +321,7 @@ func TestAdvancePlanDerivesModifiersFromGraph(t *testing.T) {
 			Name: "The Greywatch Mobilizes",
 			Machine: campaign.StateMachine{
 				Initial: "watching",
-				States:  []string{"watching", "mobilized"},
+				States:  campaign.States("watching", "mobilized"),
 				Edges:   []campaign.StateEdge{{From: "watching", To: "mobilized"}},
 			},
 			Steps:      []Step{{State: "mobilized", Name: "Mobilize", Cost: 5}},

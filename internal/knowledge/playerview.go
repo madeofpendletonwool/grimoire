@@ -56,6 +56,10 @@ type PlayerView interface {
 	// and nothing else. PrivateTruth and the rest of the payload are DM
 	// structure this interface cannot express.
 	FactionFacade(ctx context.Context, campaignID, id string) (face, reputation string, err error)
+	// QuestJournal is the player-visible quest read (MAD-369): public
+	// quests only, the current state's label, the states already visited —
+	// and never an unvisited branch, a state detail or an edge's requires.
+	QuestJournal(ctx context.Context, campaignID string) ([]QuestJournalEntry, error)
 }
 
 // playerView is the PlayerView implementation: the wide store's scoped reads

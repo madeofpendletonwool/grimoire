@@ -145,7 +145,7 @@ func plantDowntimeWorld(t *testing.T, s *Server, factions *faction.Store, f fixt
 	plan, err := factions.CreatePlan(t.Context(), f.campaignID, cult, faction.PlanInput{
 		Name: "The Vernal Rite",
 		Machine: campaign.StateMachine{
-			Initial: "gathering", States: []string{"gathering", "ritual", "ascension"},
+			Initial: "gathering", States: campaign.States("gathering", "ritual", "ascension"),
 			Edges: []campaign.StateEdge{{From: "gathering", To: "ritual"}, {From: "ritual", To: "ascension"}},
 		},
 		Steps: []faction.Step{

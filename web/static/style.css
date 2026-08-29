@@ -2951,6 +2951,41 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 }
 .camp-node:focus { outline: none; }
 
+/* The quest board (MAD-369): the list of quests, the machine chart, the
+   journal trail. The chart reuses the graph SVG classes and adds the
+   terminal ring and the ghosted branch. */
+.camp-quests-panel { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-quests { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-quest {
+	border: 1px solid var(--ink-soft);
+	padding: var(--sp-2);
+	cursor: pointer;
+}
+.camp-quest.is-active { border-color: var(--gold); }
+.camp-quest-head { display: flex; align-items: center; gap: var(--sp-2); }
+.camp-quest-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fw-bold, 700); }
+.camp-quest-now { margin: 0; color: var(--ink-soft); font-size: var(--fs-sm); }
+.camp-quest-summary { margin: 0; font-size: var(--fs-sm); }
+.camp-quest-trail { display: flex; flex-wrap: wrap; gap: var(--sp-1); align-items: center; }
+.camp-quest-step {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	border: 1px solid var(--ink-soft);
+	padding: 0.1rem 0.35rem;
+	opacity: 0.75;
+}
+.camp-quest-step.is-now { border-color: var(--gold); color: var(--gold); opacity: 1; }
+.camp-quest-detail { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-quest-links { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.camp-quest-move { display: flex; gap: var(--sp-2); align-items: center; }
+.camp-quest-move .enc-field { flex: 1; min-width: 0; }
+.camp-quest-svg .camp-edge.is-ghost { stroke-dasharray: 3 3; opacity: 0.4; }
+.camp-quest-svg .camp-edge.is-taken { stroke-width: 2; }
+.camp-quest-svg .camp-edge-label { fill: var(--ink-soft); }
+.camp-quest-svg .camp-qnode.is-terminal rect { stroke: var(--gold); stroke-width: 2; }
+.camp-quest-svg .camp-qnode.is-initial text { font-style: italic; }
+.camp-quest-svg .camp-qnode { cursor: default; }
+
 /* The table: members, roles, invites. */
 .camp-members > summary { cursor: pointer; }
 .camp-members[open] > summary { margin-bottom: var(--sp-3); }

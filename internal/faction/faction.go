@@ -191,7 +191,7 @@ func (p Plan) Validate() error {
 	}
 	declared := map[string]bool{}
 	for _, s := range p.Machine.States {
-		declared[s] = true
+		declared[s.Key] = true
 	}
 	seen := map[string]bool{}
 	for _, s := range p.Steps {

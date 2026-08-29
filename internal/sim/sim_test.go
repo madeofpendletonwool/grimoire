@@ -74,7 +74,7 @@ type tickFixture struct {
 func machine() campaign.StateMachine {
 	return campaign.StateMachine{
 		Initial: "gathering",
-		States:  []string{"gathering", "ritual", "ascension"},
+		States:  campaign.States("gathering", "ritual", "ascension"),
 		Edges: []campaign.StateEdge{
 			{From: "gathering", To: "ritual"},
 			{From: "ritual", To: "ascension"},
