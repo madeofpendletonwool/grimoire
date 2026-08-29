@@ -261,6 +261,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/factions/{eid}/plans", s.handleCreateFactionPlan)
 	mux.HandleFunc("PATCH /api/campaigns/{id}/plans/{pid}", s.handleUpdateFactionPlan)
 	mux.HandleFunc("POST /api/campaigns/{id}/plans/{pid}/transition", s.handleFactionPlanTransition)
+	// The location surface (MAD-370): the places listing, the
+	// scope-resolved dossier, and the place block editor. The dossier is a
+	// read of the graph plus the payload's place block — no new rows.
+	mux.HandleFunc("GET /api/campaigns/{id}/locations", s.handleCampaignLocations)
+	mux.HandleFunc("GET /api/campaigns/{id}/locations/{eid}", s.handleCampaignLocation)
+	mux.HandleFunc("PUT /api/campaigns/{id}/locations/{eid}/place", s.handlePutCampaignPlace)
 	// The campaign clock (MAD-365): calendar, clock ledger, schedule, travel.
 	mux.HandleFunc("GET /api/campaigns/{id}/calendar", s.handleCampaignCalendar)
 	mux.HandleFunc("PUT /api/campaigns/{id}/calendar", s.handlePutCampaignCalendar)
