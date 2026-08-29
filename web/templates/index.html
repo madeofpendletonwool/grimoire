@@ -554,6 +554,17 @@
 						</div>
 						<div class="camp-graph" id="camp-graph" aria-label="Entity neighbourhood graph"></div>
 					</div>
+					<!-- The quest board (MAD-369): the DM sees every quest's
+					     machine drawn as a deterministic chart — the
+					     current state in gold, edges already taken inked,
+					     untaken branches ghosted. Players see the journal:
+					     where each public quest stands and the states
+					     already visited, never an untaken branch. -->
+					<div class="camp-panel camp-quests-panel">
+						<h3 class="enc-heading">The quest board</h3>
+						<div class="camp-quests" id="camp-quests" aria-label="Quests"></div>
+						<div class="camp-quest-detail" id="camp-quest-detail" aria-live="polite"></div>
+					</div>
 					<details class="camp-panel camp-members" id="camp-members-panel" hidden>
 						<summary class="enc-heading">The table</summary>
 						<div class="camp-members-body" id="camp-members-body"></div>

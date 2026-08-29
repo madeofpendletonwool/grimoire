@@ -613,6 +613,41 @@ export const api = {
 	campaignQuests: (cid) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests`).then(json),
 
+	// The quest graph (MAD-369): the DM's board and the player's journal.
+	campaignQuestDetail: (cid, questID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}`).then(json),
+
+	campaignQuestUpdate: (cid, questID, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	campaignQuestDelete: (cid, questID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}`, { method: "DELETE" }).then(json),
+
+	campaignQuestEntityAdd: (cid, questID, entityID, role) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}/entities`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ entity_id: entityID, role }),
+		}).then(json),
+
+	campaignQuestEntityRemove: (cid, questID, entityID, role) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}/entities/${encodeURIComponent(entityID)}` +
+			(role ? `?role=${encodeURIComponent(role)}` : ""), { method: "DELETE" }).then(json),
+
+	campaignQuestJournal: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/journal`).then(json),
+
+	campaignQuestTransition: (cid, questID, to) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}/transition`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ to }),
+		}).then(json),
+
 	actCreate: (cid, act) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/acts`, {
 			method: "POST",

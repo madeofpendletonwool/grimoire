@@ -22,6 +22,8 @@ let loadSeq = 0; // guards stale entity-list fetches
 let clockInfo = null; // the last GET /clock body (date, weather, strip, due)
 let scheduleEntries = []; // the schedule at the caller's scope
 let editingScheduleID = null; // the entry whose inline editor is open
+let quests = []; // the board: DM machines or player journal entries
+let selectedQuestID = null; // the quest whose detail chart is open (DM)
 
 function wire() {
 	// The entity creator's kind select is static; fill it once.
@@ -64,6 +66,11 @@ function wire() {
 	// that proposal on the ordinary review queue.
 	$("camp-simulate-form").addEventListener("submit", onSimulate);
 	$("camp-simulate-result").addEventListener("click", onSimulateResultClick);
+	// The quest board (MAD-369): the list, the machine chart and the DM's
+	// move control, all delegated so re-renders need no re-binds.
+	$("camp-quests").addEventListener("click", onQuestBoardClick);
+	$("camp-quest-detail").addEventListener("submit", onQuestMoveSubmit);
+	$("camp-quest-detail").addEventListener("click", onQuestDetailClick);
 	for (const radio of document.querySelectorAll('input[name="camp-object"]')) {
 		radio.addEventListener("change", () => syncObjectKind());
 	}
@@ -101,6 +108,8 @@ async function openCampaign() {
 function closeCampaign() {
 	current = null;
 	selected = null;
+	selectedQuestID = null;
+	quests = [];
 }
 
 const isDM = () => current && (current.my_role === "dm" || current.my_role === "keeper");
@@ -154,9 +163,11 @@ async function selectCampaign(id) {
 	kindFilter = "";
 	renderKindChips();
 	editingScheduleID = null;
+	selectedQuestID = null;
 	await loadEntities();
 	loadClock();
 	loadSchedule();
+	loadQuests();
 	if (isDM()) {
 		loadMembers();
 		loadInvites();
@@ -1068,6 +1079,263 @@ function layout(nodes) {
 		});
 	}
 	return pos;
+}
+
+/* ---------- the quest board (MAD-369) ---------- */
+
+// The DM reads every machine; everyone else reads the journal — the public
+// quests, their current state and the states already visited. The server
+// enforces the leak rules; this module renders whatever comes back.
+async function loadQuests() {
+	const board = $("camp-quests");
+	if (!current) return;
+	let data;
+	try {
+		data = isDM() ? await api.campaignQuests(current.id) : await api.campaignQuestJournal(current.id);
+	} catch (err) {
+		quests = [];
+		clear(board).append(el("p", { class: "camp-status warn", text: err.message }));
+		clear($("camp-quest-detail"));
+		return;
+	}
+	quests = data.quests || [];
+	if (!isDM()) selectedQuestID = null;
+	renderQuestBoard();
+	if (isDM() && selectedQuestID) await renderQuestDetail(selectedQuestID);
+	else clear($("camp-quest-detail"));
+}
+
+function questStateLabel(q, key) {
+	const st = (q.state_machine?.states || []).find((s) => s.key === key);
+	return st?.label || key;
+}
+
+function renderQuestBoard() {
+	const board = clear($("camp-quests"));
+	if (quests.length === 0) {
+		board.append(el("p", { class: "camp-status", text: isDM() ? "No quests recorded yet." : "Nothing offered yet." }));
+		return;
+	}
+	for (const q of quests) {
+		const row = el("div", { class: "camp-quest" + (q.id === selectedQuestID ? " is-active" : ""), attrs: { "data-qid": q.id } });
+		const head = el("div", { class: "camp-quest-head" });
+		head.append(el("span", { class: "camp-quest-name", text: q.name }));
+		head.append(el("span", { class: "enc-chip" + (q.status === "active" ? " is-on" : ""), text: q.status || "active" }));
+		row.append(head);
+		if (isDM()) {
+			row.append(el("p", {
+				class: "camp-quest-now",
+				text: "at " + (questStateLabel(q, q.current_state) || q.current_state),
+			}));
+			if (q.visibility === "secret") row.append(el("span", { class: "enc-chip", text: "secret" }));
+		} else {
+			// The journal: the trail of visited states, current one last.
+			const trail = el("div", { class: "camp-quest-trail" });
+			for (const st of q.visited || []) {
+				trail.append(el("span", {
+					class: "camp-quest-step" + (st.key === q.current_state?.key ? " is-now" : ""),
+					text: st.label || st.key,
+				}));
+			}
+			row.append(trail);
+		}
+		if (q.summary) row.append(el("p", { class: "camp-quest-summary prose", text: q.summary }));
+		board.append(row);
+	}
+}
+
+function onQuestBoardClick(e) {
+	if (!isDM()) return; // the player list is read-only
+	const row = e.target.closest("[data-qid]");
+	if (!row) return;
+	selectedQuestID = row.dataset.qid === selectedQuestID ? null : row.dataset.qid;
+	renderQuestBoard();
+	if (selectedQuestID) renderQuestDetail(selectedQuestID);
+	else clear($("camp-quest-detail"));
+}
+
+// renderQuestDetail opens one machine as a deterministic chart plus the
+// links into the graph and the DM's move control. The chart is drawn the
+// way the neighbourhood map is: hand-rolled SVG, no library, no physics,
+// whole-pixel geometry.
+async function renderQuestDetail(questID) {
+	const box = $("camp-quest-detail");
+	clear(box).append(el("p", { class: "camp-status", text: "Opening the machine…" }));
+	let data;
+	try {
+		data = await api.campaignQuestDetail(current.id, questID);
+	} catch (err) {
+		clear(box).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	clear(box);
+	const q = data.quest;
+	box.append(renderQuestMachine(q, data.transitions || []));
+
+	// Who and what the quest is about.
+	const links = data.entities || [];
+	if (links.length > 0) {
+		const chips = el("div", { class: "camp-quest-links" });
+		for (const l of links) {
+			const name = entities.find((x) => x.id === l.entity_id)?.name || l.entity_id.slice(0, 8);
+			chips.append(el("span", { class: "enc-chip", text: `${l.role}: ${name}`, attrs: { "data-unlink": l.entity_id, "data-role": l.role, title: "unlink" } }));
+		}
+		box.append(chips);
+	}
+
+	// The move control: only an active quest moves, and only along real edges.
+	if (q.status === "active") {
+		const moves = (q.state_machine?.edges || []).filter((ed) => ed.from === q.current_state);
+		if (moves.length > 0) {
+			const form = el("form", { class: "camp-quest-move", attrs: { "data-move": q.id } });
+			const pick = el("select", { class: "enc-field", attrs: { "aria-label": "Move the quest" } });
+			for (const m of moves) {
+				pick.append(el("option", {
+					text: (m.label ? `${m.label} — ` : "") + (questStateLabel(q, m.to) || m.to),
+					attrs: { value: m.to },
+				}));
+			}
+			form.append(pick, el("button", { class: "enc-btn", text: "Move", attrs: { type: "submit" } }));
+			box.append(form);
+		}
+		box.append(el("button", {
+			class: "enc-chip", text: "abandon the quest",
+			attrs: { type: "button", "data-abandon": q.id },
+		}));
+	}
+}
+
+async function onQuestMoveSubmit(e) {
+	e.preventDefault();
+	const form = e.target.closest("[data-move]");
+	if (!form) return;
+	try {
+		await api.campaignQuestTransition(current.id, form.dataset.move, form.querySelector("select").value);
+		await loadQuests();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+async function onQuestDetailClick(e) {
+	const abandon = e.target.closest("[data-abandon]");
+	if (abandon) {
+		try {
+			await api.campaignQuestDelete(current.id, abandon.dataset.abandon);
+			await loadQuests();
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	const unlink = e.target.closest("[data-unlink]");
+	if (unlink) {
+		try {
+			await api.campaignQuestEntityRemove(current.id, selectedQuestID, unlink.dataset.unlink, unlink.dataset.role);
+			await renderQuestDetail(selectedQuestID);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+	}
+}
+
+// renderQuestMachine draws one state machine: layers by BFS distance from
+// the initial state, states sorted by key inside a layer so the chart is
+// stable across renders, the current state in gold, endings ringed, edges
+// already taken inked and untaken branches ghosted.
+function renderQuestMachine(q, transitions) {
+	const machine = q.state_machine || { states: [], edges: [] };
+	const states = machine.states || [];
+	const edges = machine.edges || [];
+	const taken = new Set((transitions || []).map((t) => `${t.from_state}>${t.to_state}`));
+
+	// BFS layers from the initial state; a state nothing reaches still
+	// renders, one layer past the deepest reached.
+	const dist = new Map([[machine.initial, 0]]);
+	const frontier = [machine.initial];
+	while (frontier.length > 0) {
+		const next = [];
+		for (const from of frontier) {
+			for (const ed of edges) {
+				if (ed.from === from && !dist.has(ed.to)) {
+					dist.set(ed.to, dist.get(from) + 1);
+					next.push(ed.to);
+				}
+			}
+		}
+		frontier.length = 0;
+		frontier.push(...next);
+	}
+	let layers = states.map((s) => dist.has(s.key) ? dist.get(s.key) : 999);
+	const maxLayer = Math.max(0, ...layers.map((d) => (d === 999 ? -1 : d)));
+	const byLayer = new Map();
+	states.forEach((s, i) => {
+		const layer = layers[i] === 999 ? maxLayer + 1 : layers[i];
+		if (!byLayer.has(layer)) byLayer.set(layer, []);
+		byLayer.get(layer).push(s);
+	});
+
+	const COL = 190, ROW = 64, PAD = 14;
+	const rows = Math.max(...[...byLayer.values()].map((r) => r.length), 1);
+	const W = Math.max(360, (byLayer.size) * COL + PAD * 2);
+	const H = rows * ROW + PAD * 2 + 8;
+	const pos = new Map();
+	for (const [layer, group] of [...byLayer.entries()].sort((a, b) => a[0] - b[0])) {
+		group.sort((a, b) => a.key.localeCompare(b.key));
+		const top = (H - group.length * ROW) / 2;
+		group.forEach((s, i) => {
+			pos.set(s.key, { x: Math.round(PAD + layer * COL + 70), y: Math.round(top + i * ROW + ROW / 2) });
+		});
+	}
+
+	const svgNS = "http://www.w3.org/2000/svg";
+	const svg = document.createElementNS(svgNS, "svg");
+	svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+	svg.setAttribute("class", "camp-graph-svg camp-quest-svg");
+	svg.setAttribute("role", "img");
+	svg.setAttribute("aria-label", `State machine of ${q.name}`);
+
+	for (const ed of edges) {
+		const a = pos.get(ed.from), b = pos.get(ed.to);
+		if (!a || !b) continue;
+		const line = document.createElementNS(svgNS, "line");
+		line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+		line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+		line.setAttribute("class", "camp-edge" + (taken.has(`${ed.from}>${ed.to}`) ? " is-taken" : " is-ghost"));
+		svg.append(line);
+		const label = ed.label || "";
+		if (label) {
+			const mid = document.createElementNS(svgNS, "text");
+			mid.setAttribute("x", Math.round((a.x + b.x) / 2));
+			mid.setAttribute("y", Math.round((a.y + b.y) / 2) - 3);
+			mid.setAttribute("class", "camp-edge-label");
+			mid.textContent = label.length > 16 ? label.slice(0, 15) + "…" : label;
+			svg.append(mid);
+		}
+	}
+	for (const s of states) {
+		const p = pos.get(s.key);
+		const g = document.createElementNS(svgNS, "g");
+		g.setAttribute("class", "camp-node camp-qnode" +
+			(s.key === q.current_state ? " is-center" : "") +
+			(s.terminal ? " is-terminal" : "") +
+			(s.key === machine.initial ? " is-initial" : ""));
+		g.setAttribute("transform", `translate(${p.x},${p.y})`);
+		const name = s.label || s.key;
+		const rect = document.createElementNS(svgNS, "rect");
+		const w = Math.min(150, Math.max(70, name.length * 7 + 16));
+		rect.setAttribute("x", Math.round(-w / 2)); rect.setAttribute("y", -14);
+		rect.setAttribute("width", w); rect.setAttribute("height", 28);
+		const text = document.createElementNS(svgNS, "text");
+		text.setAttribute("y", 4);
+		text.setAttribute("class", "camp-node-label");
+		text.textContent = name.length > 19 ? name.slice(0, 18) + "…" : name;
+		const title = document.createElementNS(svgNS, "title");
+		title.textContent = s.key + (s.terminal ? ` (ending: ${s.terminal})` : "") + (s.detail ? ` — ${s.detail}` : "");
+		g.append(rect, text, title);
+		svg.append(g);
+	}
+	return svg;
 }
 
 /* ---------- the table (members + invites, DM only) ---------- */

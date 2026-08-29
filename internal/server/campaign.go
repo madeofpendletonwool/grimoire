@@ -374,6 +374,10 @@ func toRelationshipView(r *campaign.Relationship) relationshipView {
 type questView struct {
 	ID           string                `json:"id"`
 	Name         string                `json:"name"`
+	Summary      string                `json:"summary"`
+	Status       string                `json:"status"`
+	Visibility   string                `json:"visibility"`
+	ActID        string                `json:"act_id,omitempty"`
 	Machine      campaign.StateMachine `json:"state_machine"`
 	CurrentState string                `json:"current_state"`
 	CreatedAt    string                `json:"created_at"`
@@ -382,9 +386,18 @@ type questView struct {
 
 func toQuestView(q *campaign.Quest) questView {
 	return questView{
-		ID: q.ID, Name: q.Name, Machine: q.Machine, CurrentState: q.CurrentState,
+		ID: q.ID, Name: q.Name, Summary: q.Summary, Status: q.Status,
+		Visibility: q.Visibility, ActID: q.ActID,
+		Machine: q.Machine, CurrentState: q.CurrentState,
 		CreatedAt: q.CreatedAt.Format(http.TimeFormat), UpdatedAt: q.UpdatedAt.Format(http.TimeFormat),
 	}
+}
+
+type questEntityView struct {
+	ID        string `json:"id"`
+	EntityID  string `json:"entity_id"`
+	Role      string `json:"role"`
+	CreatedAt string `json:"created_at"`
 }
 
 type questTransitionView struct {
@@ -1471,18 +1484,20 @@ func (s *Server) handleCreateCampaignQuest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Name    string                `json:"name"`
-		Machine campaign.StateMachine `json:"state_machine"`
+		Name       string                `json:"name"`
+		Summary    string                `json:"summary"`
+		Visibility string                `json:"visibility"`
+		ActID      string                `json:"act_id"`
+		Machine    campaign.StateMachine `json:"state_machine"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 		return
 	}
-	if err := req.Machine.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	q, err := s.campaigns.CreateQuest(r.Context(), a.campaign.ID, req.Name, req.Machine)
+	q, err := s.campaigns.CreateQuest(r.Context(), a.campaign.ID, campaign.QuestInput{
+		Name: req.Name, Summary: req.Summary, Machine: req.Machine,
+		Visibility: req.Visibility, ActID: req.ActID,
+	})
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -1515,7 +1530,74 @@ func (s *Server) handleCampaignQuest(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: t.CreatedAt.Format(http.TimeFormat),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"quest": toQuestView(q), "transitions": views})
+	links, err := s.campaigns.QuestEntities(r.Context(), campaign.ScopeDM, a.campaign.ID, q.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	entityViews := make([]questEntityView, 0, len(links))
+	for _, l := range links {
+		entityViews = append(entityViews, questEntityView{
+			ID: l.ID, EntityID: l.EntityID, Role: l.Role,
+			CreatedAt: l.CreatedAt.Format(http.TimeFormat),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"quest": toQuestView(q), "transitions": views, "entities": entityViews,
+	})
+}
+
+// handleUpdateCampaignQuest is the PATCH surface: the authored columns and
+// the machine itself. A machine edit that removes a state or edge a recorded
+// transition used is refused with the transition that blocks it — a quest's
+// own history may not be orphaned.
+func (s *Server) handleUpdateCampaignQuest(w http.ResponseWriter, r *http.Request) {
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	var req struct {
+		Name       *string                `json:"name"`
+		Summary    *string                `json:"summary"`
+		Status     *string                `json:"status"`
+		Visibility *string                `json:"visibility"`
+		ActID      *string                `json:"act_id"`
+		Machine    *campaign.StateMachine `json:"state_machine"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		return
+	}
+	q, err := s.campaigns.UpdateQuest(r.Context(), a.campaign.ID, r.PathValue("qid"), campaign.QuestUpdate{
+		Name: req.Name, Summary: req.Summary, Status: req.Status,
+		Visibility: req.Visibility, ActID: req.ActID, Machine: req.Machine,
+	})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"quest": toQuestView(q)})
+}
+
+// handleDeleteCampaignQuest is the soft delete: the quest's status becomes
+// abandoned and the machine, transitions and links all survive.
+func (s *Server) handleDeleteCampaignQuest(w http.ResponseWriter, r *http.Request) {
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	q, err := s.campaigns.DeleteQuest(r.Context(), a.campaign.ID, r.PathValue("qid"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"quest": toQuestView(q)})
 }
 
 func (s *Server) handleQuestTransition(w http.ResponseWriter, r *http.Request) {
@@ -1540,6 +1622,77 @@ func (s *Server) handleQuestTransition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"quest": toQuestView(q)})
+}
+
+// handleAddQuestEntity links an entity into a quest; handleRemoveQuestEntity
+// unlinks one (every role, or just the role named in ?role=).
+func (s *Server) handleAddQuestEntity(w http.ResponseWriter, r *http.Request) {
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	var req struct {
+		EntityID string `json:"entity_id"`
+		Role     string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		return
+	}
+	link, err := s.campaigns.AddQuestEntity(r.Context(), a.campaign.ID, r.PathValue("qid"), req.EntityID, req.Role)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"quest_entity": questEntityView{
+		ID: link.ID, EntityID: link.EntityID, Role: link.Role,
+		CreatedAt: link.CreatedAt.Format(http.TimeFormat),
+	}})
+}
+
+func (s *Server) handleRemoveQuestEntity(w http.ResponseWriter, r *http.Request) {
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	if !a.requireDM(w) {
+		return
+	}
+	if err := s.campaigns.RemoveQuestEntity(r.Context(), a.campaign.ID, r.PathValue("qid"),
+		r.PathValue("eid"), r.URL.Query().Get("role")); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"removed": true})
+}
+
+// handleQuestJournal is the player-visible read: public quests only, the
+// current state's label, the states already visited — and nothing else. It
+// serves every scope the campaign resolves; the leak rules are enforced in
+// the read itself, not in the handler.
+func (s *Server) handleQuestJournal(w http.ResponseWriter, r *http.Request) {
+	a := s.resolveCampaignAccess(w, r, r.PathValue("id"))
+	if a == nil {
+		return
+	}
+	// The DM reads through the same leak-safe path as the party: the
+	// journal is a projection, not the DM's own quest view.
+	scope := knowledge.ScopeDM
+	if !a.isDM() {
+		scope = a.playerScope
+	}
+	entries, err := s.knowledge.QuestJournal(r.Context(), scope, a.campaign.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if entries == nil {
+		entries = []knowledge.QuestJournalEntry{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"quests": entries})
 }
 
 /* ---------- graph view v0 + prose search ---------- */

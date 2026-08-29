@@ -141,7 +141,7 @@ func TestOutcomeOutOfActAllowsItsOwnAct(t *testing.T) {
 func TestQuestEdgeMissingFires(t *testing.T) {
 	m := campaign.StateMachine{
 		Initial: "rumoured",
-		States:  []string{"rumoured", "found", "ended"},
+		States:  campaign.States("rumoured", "found", "ended"),
 		Edges:   []campaign.StateEdge{{From: "rumoured", To: "found"}, {From: "found", To: "ended"}},
 	}
 	b := newSpine().act("a1", 1, 1, 4).quest("q1", m)
@@ -156,7 +156,7 @@ func TestQuestEdgeMissingFires(t *testing.T) {
 func TestQuestEdgeMissingDoesNotFireOnALegalEdge(t *testing.T) {
 	m := campaign.StateMachine{
 		Initial: "rumoured",
-		States:  []string{"rumoured", "found", "ended"},
+		States:  campaign.States("rumoured", "found", "ended"),
 		Edges:   []campaign.StateEdge{{From: "rumoured", To: "found"}, {From: "found", To: "ended"}},
 	}
 	b := newSpine().act("a1", 1, 1, 4).quest("q1", m)

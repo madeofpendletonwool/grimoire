@@ -243,8 +243,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/campaigns/{id}/awareness", s.handleSetCampaignAwareness)
 	mux.HandleFunc("GET /api/campaigns/{id}/quests", s.handleCampaignQuests)
 	mux.HandleFunc("POST /api/campaigns/{id}/quests", s.handleCreateCampaignQuest)
+	// The journal route is a literal, so it wins over {qid} below it — the
+	// player-facing read lives at a stable path of its own.
+	mux.HandleFunc("GET /api/campaigns/{id}/quests/journal", s.handleQuestJournal)
 	mux.HandleFunc("GET /api/campaigns/{id}/quests/{qid}", s.handleCampaignQuest)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/quests/{qid}", s.handleUpdateCampaignQuest)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/quests/{qid}", s.handleDeleteCampaignQuest)
 	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/transition", s.handleQuestTransition)
+	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/entities", s.handleAddQuestEntity)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/quests/{qid}/entities/{eid}", s.handleRemoveQuestEntity)
 
 	// The faction surface (MAD-366): the scope-filtered dossier and the
 	// DM-only plan machinery.

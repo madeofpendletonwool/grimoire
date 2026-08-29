@@ -100,12 +100,12 @@ func TestStateMachineValidationTable(t *testing.T) {
 	}{
 		{
 			name: "linear",
-			machine: StateMachine{Initial: "a", States: []string{"a", "b"},
+			machine: StateMachine{Initial: "a", States: States("a", "b"),
 				Edges: []StateEdge{{From: "a", To: "b"}}},
 		},
 		{
 			name: "branching",
-			machine: StateMachine{Initial: "start", States: []string{"start", "left", "right", "done"},
+			machine: StateMachine{Initial: "start", States: States("start", "left", "right", "done"),
 				Edges: []StateEdge{{From: "start", To: "left"}, {From: "start", To: "right"},
 					{From: "left", To: "done"}, {From: "right", To: "done"}}},
 		},
@@ -116,29 +116,29 @@ func TestStateMachineValidationTable(t *testing.T) {
 		},
 		{
 			name:    "initial not declared",
-			machine: StateMachine{Initial: "z", States: []string{"a"}},
+			machine: StateMachine{Initial: "z", States: States("a")},
 			wantErr: true,
 		},
 		{
 			name:    "duplicate state",
-			machine: StateMachine{Initial: "a", States: []string{"a", "a"}},
+			machine: StateMachine{Initial: "a", States: States("a", "a")},
 			wantErr: true,
 		},
 		{
 			name: "edge from undeclared state",
-			machine: StateMachine{Initial: "a", States: []string{"a", "b"},
+			machine: StateMachine{Initial: "a", States: States("a", "b"),
 				Edges: []StateEdge{{From: "ghost", To: "b"}}},
 			wantErr: true,
 		},
 		{
 			name: "edge to undeclared state",
-			machine: StateMachine{Initial: "a", States: []string{"a", "b"},
+			machine: StateMachine{Initial: "a", States: States("a", "b"),
 				Edges: []StateEdge{{From: "a", To: "ghost"}}},
 			wantErr: true,
 		},
 		{
 			name:    "blank state name",
-			machine: StateMachine{Initial: "a", States: []string{"a", " "}},
+			machine: StateMachine{Initial: "a", States: States("a", " ")},
 			wantErr: true,
 		},
 	}
@@ -169,7 +169,7 @@ func TestQuestTransitionsFollowTheMachine(t *testing.T) {
 
 	machine := StateMachine{
 		Initial: "unknown",
-		States:  []string{"unknown", "found", "trusted", "accused", "done"},
+		States:  States("unknown", "found", "trusted", "accused", "done"),
 		Edges: []StateEdge{
 			{From: "unknown", To: "found"},
 			{From: "found", To: "trusted"},
@@ -178,7 +178,7 @@ func TestQuestTransitionsFollowTheMachine(t *testing.T) {
 			{From: "accused", To: "done"},
 		},
 	}
-	q, err := s.CreateQuest(ctx, c.ID, "The Missing Miners", machine)
+	q, err := s.CreateQuest(ctx, c.ID, QuestInput{Name: "The Missing Miners", Machine: machine})
 	if err != nil {
 		t.Fatalf("create quest: %v", err)
 	}

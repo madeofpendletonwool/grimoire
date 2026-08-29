@@ -82,7 +82,7 @@ func simPlanFixture(t *testing.T, s *Server, factions *faction.Store, f fixture)
 	ctx := t.Context()
 	plan, err := factions.CreatePlan(ctx, f.campaignID, factionID, faction.PlanInput{
 		Name:       "The Vernal Rite",
-		Machine:    campaign.StateMachine{Initial: "gathering", States: []string{"gathering", "ritual"}, Edges: []campaign.StateEdge{{From: "gathering", To: "ritual"}}},
+		Machine:    campaign.StateMachine{Initial: "gathering", States: campaign.States("gathering", "ritual"), Edges: []campaign.StateEdge{{From: "gathering", To: "ritual"}}},
 		Steps:      []faction.Step{{State: "ritual", Name: "Prepare the rite", Cost: 3}},
 		RatePerDay: 1, Status: faction.PlanActive, Visibility: campaign.VisibilityPublic,
 	})

@@ -237,7 +237,7 @@ func buildFixture(t *testing.T) *downtimeFixture {
 		Name: "The Vernal Rite",
 		Machine: campaign.StateMachine{
 			Initial: "gathering",
-			States:  []string{"gathering", "ritual", "ascension"},
+			States:  campaign.States("gathering", "ritual", "ascension"),
 			Edges: []campaign.StateEdge{
 				{From: "gathering", To: "ritual"},
 				{From: "ritual", To: "ascension"},

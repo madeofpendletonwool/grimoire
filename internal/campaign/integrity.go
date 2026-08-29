@@ -49,7 +49,21 @@ const (
 	CheckPlanWithoutFaction     = "plan_without_faction"
 	CheckPlanStalled            = "plan_stalled"
 	CheckFactionNoAntagonist    = "faction_no_antagonist"
+	CheckQuestStateUnreachable  = "quest_state_unreachable"
+	CheckQuestDeadEnd           = "quest_dead_end"
+	CheckQuestNoEnding          = "quest_no_ending"
+	CheckQuestTransitionUngrounded = "quest_transition_ungrounded"
 )
+
+// AwarenessView is one awareness row as the campaign checks read it: the
+// knower, the fact, the stance. The full row and every scoped read of it
+// live in internal/knowledge; this package only joins against it, and only
+// ever at the DM scope the snapshot already requires.
+type AwarenessView struct {
+	Knower string
+	FactID string
+	Stance string
+}
 
 // Snapshot is a campaign's whole graph in memory. Check is pure over this
 // struct — no DB, no clock, no network — which is what makes every rule
@@ -69,6 +83,17 @@ type Snapshot struct {
 	Relationships    []Relationship
 	Quests           []Quest
 	QuestTransitions []QuestTransition
+	// QuestEntities and QuestStateFacts are the links into the graph and the
+	// knowledge layer (MAD-369); the dangling check reads them.
+	QuestEntities   []QuestEntity
+	QuestStateFacts []QuestStateFact
+	// Awareness is the campaign's awareness rows reduced to what the quest
+	// checks read: who holds what, at which stance. The full rows and their
+	// scoped retrieval live in internal/knowledge.
+	Awareness []AwarenessView
+	// ActIDs is the campaign's act ids; quests.act_id carries no foreign
+	// key by design, and this is what sweeps it.
+	ActIDs map[string]bool
 	// Clock is the campaign's current in-world day; the schedule and
 	// event-dating checks read it (MAD-365).
 	Clock int64
@@ -368,6 +393,98 @@ func LoadSnapshot(ctx context.Context, scope Scope, db *sql.DB, campaignID strin
 	}
 	rows.Close()
 
+	// The quest links into the graph and the knowledge layer (MAD-369).
+	rows, err = db.QueryContext(ctx, `
+		SELECT e.id, e.quest_id, e.entity_id, e.role, e.created_at
+		  FROM quest_entities e JOIN quests q ON q.id = e.quest_id WHERE q.campaign_id = ?`, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("integrity quest entities: %w", err)
+	}
+	for rows.Next() {
+		var (
+			l       QuestEntity
+			created int64
+		)
+		if err := rows.Scan(&l.ID, &l.QuestID, &l.EntityID, &l.Role, &created); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		l.CreatedAt = unixMilli(created)
+		s.QuestEntities = append(s.QuestEntities, l)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	rows, err = db.QueryContext(ctx, `
+		SELECT f.id, f.quest_id, f.state_key, f.fact_id, f.disposition, f.created_at
+		  FROM quest_state_facts f JOIN quests q ON q.id = f.quest_id WHERE q.campaign_id = ?`, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("integrity quest state facts: %w", err)
+	}
+	for rows.Next() {
+		var (
+			r       QuestStateFact
+			created int64
+		)
+		if err := rows.Scan(&r.ID, &r.QuestID, &r.StateKey, &r.FactID, &r.Disposition, &created); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		r.CreatedAt = unixMilli(created)
+		s.QuestStateFacts = append(s.QuestStateFacts, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	// The awareness join the ungrounded check needs: who holds what, at
+	// which stance. DM-scope snapshot, like everything else here.
+	rows, err = db.QueryContext(ctx,
+		`SELECT knower, fact_id, stance FROM awareness WHERE campaign_id = ?`, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("integrity awareness: %w", err)
+	}
+	for rows.Next() {
+		var a AwarenessView
+		if err := rows.Scan(&a.Knower, &a.FactID, &a.Stance); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		s.Awareness = append(s.Awareness, a)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	// The acts a quest may point its act_id at — no foreign key by design,
+	// so the snapshot carries the ids the dangling check sweeps against.
+	s.ActIDs = map[string]bool{}
+	rows, err = db.QueryContext(ctx,
+		`SELECT id FROM acts WHERE campaign_id = ?`, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("integrity acts: %w", err)
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		s.ActIDs[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
 	// Attach links to events for the cause_after_effect check.
 	for i := range s.Events {
 		s.Events[i].Links = eventLinks[s.Events[i].ID]
@@ -504,6 +621,10 @@ func Check(snap *Snapshot) []Finding {
 	out = append(out, checkPlanWithoutFaction(snap)...)
 	out = append(out, checkPlanStalled(snap)...)
 	out = append(out, checkFactionNoAntagonist(snap)...)
+	out = append(out, checkQuestStateUnreachable(snap)...)
+	out = append(out, checkQuestDeadEnd(snap)...)
+	out = append(out, checkQuestNoEnding(snap)...)
+	out = append(out, checkQuestTransitionUngrounded(snap)...)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Check != out[j].Check {
 			return out[i].Check < out[j].Check
@@ -585,6 +706,35 @@ func checkDanglingReference(snap *Snapshot) []Finding {
 		if t.EventID != "" && !events[t.EventID] {
 			out = append(out, dangling("quest_transition", t.ID,
 				t.FromState+" -> "+t.ToState, "event", t.EventID))
+		}
+	}
+	// The quest links (MAD-369): a link row pointing at an entity that is
+	// gone or soft-deleted, a state-fact tie pointing at a fact that is not
+	// there or a state the machine never declared, and a quest whose act_id
+	// names an act the campaign no longer holds.
+	for _, l := range snap.QuestEntities {
+		if !live(l.EntityID) {
+			out = append(out, dangling("quest_entity", l.ID, l.Role, "entity", l.EntityID))
+		}
+	}
+	machines := map[string]StateMachine{}
+	for _, q := range snap.Quests {
+		machines[q.ID] = q.Machine
+	}
+	for _, r := range snap.QuestStateFacts {
+		if !facts[r.FactID] {
+			out = append(out, dangling("quest_state_fact", r.ID, r.StateKey, "fact", r.FactID))
+			continue
+		}
+		if m, ok := machines[r.QuestID]; ok {
+			if _, declared := m.State(r.StateKey); !declared {
+				out = append(out, dangling("quest_state_fact", r.ID, r.FactID, "state", r.StateKey))
+			}
+		}
+	}
+	for _, q := range snap.Quests {
+		if q.ActID != "" && !snap.ActIDs[q.ActID] {
+			out = append(out, dangling("quest", q.ID, q.Name, "act", q.ActID))
 		}
 	}
 	return out
@@ -829,7 +979,7 @@ func checkPlanIllegalState(snap *Snapshot) []Finding {
 	for _, p := range snap.FactionPlans {
 		declared := map[string]bool{}
 		for _, st := range p.Machine.States {
-			declared[st] = true
+			declared[st.Key] = true
 		}
 		if declared[p.CurrentState] {
 			continue
@@ -950,4 +1100,144 @@ func formatRate(v float64) string {
 		return fmt.Sprintf("%d", int64(v))
 	}
 	return fmt.Sprintf("%g", v)
+}
+
+/* ---------- the quest graph checks (MAD-369) ---------- */
+
+// checkQuestStateUnreachable: a declared state with no path from the initial
+// one. A warning, not an error — a DM may be mid-edit — but a state the
+// machine can never reach is either a leftover or a missing edge, and both
+// deserve a look before the generators (MAD-371) plan scenes against it.
+func checkQuestStateUnreachable(snap *Snapshot) []Finding {
+	var out []Finding
+	for _, q := range snap.Quests {
+		reach := q.Machine.Reachable(q.Machine.Initial)
+		// Deterministic order: declaration order, not map iteration.
+		for _, st := range q.Machine.States {
+			if st.Key == q.Machine.Initial || reach[st.Key] {
+				continue
+			}
+			out = append(out, Finding{
+				Check: CheckQuestStateUnreachable, Severity: SeverityWarn,
+				RecordKind: "quest", RecordID: q.ID,
+				Message: fmt.Sprintf("state %q of quest %q has no path from the initial state %q",
+					st.Key, q.Name, q.Machine.Initial),
+			})
+		}
+	}
+	return out
+}
+
+// checkQuestDeadEnd: a non-terminal state with no outgoing edge. A terminal
+// state is an ending and may close; a passing state the machine cannot leave
+// traps the quest mid-story.
+func checkQuestDeadEnd(snap *Snapshot) []Finding {
+	var out []Finding
+	for _, q := range snap.Quests {
+		outgoing := map[string]bool{}
+		for _, e := range q.Machine.Edges {
+			outgoing[e.From] = true
+		}
+		for _, st := range q.Machine.States {
+			if st.Terminal != TerminalNone || outgoing[st.Key] {
+				continue
+			}
+			out = append(out, Finding{
+				Check: CheckQuestDeadEnd, Severity: SeverityWarn,
+				RecordKind: "quest", RecordID: q.ID,
+				Message: fmt.Sprintf("state %q of quest %q is not an ending and has no outgoing edge; mark it terminal or add the branch out",
+					st.Key, q.Name),
+			})
+		}
+	}
+	return out
+}
+
+// checkQuestNoEnding: no terminal state reachable from where the quest sits.
+// The party may be in a branch that can no longer conclude — the machine
+// drifted under its own history, or the endings were never authored.
+func checkQuestNoEnding(snap *Snapshot) []Finding {
+	var out []Finding
+	for _, q := range snap.Quests {
+		if q.Status != QuestActive {
+			continue // a finished or abandoned quest no longer owes an ending
+		}
+		reach := q.Machine.Reachable(q.CurrentState)
+		anyEnding := false
+		for key := range reach {
+			if q.Machine.IsTerminal(key) {
+				anyEnding = true
+				break
+			}
+		}
+		if anyEnding {
+			continue
+		}
+		out = append(out, Finding{
+			Check: CheckQuestNoEnding, Severity: SeverityWarn,
+			RecordKind: "quest", RecordID: q.ID,
+			Message: fmt.Sprintf("quest %q has no ending reachable from its current state %q",
+				q.Name, q.CurrentState),
+		})
+	}
+	return out
+}
+
+// checkQuestTransitionUngrounded: a recorded move along an edge whose
+// requires names a fact the party holds no granting stance on. The join is
+// against the awareness table, not a model: "the party" is the party knower
+// and the player characters, exactly the knowers the player scopes read.
+// A required fact that does not exist at all is ungrounded too — nothing can
+// hold a stance on it.
+func checkQuestTransitionUngrounded(snap *Snapshot) []Finding {
+	pcs := map[string]bool{}
+	for _, e := range snap.Entities {
+		if e.Kind == KindPC && e.Status != StatusDeleted {
+			pcs[e.ID] = true
+		}
+	}
+	held := map[string]bool{}
+	for _, a := range snap.Awareness {
+		if a.Knower != PartyKnower && !pcs[a.Knower] {
+			continue
+		}
+		switch a.Stance {
+		case "knows", "suspects", "believes_false":
+			held[a.FactID] = true
+		}
+	}
+	var out []Finding
+	for _, t := range snap.QuestTransitions {
+		var q *Quest
+		for i := range snap.Quests {
+			if snap.Quests[i].ID == t.QuestID {
+				q = &snap.Quests[i]
+				break
+			}
+		}
+		if q == nil {
+			continue
+		}
+		edge, ok := q.Machine.Edge(t.FromState, t.ToState)
+		if !ok || len(edge.Requires) == 0 {
+			continue
+		}
+		var missing []string
+		for _, fid := range edge.Requires {
+			if !held[fid] {
+				missing = append(missing, fid)
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		sort.Strings(missing)
+		out = append(out, Finding{
+			Check: CheckQuestTransitionUngrounded, Severity: SeverityWarn,
+			RecordKind: "quest_transition", RecordID: t.ID,
+			Message: fmt.Sprintf("quest %q moved %s -> %s along an edge requiring %s, which the party holds no granting stance on",
+				q.Name, t.FromState, t.ToState, strings.Join(missing, ", ")),
+		})
+	}
+	return out
 }
