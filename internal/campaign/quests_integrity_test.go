@@ -72,7 +72,7 @@ func TestCheckQuestDeadEnd(t *testing.T) {
 func TestCheckQuestNoEnding(t *testing.T) {
 	machine := StateMachine{
 		Initial: "a",
-		States:  append(States("a", "b", "c"),
+		States: append(States("a", "b", "c"),
 			State{Key: "won", Terminal: TerminalSuccess}),
 		Edges: []StateEdge{{From: "a", To: "b"}, {From: "b", To: "c"}, {From: "c", To: "won"}},
 	}
@@ -116,8 +116,8 @@ func TestCheckQuestTransitionUngrounded(t *testing.T) {
 			Quests: []Quest{{ID: "q1", CampaignID: "c1", Name: "q", Status: QuestActive,
 				CurrentState: "b", Machine: m}},
 			QuestTransitions: []QuestTransition{move},
-			Entities:        []Entity{pc},
-			Awareness:       aware,
+			Entities:         []Entity{pc},
+			Awareness:        aware,
 		}
 	}
 
