@@ -402,6 +402,23 @@ export const api = {
 			body: JSON.stringify({ to, reason }),
 		}).then(json),
 
+	// The location surface (MAD-370): the places listing and the
+	// scope-resolved dossier. The place block editor is DM-only; a player's
+	// dossier carries the block's public half and none of the rest,
+	// server-side by construction.
+	campaignLocations: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/locations`).then(json),
+
+	campaignLocation: (cid, eid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/locations/${encodeURIComponent(eid)}`).then(json),
+
+	campaignPlacePut: (cid, eid, place) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/locations/${encodeURIComponent(eid)}/place`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(place),
+		}).then(json),
+
 	// The campaign chat (MAD-311): threads pinned to the campaign and to the
 	// caller's resolved scope. The scope is decided server-side from the
 	// membership row — this surface never chooses a perspective.

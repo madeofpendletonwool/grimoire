@@ -90,6 +90,7 @@ function wire() {
 	// delegation.
 	$("camp-sheet-body").addEventListener("click", onSheetClick);
 	$("camp-sheet-body").addEventListener("submit", onFactionPlanSubmit);
+	$("camp-sheet-body").addEventListener("submit", onPlaceSubmit);
 	$("camp-sheet-body").addEventListener("change", onFactionPlanStatusChange);
 	$("camp-invite-form").addEventListener("submit", onMintInvite);
 	$("camp-members-body").addEventListener("change", onMemberRoleChange);
@@ -487,6 +488,16 @@ function renderSheet() {
 		loadFactionDossier(selected.id);
 	}
 
+	// The location page (MAD-370): the place block as an editable form and
+	// everything else as read-only chips into the entity browser — a view
+	// of the graph, not a second place to type things.
+	if (selected.kind === "location") {
+		const mount = el("div", { class: "camp-location", attrs: { id: "camp-location-body" } });
+		mount.append(el("p", { class: "camp-status", text: "Opening the dossier…" }));
+		body.append(mount);
+		loadLocationDossier(selected.id);
+	}
+
 	if (isDM()) {
 		const form = $("camp-fact-form");
 		form.hidden = false;
@@ -845,6 +856,13 @@ async function onSimulateResultClick(e) {
 }
 
 async function onSheetClick(e) {
+	// The location dossier's chips link into the entity browser: one click
+	// opens the entity the chip names, exactly like the browser's own rows.
+	const open = e.target.closest("[data-open-eid]");
+	if (open) {
+		selectEntity(open.dataset.openEid);
+		return;
+	}
 	const activate = e.target.closest("[data-plan-activate]");
 	if (activate) {
 		try {
@@ -1641,6 +1659,200 @@ async function onFactionPlanStatusChange(e) {
 		await api.campaignFactionPlanUpdate(current.id, sel.dataset.planStatus, { status: sel.value });
 		renderMeta("Plan status set.");
 		await refreshFactionDossier();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+/* ---------- the location page (MAD-370) ---------- */
+
+// The dossier is a read, not a write: present NPCs, children, items,
+// secrets, events and sited quests arrive as live graph rows the server
+// assembled at the caller's scope. The only editable thing is the place
+// block; the read-aloud description belongs in the entity summary, where
+// campaign search reads it. This module renders whatever comes back and
+// decides nothing.
+let locationDossier = null; // the last dossier body for the selected location
+
+async function loadLocationDossier(eid) {
+	const mount = document.getElementById("camp-location-body");
+	if (!mount || !current || !selected || selected.id !== eid) return;
+	let data;
+	try {
+		data = await api.campaignLocation(current.id, eid);
+	} catch (err) {
+		clear(mount).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	if (!selected || selected.id !== eid) return; // the sheet moved on
+	locationDossier = data.location;
+	renderLocationDossier(clear(mount));
+}
+
+async function refreshLocationDossier() {
+	if (selected && selected.kind === "location") await loadLocationDossier(selected.id);
+}
+
+// entityChip renders one read-only chip that links into the entity browser.
+function entityChip(e, label) {
+	return el("button", {
+		class: "enc-chip",
+		text: label || e.name,
+		attrs: { type: "button", "data-open-eid": e.id, title: `${e.kind}${e.status && e.status !== "active" ? " · " + e.status : ""}` },
+	});
+}
+
+function renderLocationDossier(mount) {
+	const d = locationDossier;
+	if (!d) return;
+	const wrap = el("div", { class: "camp-location-body" });
+	const p = d.place || {};
+
+	// The place block: the DM edits it, a player reads its public half.
+	if (isDM()) {
+		wrap.append(section("The place", placeForm(p)));
+	} else {
+		const face = el("div", { class: "camp-faction-face" });
+		const line = (label, v) => { if (v) face.append(el("p", { class: "prose", text: `${label}: ${v}` })); };
+		line("Kind", p.kind);
+		line("Scale", p.scale);
+		line("Population", p.population);
+		line("Government", p.government);
+		line("Defences", p.defences);
+		line("State", p.state);
+		if ((p.services || []).length) face.append(el("p", { class: "prose", text: `Services: ${p.services.join(", ")}` }));
+		if ((p.senses || []).length) face.append(el("p", { class: "prose", text: `You notice ${p.senses.join("; ")}` }));
+		const chips = el("div", { class: "camp-fact-chips" });
+		if (p.climate) chips.append(el("span", { class: "enc-chip", text: p.climate }));
+		if (p.danger) chips.append(el("span", { class: "enc-chip is-on", text: `danger ${p.danger}` }));
+		if (chips.children.length) face.append(chips);
+		if (face.children.length > 0) wrap.append(section("The place", face));
+	}
+
+	// Everything else is the graph, chipped read-only.
+	const nameOf = (id) => entities.find((x) => x.id === id)?.name || id.slice(0, 8);
+	const chipRow = (list, labelFn) => {
+		const chips = el("div", { class: "camp-fact-chips" });
+		for (const item of list) chips.append(entityChip(item, labelFn ? labelFn(item) : undefined));
+		return chips;
+	};
+	const groups = [
+		["Present", d.present],
+		["Within", d.children],
+		["Items here", d.items],
+	];
+	let anyGroup = false;
+	const ties = el("div", { class: "camp-faction-ties" });
+	for (const [label, list] of groups) {
+		if (!list || list.length === 0) continue;
+		anyGroup = true;
+		ties.append(el("p", { class: "camp-sheet-heading", text: label }), chipRow(list));
+	}
+	// Routes out: the travel block, read where it is there and rendered
+	// nowhere when it is not (a player's payload never carried it).
+	if ((d.routes || []).length) {
+		anyGroup = true;
+		const chips = el("div", { class: "camp-fact-chips" });
+		for (const r of d.routes) {
+			chips.append(el("button", {
+				class: "enc-chip",
+				text: `${nameOf(r.to)} — ${r.days} day${r.days === 1 ? "" : "s"}${r.terrain ? ` (${r.terrain})` : ""}`,
+				attrs: { type: "button", "data-open-eid": r.to },
+			}));
+		}
+		ties.append(el("p", { class: "camp-sheet-heading", text: "Roads out" }), chips);
+	}
+	if ((d.quests || []).length) {
+		anyGroup = true;
+		const chips = el("div", { class: "camp-fact-chips" });
+		for (const q of d.quests) {
+			chips.append(el("button", {
+				class: "enc-chip",
+				text: `${q.name}${q.status && q.status !== "active" ? ` (${q.status})` : ""}`,
+				attrs: { type: "button", "data-open-eid": q.id, title: q.summary || "" },
+			}));
+		}
+		ties.append(el("p", { class: "camp-sheet-heading", text: "Quests sited here" }), chips);
+	}
+	if (anyGroup) wrap.append(section("What the graph says", ties));
+
+	// Secrets: fact statements, DM-only by construction.
+	if ((d.secrets || []).length) {
+		wrap.append(section("Secrets", factsList(d.secrets)));
+	}
+
+	// History: the events sited here, in play order.
+	if ((d.events || []).length) {
+		wrap.append(section("History", eventList(d.events)));
+	}
+
+	// Rumours circulate once MAD-374 lands; the shape ships now.
+	wrap.append(section("Rumours", el("p", { class: "camp-status", text: "None circulating yet." })));
+
+	mount.append(wrap);
+}
+
+// placeForm is the DM's block editor. The description is deliberately not
+// here: it belongs in the entity summary, where campaign search reads it.
+function placeForm(p) {
+	const form = el("form", { class: "camp-plan-form", attrs: { id: "camp-place-form" } });
+	const field = (cls, label, value, attrs) => {
+		const wrap = el("label", { class: "camp-place-field" });
+		wrap.append(el("span", { class: "camp-sheet-heading", text: label }));
+		wrap.append(el("input", { class: "enc-field " + cls, attrs: { type: "text", value: value || "", ...attrs } }));
+		return wrap;
+	};
+	form.append(
+		field("camp-place-kind", "Kind", p.kind, { placeholder: "town, ruin, dungeon…" }),
+		field("camp-place-scale", "Scale", p.scale, { placeholder: "large village" }),
+		field("camp-place-population", "Population", p.population, { placeholder: "about 900" }),
+		field("camp-place-government", "Government", p.government, { placeholder: "a merchant council" }),
+		field("camp-place-defences", "Defences", p.defences, { placeholder: "a palisade" }),
+		field("camp-place-climate", "Climate", p.climate, { placeholder: "temperate" }),
+		field("camp-place-state", "State", p.state, { placeholder: "flooding after the rains" }),
+	);
+	const danger = field("camp-place-danger", "Danger (0-5)", p.danger ? String(p.danger) : "", { type: "number", min: "0", max: "5", step: "1" });
+	form.append(danger);
+	const list = (cls, label, values, placeholder) => {
+		const wrap = el("label", { class: "camp-place-field" });
+		wrap.append(el("span", { class: "camp-sheet-heading", text: label }));
+		wrap.append(el("textarea", { class: "enc-field " + cls, attrs: { rows: "2", placeholder }, }));
+		wrap.querySelector("textarea").value = (values || []).join("\n");
+		return wrap;
+	};
+	form.append(
+		list("camp-place-services", "Services (one per line)", p.services, "inn\nmarket"),
+		list("camp-place-senses", "Sensory notes (one per line)", p.senses, "gull noise\ndamp wool"),
+		list("camp-place-truth", "Private truth (DM only)", [p.private_truth], "what is really going on"),
+		el("button", { class: "enc-btn", text: "Record the place", attrs: { type: "submit" } }),
+	);
+	return form;
+}
+
+async function onPlaceSubmit(e) {
+	const form = e.target.closest("#camp-place-form");
+	if (!form) return;
+	e.preventDefault();
+	if (!current || !selected) return;
+	const val = (cls) => form.querySelector("." + cls)?.value.trim() || "";
+	const lines = (cls) => form.querySelector("." + cls).value.split("\n").map((l) => l.trim()).filter(Boolean);
+	const place = {
+		kind: val("camp-place-kind"),
+		scale: val("camp-place-scale"),
+		population: val("camp-place-population"),
+		government: val("camp-place-government"),
+		defences: val("camp-place-defences"),
+		climate: val("camp-place-climate"),
+		state: val("camp-place-state"),
+		danger: parseInt(val("camp-place-danger"), 10) || 0,
+		services: lines("camp-place-services"),
+		senses: lines("camp-place-senses"),
+		private_truth: val("camp-place-truth"),
+	};
+	try {
+		await api.campaignPlacePut(current.id, selected.id, place);
+		renderMeta("The place is recorded.");
+		await refreshLocationDossier();
 	} catch (err) {
 		renderMeta(err.message, true);
 	}

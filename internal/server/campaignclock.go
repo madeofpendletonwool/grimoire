@@ -203,9 +203,9 @@ func (s *Server) handleCampaignClock(w http.ResponseWriter, r *http.Request) {
 	climate := ""
 	if loc := r.URL.Query().Get("location"); loc != "" {
 		if e, err := s.campaigns.GetEntity(ctx, campaign.ScopeDM, a.campaign.ID, loc); err == nil {
-			if tag, _ := e.Payload["climate"].(string); tag != "" {
-				climate = tag
-			}
+			// The place block's climate tag first, then the bare top-level
+			// tag a payload carried before the block existed (MAD-370).
+			climate = campaign.ClimateOf(e)
 		}
 	}
 	forecast := clock.Weather(seed, day, view.Season, climate)

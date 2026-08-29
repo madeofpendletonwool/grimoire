@@ -3545,6 +3545,13 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .camp-plan-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
 .camp-plan-form .enc-field { width: 100%; }
 
+/* ---------- the location page (MAD-370) ---------- */
+
+.camp-location { margin-top: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-place-field { display: flex; flex-direction: column; gap: 0.15rem; }
+.camp-place-field .enc-field { width: 100%; }
+.camp-place-field textarea { resize: vertical; }
+
 /* ---------- Registry-built rail ---------- */
 
 .rail-tools {
