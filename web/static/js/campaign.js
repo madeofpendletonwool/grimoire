@@ -71,6 +71,10 @@ function wire() {
 	$("camp-quests").addEventListener("click", onQuestBoardClick);
 	$("camp-quest-detail").addEventListener("submit", onQuestMoveSubmit);
 	$("camp-quest-detail").addEventListener("click", onQuestDetailClick);
+	// The quest designer (MAD-371): the hook form on the quest board. The
+	// structure is computed server-side; the batch it stages opens in the
+	// review view, the same hand-off the skeleton generator makes.
+	$("camp-quest-design-form").addEventListener("submit", onQuestDesign);
 	for (const radio of document.querySelectorAll('input[name="camp-object"]')) {
 		radio.addEventListener("change", () => syncObjectKind());
 	}
@@ -160,6 +164,7 @@ async function selectCampaign(id) {
 	$("camp-fact-form").hidden = !isDM();
 	$("camp-members-panel").hidden = !isDM();
 	$("camp-cmd-form").hidden = !isDM();
+	$("camp-quest-design-form").hidden = !isDM();
 	if (!isDM()) $("camp-cmd-result").hidden = true;
 	kindFilter = "";
 	renderKindChips();
@@ -1101,6 +1106,29 @@ function layout(nodes) {
 
 /* ---------- the quest board (MAD-369) ---------- */
 
+// onQuestDesign runs one quest-design exchange (MAD-371): the hook, an
+// optional shape, fork count and depth. The quest, its cast and its
+// revealed secrets come back as a proposal batch; nothing lands in the
+// graph until the DM accepts it there.
+async function onQuestDesign(e) {
+	e.preventDefault();
+	const hook = $("camp-quest-hook").value.trim();
+	if (!hook) return;
+	const kind = $("camp-quest-kind").value;
+	const branchPoints = parseInt($("camp-quest-branches").value, 10) || 0;
+	const depth = parseInt($("camp-quest-depth").value, 10) || 0;
+	renderMeta("Designing the quest…");
+	try {
+		await api.questDesign(current.id, { hook, kind, branch_points: branchPoints, depth });
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	$("camp-quest-hook").value = "";
+	renderMeta("The quest is staged — accept it on the review queue.");
+	await reviewFor(current.id);
+}
+
 // The DM reads every machine; everyone else reads the journal — the public
 // quests, their current state and the states already visited. The server
 // enforces the leak rules; this module renders whatever comes back.
@@ -1216,6 +1244,25 @@ async function renderQuestDetail(questID) {
 			form.append(pick, el("button", { class: "enc-btn", text: "Move", attrs: { type: "submit" } }));
 			box.append(form);
 		}
+		// Branch this quest (MAD-371): two exclusive outcomes off a state
+		// the DM picks, proposed as a batch — the mid-campaign fork.
+		const branchable = (q.state_machine?.states || []).filter((s) => !s.terminal);
+		if (branchable.length > 0) {
+			const form = el("form", { class: "camp-quest-move", attrs: { "data-branch": q.id } });
+			const pick = el("select", { class: "enc-field", attrs: { "aria-label": "Branch the quest at" } });
+			for (const st of branchable) {
+				pick.append(el("option", {
+					text: (st.label || st.key) + (st.key === q.current_state ? "  (here)" : ""),
+					attrs: { value: st.key, selected: st.key === q.current_state ? "" : null },
+				}));
+			}
+			const notes = el("input", {
+				class: "enc-field",
+				attrs: { type: "text", placeholder: "direction, if any", "aria-label": "Branch notes" },
+			});
+			form.append(pick, notes, el("button", { class: "enc-btn", text: "Branch", attrs: { type: "submit" } }));
+			box.append(form);
+		}
 		box.append(el("button", {
 			class: "enc-chip", text: "abandon the quest",
 			attrs: { type: "button", "data-abandon": q.id },
@@ -1225,6 +1272,20 @@ async function renderQuestDetail(questID) {
 
 async function onQuestMoveSubmit(e) {
 	e.preventDefault();
+	const branch = e.target.closest("[data-branch]");
+	if (branch) {
+		try {
+			await api.questBranch(current.id, branch.dataset.branch, {
+				state: branch.querySelectorAll("select")[0].value,
+				notes: branch.querySelector("input").value.trim(),
+			});
+			renderMeta("The branch is staged — accept it on the review queue.");
+			await reviewFor(current.id);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
 	const form = e.target.closest("[data-move]");
 	if (!form) return;
 	try {
