@@ -76,13 +76,14 @@ const (
 	BatchSourceSessionPrep = "session_prep"
 	BatchSourceTick        = "tick"
 	BatchSourceDowntime    = "downtime"
+	BatchSourceQuest       = "quest"
 )
 
 // batchSources is the validated source vocabulary.
 var batchSources = map[string]bool{
 	BatchSourceSkeleton: true, BatchSourceStoryPlan: true, BatchSourceScene: true,
 	BatchSourceNLCommand: true, BatchSourceSessionPrep: true, BatchSourceTick: true,
-	BatchSourceDowntime: true,
+	BatchSourceDowntime: true, BatchSourceQuest: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -170,8 +171,10 @@ func reviewKindForBatchItem(kind string) (string, bool) {
 	}
 	switch kind {
 	case ReviewProposedFact, ReviewProposedEvent, ReviewProposedDiscovery,
-		ReviewProposedRelationship, ReviewProposedEntity:
+		ReviewProposedRelationship, ReviewProposedEntity, ReviewProposedQuest:
 		return kind, true
+	case "quest":
+		return ReviewProposedQuest, true
 	case KindPlanTransition, ReviewProposedPlanTransition:
 		return ReviewProposedPlanTransition, true
 	}
@@ -952,6 +955,8 @@ func (s *Store) applyBatchItem(ctx context.Context, rev *Review, p map[string]an
 		return s.applyGeneratedDiscovery(ctx, rev, p, decidedBy, res)
 	case ReviewProposedPlanTransition:
 		return s.applyGeneratedPlanTransition(ctx, rev, p, decidedBy, res)
+	case ReviewProposedQuest:
+		return s.applyGeneratedQuest(ctx, rev, p, decidedBy, res)
 	default:
 		return "", fmt.Errorf("%w: batch item kind %s cannot be accepted here", ErrInvalid, rev.Kind)
 	}
@@ -1161,6 +1166,115 @@ func (s *Store) applyGeneratedPlanTransition(ctx context.Context, rev *Review, p
 		return "", fmt.Errorf("accept plan transition: %w", err)
 	}
 	return plan.ID, nil
+}
+
+// applyGeneratedQuest writes an accepted quest proposal into the campaign
+// graph. Two payloads share one kind: a whole new quest (the designer's
+// output — machine, cast links, state facts) and a machine edit of an
+// existing quest (the "branch this quest" operation, which carries quest_id).
+// Every entity and fact reference is resolved BEFORE anything is written, so
+// a bad reference fails the accept with nothing half-written.
+func (s *Store) applyGeneratedQuest(ctx context.Context, rev *Review, p map[string]any, decidedBy string, res *batchResolution) (string, error) {
+	if err := s.requireGraphStores(); err != nil {
+		return "", err
+	}
+	machineRaw, err := json.Marshal(p["machine"])
+	if err != nil {
+		return "", fmt.Errorf("%w: quest payload has no machine: %v", ErrInvalid, err)
+	}
+	machine, err := campaign.ParseStateMachine(string(machineRaw))
+	if err != nil {
+		return "", err
+	}
+
+	// The branch operation: an edit of a quest the campaign already holds.
+	// UpdateQuest is the same path a hand edit takes — it validates the
+	// machine and refuses to orphan any recorded transition.
+	if questID := str(p, "quest_id"); questID != "" {
+		if _, err := s.campaigns.UpdateQuest(ctx, rev.CampaignID, questID, campaign.QuestUpdate{Machine: &machine}); err != nil {
+			return "", fmt.Errorf("accept quest edit: %w", err)
+		}
+		return questID, nil
+	}
+
+	name := str(p, "name")
+	if name == "" {
+		return "", fmt.Errorf("%w: quest payload has no name", ErrInvalid)
+	}
+	type linkSlot struct{ entity, role string }
+	type factSlot struct{ state, fact, disposition string }
+	var links []linkSlot
+	seenLink := map[string]bool{}
+	if arr, ok := p["entities"].([]any); ok {
+		for _, item := range arr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			entity := str(m, "entity")
+			role := str(m, "role")
+			if entity == "" || role == "" {
+				continue
+			}
+			id, err := s.resolveBatchEntityRef(ctx, rev.CampaignID, entity, res)
+			if err != nil {
+				return "", err
+			}
+			k := id + "\x00" + role
+			if seenLink[k] {
+				continue
+			}
+			seenLink[k] = true
+			links = append(links, linkSlot{id, role})
+		}
+	}
+	var facts []factSlot
+	seenFact := map[string]bool{}
+	if arr, ok := p["state_facts"].([]any); ok {
+		for _, item := range arr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			state := str(m, "state")
+			factRef := str(m, "fact")
+			disposition := str(m, "disposition")
+			if state == "" || factRef == "" {
+				continue
+			}
+			if disposition == "" {
+				disposition = campaign.QuestFactReveals
+			}
+			id, err := s.resolveBatchFactRef(ctx, rev.CampaignID, factRef, res)
+			if err != nil {
+				return "", err
+			}
+			k := state + "\x00" + id
+			if seenFact[k] {
+				continue
+			}
+			seenFact[k] = true
+			facts = append(facts, factSlot{state, id, disposition})
+		}
+	}
+
+	q, err := s.campaigns.CreateQuest(ctx, rev.CampaignID, campaign.QuestInput{
+		Name: name, Summary: str(p, "summary"), Machine: machine,
+	})
+	if err != nil {
+		return "", fmt.Errorf("accept quest: %w", err)
+	}
+	for _, l := range links {
+		if _, err := s.campaigns.AddQuestEntity(ctx, rev.CampaignID, q.ID, l.entity, l.role); err != nil {
+			return "", fmt.Errorf("accept quest cast (%s): %w", l.role, err)
+		}
+	}
+	for _, f := range facts {
+		if _, err := s.campaigns.SetQuestStateFact(ctx, rev.CampaignID, q.ID, f.state, f.fact, f.disposition); err != nil {
+			return "", fmt.Errorf("accept quest state fact (%s): %w", f.state, err)
+		}
+	}
+	return q.ID, nil
 }
 
 // numField reads a JSON number field, 0 when absent or not a number.

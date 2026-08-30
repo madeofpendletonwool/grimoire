@@ -738,6 +738,27 @@ func checkUnreachableSecret(snap *Snapshot) []campaign.Finding {
 			}
 		}
 	}
+	// A secret a quest state reveals is on a clue path too (MAD-371): a
+	// quest whose states reveal secret facts is a path to them, so
+	// accepting one reduces this check's findings rather than adding to
+	// them. The state must still be walkable — reachable from where an
+	// active quest sits; a branch the party has passed or a quest no longer
+	// running owes no reveal.
+	questRevealed := map[string]bool{}
+	for _, r := range snap.QuestStateFacts {
+		if r.Disposition != campaign.QuestFactReveals {
+			continue
+		}
+		for i := range snap.Quests {
+			q := &snap.Quests[i]
+			if q.ID != r.QuestID || q.Status != campaign.QuestActive {
+				continue
+			}
+			if q.Machine.Reachable(q.CurrentState)[r.StateKey] {
+				questRevealed[r.FactID] = true
+			}
+		}
+	}
 	var out []campaign.Finding
 	for _, f := range snap.Facts {
 		if f.Visibility != campaign.VisibilitySecret || f.SupersededBy != "" {
@@ -746,7 +767,7 @@ func checkUnreachableSecret(snap *Snapshot) []campaign.Finding {
 		if f.Confidence != campaign.ConfidenceCanon && f.Confidence != campaign.ConfidenceDerived {
 			continue
 		}
-		if anyRow[f.ID] || granting[f.ID] || planned[f.ID] {
+		if anyRow[f.ID] || granting[f.ID] || planned[f.ID] || questRevealed[f.ID] {
 			continue
 		}
 		out = append(out, campaign.Finding{

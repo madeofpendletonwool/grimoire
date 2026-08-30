@@ -20,6 +20,7 @@ const KIND_LABEL = {
 	proposed_relationship: "Relationship",
 	proposed_entity: "Entity",
 	proposed_plan_transition: "Plan transition",
+	proposed_quest: "Quest",
 	low_agreement: "Low agreement",
 	contradiction: "Contradiction",
 	engine_flag: "Engine flag",
@@ -35,6 +36,8 @@ const SOURCE_LABEL = {
 	nl_command: "Command",
 	session_prep: "Session prep",
 	tick: "Simulation tick",
+	downtime: "Downtime",
+	quest: "Quest designer",
 };
 
 function wire() {

@@ -344,6 +344,13 @@ func (s *Server) Handler() http.Handler {
 	// proposal batch plus the spine's acts and session plans. DM-only, and
 	// gated on the model key like every generator surface.
 	mux.HandleFunc("POST /api/campaigns/{id}/design/skeleton", s.handleCampaignSkeleton)
+	// The quest designer (MAD-371): a hook becomes a branching quest —
+	// staged as a proposal batch, nothing written until it is decided.
+	// "Branch this quest" is the mid-campaign operation on the same
+	// surface: two exclusive outcomes off a state of a live quest. DM-only,
+	// gated on the model key.
+	mux.HandleFunc("POST /api/campaigns/{id}/design/quest", s.handleCampaignQuestDesign)
+	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/design/branch", s.handleQuestBranch)
 	// The story planner and scene designer (MAD-362): plan the next session
 	// or a whole act forward from the campaign as it stands, or design one
 	// scene. Scenes land in the spine; the promised awareness changes stage

@@ -53,6 +53,7 @@ const (
 	ReviewProposedRelationship   = "proposed_relationship"
 	ReviewProposedEntity         = "proposed_entity"
 	ReviewProposedPlanTransition = "proposed_plan_transition"
+	ReviewProposedQuest          = "proposed_quest"
 	ReviewLowAgreement           = "low_agreement"
 	ReviewContradiction          = "contradiction"
 	ReviewEngineFlag             = "engine_flag"
@@ -1334,6 +1335,10 @@ var acceptPriority = map[string]int{
 	ReviewProposedEvent:          3,
 	ReviewProposedDiscovery:      4,
 	ReviewProposedPlanTransition: 5,
+	// A quest references entities (its cast) and facts (what its states
+	// reveal), so it applies after both among independent items — its own
+	// depends_on edges force the ordering inside one batch regardless.
+	ReviewProposedQuest: 6,
 }
 
 // BatchFailure is one item a batch accept could not apply.
@@ -1492,6 +1497,8 @@ func kindLabel(kind string) string {
 		return "Relationship"
 	case ReviewProposedEntity:
 		return "Entity"
+	case ReviewProposedQuest:
+		return "Quest"
 	case ReviewLowAgreement:
 		return "Low agreement"
 	case ReviewContradiction:

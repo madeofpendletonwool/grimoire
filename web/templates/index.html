@@ -562,6 +562,42 @@
 					     already visited, never an untaken branch. -->
 					<div class="camp-panel camp-quests-panel">
 						<h3 class="enc-heading">The quest board</h3>
+						<!-- The quest designer (MAD-371): a hook becomes a
+						     branching quest — computed structure, model
+						     names, staged as a proposal batch behind the
+						     review gate. DM-only; the server refuses
+						     everyone else anyway. -->
+						<form class="camp-invite-form" id="camp-quest-design-form" autocomplete="off" hidden>
+							<label class="camp-field"><span>A hook becomes a quest</span>
+								<textarea id="camp-quest-hook" class="enc-idea-input" rows="2" required placeholder="The caravan from the eastern mines never arrived" aria-label="Quest hook"></textarea>
+							</label>
+							<div class="camp-field-row">
+								<label class="camp-field"><span>Shape</span>
+									<select id="camp-quest-kind" class="enc-field" aria-label="Quest shape">
+										<option value="">Let the hook decide</option>
+										<option value="investigation">Investigation</option>
+										<option value="retrieval">Retrieval</option>
+										<option value="escort">Escort</option>
+										<option value="siege">Siege</option>
+										<option value="mystery">Mystery (red herring)</option>
+										<option value="betrayal">Betrayal</option>
+									</select>
+								</label>
+								<label class="camp-field"><span>Forks</span>
+									<select id="camp-quest-branches" class="enc-field" aria-label="Branch points">
+										<option value="0">Let it decide</option>
+										<option value="1">One</option>
+										<option value="2">Two</option>
+										<option value="3">Three</option>
+										<option value="4">Four</option>
+									</select>
+								</label>
+								<label class="camp-field"><span>Depth</span>
+									<input id="camp-quest-depth" class="enc-field" type="number" min="2" max="8" placeholder="4" aria-label="Quest depth">
+								</label>
+							</div>
+							<button type="submit" class="enc-btn">Design the quest</button>
+						</form>
 						<div class="camp-quests" id="camp-quests" aria-label="Quests"></div>
 						<div class="camp-quest-detail" id="camp-quest-detail" aria-live="polite"></div>
 					</div>

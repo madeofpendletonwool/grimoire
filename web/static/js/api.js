@@ -665,6 +665,23 @@ export const api = {
 			body: JSON.stringify({ to }),
 		}).then(json),
 
+	// The quest designer (MAD-371): a hook becomes a staged branching
+	// quest, and "branch this quest" proposes two exclusive outcomes off a
+	// live state. Both come back as proposal batches for the review queue.
+	questDesign: (cid, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/design/quest`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	questBranch: (cid, questID, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}/design/branch`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
 	actCreate: (cid, act) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/acts`, {
 			method: "POST",
