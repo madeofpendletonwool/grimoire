@@ -400,19 +400,54 @@
 						<div class="camp-entity-list" id="camp-entities" role="listbox" aria-label="Entities"></div>
 						<div class="camp-hits" id="camp-hits" hidden></div>
 					</div>
-					<form class="camp-panel" id="camp-new-entity" autocomplete="off" hidden>
-						<h3 class="enc-heading">New entity</h3>
-						<label class="camp-field"><span>Name</span>
-							<input id="camp-entity-name" class="enc-field" type="text" required aria-label="Entity name">
-						</label>
+				<form class="camp-panel" id="camp-new-entity" autocomplete="off" hidden>
+					<h3 class="enc-heading">New entity</h3>
+					<label class="camp-field"><span>Name</span>
+						<input id="camp-entity-name" class="enc-field" type="text" required aria-label="Entity name">
+					</label>
+					<label class="camp-field"><span>Kind</span>
+						<select id="camp-entity-kind" class="enc-field" aria-label="Entity kind"></select>
+					</label>
+					<label class="camp-field"><span>Summary</span>
+						<input id="camp-entity-summary" class="enc-field" type="text" aria-label="Entity summary">
+					</label>
+					<button type="submit" class="enc-btn">Add to the world</button>
+				</form>
+				<!-- The place designer (MAD-372): a premise becomes a
+				     settlement — the place, its people, its sub-locations,
+				     its hooks and its secrets — computed structure, model
+				     names, staged as one proposal batch behind the review
+				     gate. DM-only; the server refuses everyone else
+				     anyway. -->
+				<form class="camp-panel" id="camp-place-design-form" autocomplete="off" hidden>
+					<h3 class="enc-heading">Design a place</h3>
+					<label class="camp-field"><span>A premise becomes a settlement</span>
+						<textarea id="camp-place-premise" class="enc-idea-input" rows="2" required placeholder="A small village on the forest road, uneasy about what is in the trees" aria-label="Place premise"></textarea>
+					</label>
+					<div class="camp-field-row">
 						<label class="camp-field"><span>Kind</span>
-							<select id="camp-entity-kind" class="enc-field" aria-label="Entity kind"></select>
+							<select id="camp-place-kind" class="enc-field" aria-label="Settlement kind">
+								<option value="village">Village</option>
+								<option value="hamlet">Hamlet</option>
+								<option value="town">Town</option>
+								<option value="city">City</option>
+							</select>
 						</label>
-						<label class="camp-field"><span>Summary</span>
-							<input id="camp-entity-summary" class="enc-field" type="text" aria-label="Entity summary">
+						<label class="camp-field"><span>Scale</span>
+							<select id="camp-place-scale" class="enc-field" aria-label="Scale band">
+								<option value="">Medium</option>
+								<option value="small">Small</option>
+								<option value="large">Large</option>
+							</select>
 						</label>
-						<button type="submit" class="enc-btn">Add to the world</button>
-					</form>
+						<label class="camp-field"><span>Near</span>
+							<select id="camp-place-near" class="enc-field" aria-label="Near anchor">
+								<option value="">Nowhere in particular</option>
+							</select>
+						</label>
+					</div>
+					<button type="submit" class="enc-btn">Design the place</button>
+				</form>
 				</div>
 
 				<!-- The sheet: one entity and everything the caller's scope may

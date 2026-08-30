@@ -77,13 +77,14 @@ const (
 	BatchSourceTick        = "tick"
 	BatchSourceDowntime    = "downtime"
 	BatchSourceQuest       = "quest"
+	BatchSourceLocation    = "location"
 )
 
 // batchSources is the validated source vocabulary.
 var batchSources = map[string]bool{
 	BatchSourceSkeleton: true, BatchSourceStoryPlan: true, BatchSourceScene: true,
 	BatchSourceNLCommand: true, BatchSourceSessionPrep: true, BatchSourceTick: true,
-	BatchSourceDowntime: true, BatchSourceQuest: true,
+	BatchSourceDowntime: true, BatchSourceQuest: true, BatchSourceLocation: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -962,15 +963,36 @@ func (s *Store) applyBatchItem(ctx context.Context, rev *Review, p map[string]an
 	}
 }
 
-// applyGeneratedEntity creates the accepted entity node and teaches the
-// batch its name, so later items can reference it. A modified payload may
-// have renamed the entity; both the staged name and the applied one
-// resolve, so siblings that referenced either keep resolving.
+// applyGeneratedEntity writes an accepted entity item into the graph. Two
+// payloads share one kind: a whole new entity (the default), and the
+// flesh-out update (MAD-372) — entity_update names an existing entity
+// whose payload the item's payload block replaces and whose summary is
+// only set when it was empty, because a flesh-out proposes around what is
+// already there, never replacing it. The structured payload blocks (a
+// location's place and travel blocks, an npc's agent block) are written
+// verbatim; the generator computed the merge at staging time.
 func (s *Store) applyGeneratedEntity(ctx context.Context, rev *Review, p map[string]any, decidedBy string, res *batchResolution) (string, error) {
 	kind := str(p, "kind")
 	name := str(p, "name")
 	summary := str(p, "summary")
-	e, err := s.campaigns.CreateEntity(ctx, rev.CampaignID, kind, name, summary, nil)
+	payload, _ := p["payload"].(map[string]any)
+	if updateID := str(p, "entity_update"); updateID != "" {
+		existing, err := s.campaigns.GetEntity(ctx, campaign.ScopeDM, rev.CampaignID, updateID)
+		if err != nil {
+			return "", fmt.Errorf("accept entity update: %w", err)
+		}
+		var summaryPtr *string
+		if summary != "" && existing.Summary == "" {
+			summaryPtr = &summary
+		}
+		updated, err := s.campaigns.UpdateEntity(ctx, rev.CampaignID, updateID, nil, summaryPtr, nil, payload)
+		if err != nil {
+			return "", fmt.Errorf("accept entity update: %w", err)
+		}
+		res.noteEntity(str(p, "local_id"), updated.Name, updated.ID)
+		return updated.ID, nil
+	}
+	e, err := s.campaigns.CreateEntity(ctx, rev.CampaignID, kind, name, summary, payload)
 	if err != nil {
 		return "", fmt.Errorf("accept entity: %w", err)
 	}

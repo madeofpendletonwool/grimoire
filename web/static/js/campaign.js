@@ -75,6 +75,7 @@ function wire() {
 	// structure is computed server-side; the batch it stages opens in the
 	// review view, the same hand-off the skeleton generator makes.
 	$("camp-quest-design-form").addEventListener("submit", onQuestDesign);
+	$("camp-place-design-form").addEventListener("submit", onPlaceDesign);
 	for (const radio of document.querySelectorAll('input[name="camp-object"]')) {
 		radio.addEventListener("change", () => syncObjectKind());
 	}
@@ -95,6 +96,7 @@ function wire() {
 	$("camp-sheet-body").addEventListener("click", onSheetClick);
 	$("camp-sheet-body").addEventListener("submit", onFactionPlanSubmit);
 	$("camp-sheet-body").addEventListener("submit", onPlaceSubmit);
+	$("camp-sheet-body").addEventListener("submit", onFleshOutSubmit);
 	$("camp-sheet-body").addEventListener("change", onFactionPlanStatusChange);
 	$("camp-invite-form").addEventListener("submit", onMintInvite);
 	$("camp-members-body").addEventListener("change", onMemberRoleChange);
@@ -165,6 +167,7 @@ async function selectCampaign(id) {
 	$("camp-members-panel").hidden = !isDM();
 	$("camp-cmd-form").hidden = !isDM();
 	$("camp-quest-design-form").hidden = !isDM();
+	$("camp-place-design-form").hidden = !isDM();
 	if (!isDM()) $("camp-cmd-result").hidden = true;
 	kindFilter = "";
 	renderKindChips();
@@ -371,6 +374,7 @@ async function loadEntities() {
 	}
 	if (seq !== loadSeq) return;
 	entities = data.entities || [];
+	fillPlaceNear();
 	const list = clear($("camp-entities"));
 	if (entities.length === 0) {
 		list.append(el("p", { class: "camp-status", text: "Nothing here yet." }));
@@ -1102,6 +1106,74 @@ function layout(nodes) {
 		});
 	}
 	return pos;
+}
+
+/* ---------- the place designer (MAD-372) ---------- */
+
+// fillPlaceNear offers the campaign's existing places as the near anchor:
+// a village generated near Blackwater gets the road and the edge to the
+// Blackwater that already exists, never a second one.
+function fillPlaceNear() {
+	const select = $("camp-place-near");
+	if (!select) return;
+	const prev = select.value;
+	clear(select).append(el("option", { text: "Nowhere in particular", attrs: { value: "" } }));
+	for (const ent of entities.filter((e) => e.kind === "location")) {
+		select.append(el("option", { text: ent.name, attrs: { value: ent.id } }));
+	}
+	if ([...select.options].some((o) => o.value === prev)) select.value = prev;
+}
+
+// onPlaceDesign runs one place-design exchange: the premise, the
+// settlement kind, the scale band, an optional near anchor. The place, its
+// people, its sub-locations, its hooks and its secrets come back as one
+// proposal batch; nothing lands in the graph until the DM accepts it
+// there.
+async function onPlaceDesign(e) {
+	e.preventDefault();
+	const premise = $("camp-place-premise").value.trim();
+	if (!premise) return;
+	renderMeta("Designing the place…");
+	try {
+		await api.locationDesign(current.id, {
+			premise,
+			kind: $("camp-place-kind").value,
+			scale: $("camp-place-scale").value,
+			near: $("camp-place-near").value,
+		});
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	$("camp-place-premise").value = "";
+	renderMeta("The place is staged — accept it on the review queue.");
+	await loadEntities();
+	await reviewFor(current.id);
+}
+
+// onFleshOutSubmit runs the flesh-out exchange from the location sheet: a
+// place that already exists gets its missing block, people and secrets
+// proposed around what is already there. Parts re-roll one piece of the
+// shape — the people, say, keeping the geography.
+async function onFleshOutSubmit(e) {
+	const form = e.target.closest("[data-fleshout]");
+	if (!form) return;
+	e.preventDefault();
+	if (!current || !selected) return;
+	const body = {
+		premise: form.querySelector("input").value.trim(),
+	};
+	const parts = form.querySelector("select").value;
+	if (parts) body.parts = [parts];
+	renderMeta("Fleshing the place out…");
+	try {
+		await api.locationFleshOut(current.id, selected.id, body);
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	renderMeta("The proposal is staged — accept it on the review queue.");
+	await reviewFor(current.id);
 }
 
 /* ---------- the quest board (MAD-369) ---------- */
@@ -1849,6 +1921,31 @@ function renderLocationDossier(mount) {
 
 	// Rumours circulate once MAD-374 lands; the shape ships now.
 	wrap.append(section("Rumours", el("p", { class: "camp-status", text: "None circulating yet." })));
+
+	// The flesh-out path (MAD-372): a name and one line becomes a place —
+	// the missing block, people and secrets proposed around what is
+	// already here, staged as a batch. Parts re-roll one piece.
+	if (isDM()) {
+		const form = el("form", { class: "camp-plan-form", attrs: { "data-fleshout": d.id } });
+		form.append(el("p", { class: "camp-sheet-heading", text: "Flesh this place out" }));
+		form.append(el("input", {
+			class: "enc-field",
+			attrs: { type: "text", placeholder: "what has changed, or leave blank", "aria-label": "Flesh-out premise" },
+		}));
+		const parts = el("select", { class: "enc-field", attrs: { "aria-label": "Which part" } });
+		for (const [value, label] of [
+			["", "Everything with room"],
+			["place", "The block"],
+			["sublocations", "The sub-locations"],
+			["npcs", "The people"],
+			["hooks", "The hooks"],
+			["secrets", "The secrets"],
+		]) {
+			parts.append(el("option", { text: label, attrs: { value } }));
+		}
+		form.append(parts, el("button", { class: "enc-btn", text: "Propose", attrs: { type: "submit" } }));
+		wrap.append(section("Design", form));
+	}
 
 	mount.append(wrap);
 }
