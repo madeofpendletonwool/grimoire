@@ -78,6 +78,7 @@ const (
 	BatchSourceDowntime    = "downtime"
 	BatchSourceQuest       = "quest"
 	BatchSourceLocation    = "location"
+	BatchSourceDungeon     = "dungeon"
 )
 
 // batchSources is the validated source vocabulary.
@@ -85,6 +86,7 @@ var batchSources = map[string]bool{
 	BatchSourceSkeleton: true, BatchSourceStoryPlan: true, BatchSourceScene: true,
 	BatchSourceNLCommand: true, BatchSourceSessionPrep: true, BatchSourceTick: true,
 	BatchSourceDowntime: true, BatchSourceQuest: true, BatchSourceLocation: true,
+	BatchSourceDungeon: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -782,6 +784,12 @@ func (s *Store) finishDecide(ctx context.Context, campaignID string, batch *Batc
 				if err := s.downtimeFinalizer.FinalizeDowntimeBatch(ctx, out.Batch); err != nil {
 					return nil, fmt.Errorf("finish downtime batch %s: %w", out.Batch.ID, err)
 				}
+			}
+		case BatchSourceDungeon:
+			// The dungeon finalizer is internal: it needs only the
+			// campaign store every canon store already carries.
+			if err := s.finalizeDungeonBatch(ctx, out.Batch); err != nil {
+				return nil, fmt.Errorf("finish dungeon batch %s: %w", out.Batch.ID, err)
 			}
 		}
 	}

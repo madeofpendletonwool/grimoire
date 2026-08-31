@@ -2986,6 +2986,20 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .camp-quest-svg .camp-qnode.is-initial text { font-style: italic; }
 .camp-quest-svg .camp-qnode { cursor: default; }
 
+/* The dungeon workshop (MAD-373): the map drawn from the stored grid.
+   Rooms reuse the node classes — the entrance and the boss read in
+   gold — with a grab cursor because dragging writes the cell back, and
+   secret doors ghost like untaken branches. */
+.camp-dungeons-panel { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-dungeons { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-dungeon-detail { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-dungeon-controls { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-dungeon-svg .camp-node { cursor: grab; }
+.camp-dungeon-svg .camp-node:active { cursor: grabbing; }
+.camp-dungeon-svg .camp-edge[data-edge] { cursor: pointer; }
+.camp-dungeon-svg .camp-edge.is-ghost { stroke-dasharray: 3 3; opacity: 0.4; }
+.camp-dungeon-rooms { display: flex; flex-direction: column; gap: var(--sp-1); }
+
 /* The table: members, roles, invites. */
 .camp-members > summary { cursor: pointer; }
 .camp-members[open] > summary { margin-bottom: var(--sp-3); }

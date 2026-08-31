@@ -24,6 +24,9 @@ let scheduleEntries = []; // the schedule at the caller's scope
 let editingScheduleID = null; // the entry whose inline editor is open
 let quests = []; // the board: DM machines or player journal entries
 let selectedQuestID = null; // the quest whose detail chart is open (DM)
+let dungeons = []; // the workshop listing (DM)
+let selectedDungeonID = null; // the dungeon whose map is open (DM)
+let dungeonDetail = null; // the open dungeon's full view
 
 function wire() {
 	// The entity creator's kind select is static; fill it once.
@@ -76,6 +79,14 @@ function wire() {
 	// review view, the same hand-off the skeleton generator makes.
 	$("camp-quest-design-form").addEventListener("submit", onQuestDesign);
 	$("camp-place-design-form").addEventListener("submit", onPlaceDesign);
+	// The dungeon workshop (MAD-373): the create form, the listing and
+	// the map with its drag-and-edit surface, all delegated so
+	// re-renders need no re-binds.
+	$("camp-dungeon-form").addEventListener("submit", onDungeonDesign);
+	$("camp-dungeons").addEventListener("click", onDungeonBoardClick);
+	$("camp-dungeon-detail").addEventListener("click", onDungeonDetailClick);
+	$("camp-dungeon-detail").addEventListener("submit", onDungeonDetailSubmit);
+	$("camp-dungeon-detail").addEventListener("pointerdown", onRoomPointerDown);
 	for (const radio of document.querySelectorAll('input[name="camp-object"]')) {
 		radio.addEventListener("change", () => syncObjectKind());
 	}
@@ -117,6 +128,9 @@ function closeCampaign() {
 	selected = null;
 	selectedQuestID = null;
 	quests = [];
+	selectedDungeonID = null;
+	dungeonDetail = null;
+	dungeons = [];
 }
 
 const isDM = () => current && (current.my_role === "dm" || current.my_role === "keeper");
@@ -168,6 +182,7 @@ async function selectCampaign(id) {
 	$("camp-cmd-form").hidden = !isDM();
 	$("camp-quest-design-form").hidden = !isDM();
 	$("camp-place-design-form").hidden = !isDM();
+	$("camp-dungeon-form").hidden = !isDM();
 	if (!isDM()) $("camp-cmd-result").hidden = true;
 	kindFilter = "";
 	renderKindChips();
@@ -177,6 +192,7 @@ async function selectCampaign(id) {
 	loadClock();
 	loadSchedule();
 	loadQuests();
+	if (isDM()) loadDungeons(); else clearDungeons();
 	if (isDM()) {
 		loadMembers();
 		loadInvites();
@@ -1106,6 +1122,373 @@ function layout(nodes) {
 		});
 	}
 	return pos;
+}
+
+/* ---------- the dungeon workshop (MAD-373) ---------- */
+
+// The dungeon surface: knobs in, a seeded room graph out, drawn as the
+// map its grid says it is. The whole exchange needs no model — the
+// layout is arithmetic on the server — and every edit (dragging a room,
+// adding or cutting an edge) writes rows back; an edit never re-rolls
+// the dungeon. Dressing asks the model to name the rooms it was handed;
+// placing stages the whole dungeon as one proposal batch.
+
+const DUNGEON_CELL = 64; // one grid cell, whole pixels
+
+function clearDungeons() {
+	dungeons = [];
+	selectedDungeonID = null;
+	dungeonDetail = null;
+	clear($("camp-dungeons"));
+	clear($("camp-dungeon-detail"));
+}
+
+async function loadDungeons() {
+	const board = $("camp-dungeons");
+	if (!current) return;
+	let data;
+	try {
+		data = await api.dungeons(current.id);
+	} catch (err) {
+		dungeons = [];
+		clear(board).append(el("p", { class: "camp-status warn", text: err.message }));
+		clear($("camp-dungeon-detail"));
+		return;
+	}
+	dungeons = data.dungeons || [];
+	renderDungeonBoard();
+	if (selectedDungeonID && dungeons.some((d) => d.id === selectedDungeonID)) {
+		await renderDungeonDetail(selectedDungeonID);
+	} else {
+		selectedDungeonID = null;
+		dungeonDetail = null;
+		clear($("camp-dungeon-detail"));
+	}
+}
+
+function renderDungeonBoard() {
+	const board = clear($("camp-dungeons"));
+	if (dungeons.length === 0) {
+		board.append(el("p", { class: "camp-status", text: "No dungeons designed yet." }));
+		return;
+	}
+	for (const d of dungeons) {
+		const row = el("div", { class: "camp-quest" + (d.id === selectedDungeonID ? " is-active" : ""), attrs: { "data-did": d.id } });
+		const head = el("div", { class: "camp-quest-head" });
+		head.append(
+			el("span", { class: "camp-quest-name", text: d.name }),
+			el("span", { class: "enc-chip" + (d.status === "placed" ? " is-on" : ""), text: d.status }),
+			el("span", { class: "enc-chip", text: `${d.size} · lv ${d.level}` }),
+		);
+		row.append(head);
+		board.append(row);
+	}
+}
+
+function onDungeonBoardClick(e) {
+	const row = e.target.closest("[data-did]");
+	if (!row) return;
+	selectedDungeonID = row.dataset.did === selectedDungeonID ? null : row.dataset.did;
+	renderDungeonBoard();
+	if (selectedDungeonID) renderDungeonDetail(selectedDungeonID);
+	else {
+		dungeonDetail = null;
+		clear($("camp-dungeon-detail"));
+	}
+}
+
+// onDungeonDesign creates a dungeon from the knobs: the same params and
+// seed always produce the same rooms — re-rolling means a new seed, a
+// recorded decision, not a refresh button.
+async function onDungeonDesign(e) {
+	e.preventDefault();
+	const body = {
+		name: $("camp-dungeon-name").value.trim(),
+		theme: $("camp-dungeon-theme").value.trim(),
+		size: $("camp-dungeon-size").value,
+		level: parseInt($("camp-dungeon-level").value, 10) || 0,
+		expected_sessions: parseInt($("camp-dungeon-sessions").value, 10) || 0,
+		combat_density: parseInt($("camp-dungeon-combat").value, 10) || 0,
+		puzzle_density: parseInt($("camp-dungeon-puzzle").value, 10) || 0,
+		explore_density: parseInt($("camp-dungeon-explore").value, 10) || 0,
+		branchiness: parseInt($("camp-dungeon-branch").value, 10) || 0,
+	};
+	const seed = parseInt($("camp-dungeon-seed").value, 10);
+	if (Number.isFinite(seed) && seed !== 0) body.seed = seed;
+	renderMeta("Designing the dungeon…");
+	let data;
+	try {
+		data = await api.dungeonCreate(current.id, body);
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	$("camp-dungeon-name").value = "";
+	renderMeta(`Designed ${data.dungeon.rooms.length} rooms — same seed, same dungeon.`);
+	selectedDungeonID = data.dungeon.id;
+	await loadDungeons();
+}
+
+// renderDungeonDetail opens one dungeon: the map drawn from the stored
+// grid (the rendering of the graph, not a second artefact), the room
+// list, and the edit controls — dress, place, add and cut edges.
+async function renderDungeonDetail(did) {
+	const box = $("camp-dungeon-detail");
+	clear(box).append(el("p", { class: "camp-status", text: "Opening the map…" }));
+	let data;
+	try {
+		data = await api.dungeonGet(current.id, did);
+	} catch (err) {
+		clear(box).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	clear(box);
+	dungeonDetail = data.dungeon;
+	box.append(renderDungeonMap(dungeonDetail));
+	box.append(dungeonEditForms(dungeonDetail));
+}
+
+// renderDungeonMap draws the deterministic map: one cell per room at its
+// stored grid position, ink lines between connected rooms, the pixel
+// font for labels. Hand-rolled SVG the way the neighbourhood map is —
+// no library, no physics, whole-pixel geometry. Rooms are draggable for
+// the DM: a drop writes the new cell back and nothing else changes.
+function renderDungeonMap(d) {
+	const rooms = d.rooms || [];
+	const edges = d.edges || [];
+	const maxX = Math.max(0, ...rooms.map((r) => r.x));
+	const maxY = Math.max(0, ...rooms.map((r) => r.y));
+	const W = (maxX + 1) * DUNGEON_CELL + DUNGEON_CELL;
+	const H = (maxY + 1) * DUNGEON_CELL + DUNGEON_CELL;
+	const cx = (x) => DUNGEON_CELL / 2 + x * DUNGEON_CELL;
+	const cy = (y) => DUNGEON_CELL / 2 + y * DUNGEON_CELL;
+	const svgNS = "http://www.w3.org/2000/svg";
+	const svg = document.createElementNS(svgNS, "svg");
+	svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+	svg.setAttribute("class", "camp-graph-svg camp-dungeon-svg");
+	svg.setAttribute("role", "img");
+	svg.setAttribute("aria-label", `Map of ${d.name}`);
+
+	const byKey = new Map(rooms.map((r) => [r.key, r]));
+	for (const e of edges) {
+		const a = byKey.get(e.from_room), b = byKey.get(e.to_room);
+		if (!a || !b) continue;
+		const line = document.createElementNS(svgNS, "line");
+		line.setAttribute("x1", cx(a.x)); line.setAttribute("y1", cy(a.y));
+		line.setAttribute("x2", cx(b.x)); line.setAttribute("y2", cy(b.y));
+		line.setAttribute("class", "camp-edge" + (e.kind === "secret_door" ? " is-ghost" : ""));
+		if (e.id) line.setAttribute("data-edge", e.id);
+		const title = document.createElementNS(svgNS, "title");
+		title.textContent = e.kind.replace("_", " ") + (e.one_way ? " (one way)" : "");
+		line.append(title);
+		svg.append(line);
+	}
+	for (const r of rooms) {
+		const g = document.createElementNS(svgNS, "g");
+		g.setAttribute("class", "camp-node" + (r.purpose === "boss" || r.purpose === "entrance" ? " is-center" : ""));
+		g.setAttribute("transform", `translate(${cx(r.x)},${cy(r.y)})`);
+		g.setAttribute("tabindex", "0");
+		g.setAttribute("aria-label", `${r.name || r.purpose} (${r.purpose}, depth ${r.depth})`);
+		g.dataset.rid = r.id;
+		g.dataset.key = r.key;
+		g.dataset.x = String(r.x);
+		g.dataset.y = String(r.y);
+		const half = 14;
+		const rect = document.createElementNS(svgNS, "rect");
+		rect.setAttribute("x", -half); rect.setAttribute("y", -half);
+		rect.setAttribute("width", half * 2); rect.setAttribute("height", half * 2);
+		const label = document.createElementNS(svgNS, "text");
+		label.setAttribute("y", half + 12);
+		label.setAttribute("class", "camp-node-label");
+		const name = r.name || r.purpose;
+		label.textContent = name.length > 16 ? name.slice(0, 15) + "…" : name;
+		const title = document.createElementNS(svgNS, "title");
+		title.textContent = `${r.key} — ${r.purpose} (depth ${r.depth})${r.detail ? `: ${r.detail}` : ""}`;
+		g.append(rect, label, title);
+		svg.append(g);
+	}
+	return svg;
+}
+
+// dungeonEditForms builds the DM controls under the map: dress, place,
+// the edge add form, and the room list with drag hints. Delegated
+// handlers run the interactions; the forms carry the dungeon id.
+function dungeonEditForms(d) {
+	const wrap = el("div", { class: "camp-dungeon-controls" });
+
+	const actions = el("div", { class: "camp-fact-chips" });
+	actions.append(el("button", {
+		class: "enc-chip", text: "dress the rooms",
+		attrs: { type: "button", "data-dress": d.id },
+	}));
+	actions.append(el("button", {
+		class: "enc-chip", text: "place in the world",
+		attrs: { type: "button", "data-place": d.id },
+	}));
+	actions.append(el("button", {
+		class: "enc-chip", text: "delete the design",
+		attrs: { type: "button", "data-del-dungeon": d.id },
+	}));
+	wrap.append(actions);
+
+	if (d.secret) {
+		wrap.append(el("p", { class: "camp-status", text: `Secret: ${d.secret}` }));
+	}
+	if (d.key_item) {
+		wrap.append(el("p", { class: "camp-status", text: `The locked door needs ${d.key_item}.` }));
+	}
+
+	// The edge form: two rooms and a kind. Dragging writes cells; this
+	// writes connections — the two edits a map is made of.
+	const form = el("form", { class: "camp-sched-edit", attrs: { "data-edge-form": d.id } });
+	const from = el("select", { class: "enc-field", attrs: { "aria-label": "From room", required: "" } });
+	const to = el("select", { class: "enc-field", attrs: { "aria-label": "To room", required: "" } });
+	const kind = el("select", { class: "enc-field", attrs: { "aria-label": "Connection kind" } });
+	for (const k of ["door", "locked_door", "secret_door", "stair", "shaft", "passage", "collapse"]) {
+		kind.append(el("option", { text: k.replace("_", " "), attrs: { value: k } }));
+	}
+	for (const r of d.rooms) {
+		const label = `${r.name || r.purpose} (${r.key})`;
+		from.append(el("option", { text: label, attrs: { value: r.key } }));
+		to.append(el("option", { text: label, attrs: { value: r.key } }));
+	}
+	form.append(from, to, kind, el("button", { class: "enc-btn", text: "Connect", attrs: { type: "submit" } }));
+	wrap.append(el("h4", { class: "camp-sheet-heading", text: "Connect two rooms" }), form);
+
+	// The room list: purpose, depth and the encounter link, with a
+	// click-to-cut marker for edges.
+	const list = el("div", { class: "camp-dungeon-rooms" });
+	for (const r of d.rooms) {
+		const row = el("div", { class: "camp-fact", attrs: { "data-room": r.id } });
+		const chips = el("span", { class: "camp-fact-chips" });
+		chips.append(el("span", { class: "enc-chip", text: r.purpose }));
+		chips.append(el("span", { class: "enc-chip", text: `depth ${r.depth}` }));
+		if (r.encounter_id) chips.append(el("span", { class: "enc-chip is-on", text: "encounter linked" }));
+		row.append(
+			el("p", { class: "camp-fact-statement prose", text: `${r.name || r.purpose}${r.detail ? ` — ${r.detail}` : ""}` }),
+			chips,
+		);
+		list.append(row);
+	}
+	wrap.append(el("h4", { class: "camp-sheet-heading", text: "The rooms" }), list);
+	return wrap;
+}
+
+// onDungeonDetailClick runs the map's chip actions and edge cutting.
+async function onDungeonDetailClick(e) {
+	if (!current || !dungeonDetail) return;
+	const did = dungeonDetail.id;
+
+	if (e.target.closest("[data-dress]")) {
+		renderMeta("Dressing the rooms…");
+		try {
+			const data = await api.dungeonDress(current.id, did);
+			dungeonDetail = data.dungeon;
+			renderMeta("The rooms are dressed.");
+			await renderDungeonDetail(did);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	if (e.target.closest("[data-place]")) {
+		renderMeta("Staging the placement…");
+		try {
+			await api.dungeonPlace(current.id, did);
+			renderMeta("The placement is staged — accept it on the review queue.");
+			await reviewFor(current.id);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	if (e.target.closest("[data-del-dungeon]")) {
+		try {
+			await api.dungeonDelete(current.id, did);
+			selectedDungeonID = null;
+			renderMeta("The design is deleted.");
+			await loadDungeons();
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	// Cutting an edge: click a map edge (they carry data-edge).
+	const edgeEl = e.target.closest("[data-edge]");
+	if (edgeEl && edgeEl.dataset.edge) {
+		try {
+			const data = await api.dungeonEdgeDelete(current.id, did, edgeEl.dataset.edge);
+			dungeonDetail = data.dungeon;
+			await renderDungeonDetail(did);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+	}
+}
+
+// onDungeonDetailSubmit runs the edge form: two rooms and a kind.
+async function onDungeonDetailSubmit(e) {
+	if (!current || !dungeonDetail) return;
+	const form = e.target.closest("[data-edge-form]");
+	if (!form) return;
+	e.preventDefault();
+	const [from, to, kind] = form.querySelectorAll("select");
+	if (from.value === to.value) {
+		renderMeta("A room cannot connect to itself.", true);
+		return;
+	}
+	try {
+		const data = await api.dungeonEdgeAdd(current.id, dungeonDetail.id, {
+			from: from.value, to: to.value, kind: kind.value,
+		});
+		dungeonDetail = data.dungeon;
+		renderMeta("Connected.");
+		await renderDungeonDetail(dungeonDetail.id);
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+/* ---------- dragging a room writes the cell back ---------- */
+
+// onRoomPointerDown begins a drag on a map room (DM, mouse or touch):
+// the room follows the pointer in whole cells and the drop writes the
+// new cell back. An edit never re-rolls the dungeon — the PATCH carries
+// x and y only.
+function onRoomPointerDown(e) {
+	if (!isDM() || !dungeonDetail) return;
+	const g = e.target.closest("svg .camp-node");
+	if (!g || !g.dataset.rid) return;
+	e.preventDefault();
+	const svg = g.closest("svg");
+	const cell = DUNGEON_CELL;
+	const toCell = (evt) => {
+		const box = svg.getBoundingClientRect();
+		const scale = (box.width / svg.viewBox.baseVal.width) || 1;
+		const x = Math.floor(((evt.clientX - box.left) / scale) / cell);
+		const y = Math.floor(((evt.clientY - box.top) / scale) / cell);
+		return { x: Math.max(0, x), y: Math.max(0, y) };
+	};
+	const home = { x: Number(g.dataset.x), y: Number(g.dataset.y) };
+	const place = (at) => g.setAttribute("transform", `translate(${cell / 2 + at.x * cell},${cell / 2 + at.y * cell})`);
+	g.setPointerCapture?.(e.pointerId);
+	const move = (ev) => place(toCell(ev));
+	const up = async (ev) => {
+		svg.removeEventListener("pointermove", move);
+		svg.removeEventListener("pointerup", up);
+		const at = toCell(ev);
+		if (at.x === home.x && at.y === home.y) return; // a tap, not a drag
+		try {
+			const data = await api.dungeonRoomPatch(current.id, dungeonDetail.id, g.dataset.rid, { x: at.x, y: at.y });
+			dungeonDetail = data.dungeon;
+			renderDungeonDetail(dungeonDetail.id);
+		} catch (err) {
+			renderMeta(err.message, true);
+			renderDungeonDetail(dungeonDetail.id); // put the room back
+		}
+	};
+	svg.addEventListener("pointermove", move);
+	svg.addEventListener("pointerup", up);
 }
 
 /* ---------- the place designer (MAD-372) ---------- */
