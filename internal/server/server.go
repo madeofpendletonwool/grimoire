@@ -351,6 +351,12 @@ func (s *Server) Handler() http.Handler {
 	// gated on the model key.
 	mux.HandleFunc("POST /api/campaigns/{id}/design/quest", s.handleCampaignQuestDesign)
 	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/design/branch", s.handleQuestBranch)
+	// The location designer (MAD-372): a premise becomes a settlement —
+	// the place, its people, its sub-locations, its hooks and its secrets —
+	// staged as one proposal batch; flesh-out proposes around an existing
+	// location, never replacing it. DM-only, gated on the model key.
+	mux.HandleFunc("POST /api/campaigns/{id}/design/location", s.handleCampaignLocationDesign)
+	mux.HandleFunc("POST /api/campaigns/{id}/locations/{eid}/design/flesh-out", s.handleLocationFleshOut)
 	// The story planner and scene designer (MAD-362): plan the next session
 	// or a whole act forward from the campaign as it stands, or design one
 	// scene. Scenes land in the spine; the promised awareness changes stage

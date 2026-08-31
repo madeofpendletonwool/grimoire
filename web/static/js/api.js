@@ -682,6 +682,23 @@ export const api = {
 			body: JSON.stringify(body),
 		}).then(json),
 
+	// The place designer (MAD-372): a premise becomes a settlement, and a
+	// location that already exists gets fleshed out around what is there.
+	// Both come back as proposal batches for the review queue.
+	locationDesign: (cid, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/design/location`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	locationFleshOut: (cid, entityID, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/locations/${encodeURIComponent(entityID)}/design/flesh-out`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
 	actCreate: (cid, act) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/acts`, {
 			method: "POST",
