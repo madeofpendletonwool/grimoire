@@ -267,6 +267,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{id}/locations", s.handleCampaignLocations)
 	mux.HandleFunc("GET /api/campaigns/{id}/locations/{eid}", s.handleCampaignLocation)
 	mux.HandleFunc("PUT /api/campaigns/{id}/locations/{eid}/place", s.handlePutCampaignPlace)
+	// The dungeon designer (MAD-373): a seeded room graph, its map, and
+	// the dressing pass. Creating, editing and mapping need no model —
+	// the layout is pure arithmetic; dressing is the model pass, placing
+	// stages a proposal batch behind the review gate. DM-only.
+	mux.HandleFunc("GET /api/campaigns/{id}/dungeons", s.handleCampaignDungeons)
+	mux.HandleFunc("POST /api/campaigns/{id}/dungeons", s.handleCreateCampaignDungeon)
+	mux.HandleFunc("GET /api/campaigns/{id}/dungeons/{did}", s.handleCampaignDungeon)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/dungeons/{did}", s.handleUpdateCampaignDungeon)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/dungeons/{did}", s.handleDeleteCampaignDungeon)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/dungeons/{did}/rooms/{rid}", s.handleUpdateDungeonRoom)
+	mux.HandleFunc("POST /api/campaigns/{id}/dungeons/{did}/edges", s.handleAddDungeonEdge)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/dungeons/{did}/edges/{eid}", s.handleDeleteDungeonEdge)
+	mux.HandleFunc("POST /api/campaigns/{id}/dungeons/{did}/dress", s.handleDungeonDress)
+	mux.HandleFunc("POST /api/campaigns/{id}/dungeons/{did}/place", s.handleDungeonPlace)
 	// The campaign clock (MAD-365): calendar, clock ledger, schedule, travel.
 	mux.HandleFunc("GET /api/campaigns/{id}/calendar", s.handleCampaignCalendar)
 	mux.HandleFunc("PUT /api/campaigns/{id}/calendar", s.handlePutCampaignCalendar)

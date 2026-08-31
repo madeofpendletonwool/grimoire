@@ -633,9 +633,70 @@
 							</div>
 							<button type="submit" class="enc-btn">Design the quest</button>
 						</form>
-						<div class="camp-quests" id="camp-quests" aria-label="Quests"></div>
-						<div class="camp-quest-detail" id="camp-quest-detail" aria-live="polite"></div>
-					</div>
+					<div class="camp-quests" id="camp-quests" aria-label="Quests"></div>
+					<div class="camp-quest-detail" id="camp-quest-detail" aria-live="polite"></div>
+				</div>
+				<!-- The dungeon designer (MAD-373): a seeded room graph,
+				     its map, and the dressing pass. The topology is
+				     arithmetic — theme, size, level, sessions and the
+				     density knobs in; a room graph with a boss and
+				     secrets out — so designing and mapping need no
+				     model. Dressing names the rooms; placing stages the
+				     whole dungeon as one proposal batch. DM-only. -->
+				<div class="camp-panel camp-dungeons-panel">
+					<h3 class="enc-heading">The dungeon workshop</h3>
+					<form class="camp-invite-form" id="camp-dungeon-form" autocomplete="off" hidden>
+						<label class="camp-field"><span>A dungeon from knobs, not a prompt</span>
+							<input id="camp-dungeon-name" class="enc-field" type="text" required placeholder="The Sunken Reliquary" aria-label="Dungeon name">
+						</label>
+						<label class="camp-field"><span>Theme</span>
+							<input id="camp-dungeon-theme" class="enc-field" type="text" placeholder="a drowned temple beneath the marsh" aria-label="Theme">
+						</label>
+						<div class="camp-field-row">
+							<label class="camp-field"><span>Size</span>
+								<select id="camp-dungeon-size" class="enc-field" aria-label="Size band">
+									<option value="delve">Delve</option>
+									<option value="lair">Lair</option>
+									<option value="complex">Complex</option>
+									<option value="megadungeon">Megadungeon</option>
+								</select>
+							</label>
+							<label class="camp-field"><span>Level</span>
+								<input id="camp-dungeon-level" class="enc-field" type="number" min="1" max="20" placeholder="3" aria-label="Party level">
+							</label>
+							<label class="camp-field"><span>Sessions</span>
+								<input id="camp-dungeon-sessions" class="enc-field" type="number" min="1" max="10" placeholder="1" aria-label="Expected sessions">
+							</label>
+						</div>
+						<div class="camp-field-row">
+							<label class="camp-field"><span>Combat</span>
+								<input id="camp-dungeon-combat" class="enc-field" type="number" min="0" placeholder="1" aria-label="Combat density">
+							</label>
+							<label class="camp-field"><span>Puzzle</span>
+								<input id="camp-dungeon-puzzle" class="enc-field" type="number" min="0" placeholder="1" aria-label="Puzzle density">
+							</label>
+							<label class="camp-field"><span>Explore</span>
+								<input id="camp-dungeon-explore" class="enc-field" type="number" min="0" placeholder="1" aria-label="Exploration density">
+							</label>
+							<label class="camp-field"><span>Loops</span>
+								<select id="camp-dungeon-branch" class="enc-field" aria-label="Branchiness">
+									<option value="0">none</option>
+									<option value="1" selected>one</option>
+									<option value="2">two</option>
+									<option value="3">three</option>
+								</select>
+							</label>
+						</div>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Seed (optional)</span>
+								<input id="camp-dungeon-seed" class="enc-field" type="number" placeholder="any number" aria-label="Seed">
+							</label>
+							<button type="submit" class="enc-btn">Design the dungeon</button>
+						</div>
+					</form>
+					<div class="camp-dungeons" id="camp-dungeons" aria-label="Dungeons"></div>
+					<div class="camp-dungeon-detail" id="camp-dungeon-detail" aria-live="polite"></div>
+				</div>
 					<details class="camp-panel camp-members" id="camp-members-panel" hidden>
 						<summary class="enc-heading">The table</summary>
 						<div class="camp-members-body" id="camp-members-body"></div>

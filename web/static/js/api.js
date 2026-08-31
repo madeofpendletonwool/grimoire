@@ -699,6 +699,56 @@ export const api = {
 			body: JSON.stringify(body),
 		}).then(json),
 
+	// The dungeon designer (MAD-373): the seeded room graph, its map,
+	// and the dressing pass. Creating and editing need no model; dressing
+	// is the model pass; placing stages a proposal batch.
+	dungeons: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons`).then(json),
+
+	dungeonCreate: (cid, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	dungeonGet: (cid, did) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}`).then(json),
+
+	dungeonDelete: (cid, did) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}`, { method: "DELETE" }).then(json),
+
+	dungeonRoomPatch: (cid, did, roomID, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/rooms/${encodeURIComponent(roomID)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	dungeonEdgeAdd: (cid, did, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/edges`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	dungeonEdgeDelete: (cid, did, edgeID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/edges/${encodeURIComponent(edgeID)}`, { method: "DELETE" }).then(json),
+
+	dungeonDress: (cid, did) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/dress`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		}).then(json),
+
+	dungeonPlace: (cid, did) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/place`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		}).then(json),
+
 	actCreate: (cid, act) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/acts`, {
 			method: "POST",
