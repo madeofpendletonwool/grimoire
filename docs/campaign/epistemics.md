@@ -39,6 +39,22 @@ entity id or the literal `party`:
 deliberate "they walked past the ledger and did not read it" are different
 facts about the campaign, and only one of them is interesting.
 
+### What `believes_false` means, exactly
+
+A `believes_false` row on fact F says: **F is true in the world, and this
+knower is wrong about it.** The row is the *error*, not the content — the fact
+column carries the true statement the belief contradicts, and the wrong
+content lives in the belief itself (a rumour variant, a misreading, a
+planted lie), never in `facts`. That is why the summary bucket renders it as
+*Incorrect*: the housekeeper's "the Duke never travels" is canon, the party's
+disbelief in it is the defect, and the DM sees the true statement plus who is
+wrong about it. The reading was ambiguous in early seeds ("the knower holds
+this account to be false" — polarity reversed); MAD-374 settles it on the
+`Summarize` reading, because a four-bucket summary that cannot say *wrong*
+is not a belief layer. Writing the wrong content *into* a fact is what
+`contested` and retcons are for; `believes_false` is only ever about the
+knower.
+
 The four-bucket summary — `knowledge.Summarize(scope, subject)`, answering
 "what does the party know about the Duke?" as **confirmed / suspected /
 incorrect beliefs / unknown** — is deterministic. No model call. That one

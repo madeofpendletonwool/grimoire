@@ -66,6 +66,11 @@ const (
 	CheckUnusedNPC             = "unused_npc"
 	CheckDormantRegion         = "dormant_region"
 	CheckUnfoundedRelationship = "unfounded_relationship"
+	// The rumour mill's checks (MAD-374): the deterministic half of "is
+	// this rumour table doing anything?" — an orphan nobody repeats, and
+	// a rumour about a place with no story for it to live in.
+	CheckRumorOrphan  = "rumor_orphan"
+	CheckRumorDeadEnd = "rumor_dead_end"
 )
 
 // DefaultOrphanSessions is how many sessions a hook, secret or clue may sit
@@ -486,6 +491,7 @@ func CheckSnapshot(snap *Snapshot, opts CheckOptions) []campaign.Finding {
 	out = append(out, checkDormantClue(snap, opts)...)
 	out = append(out, checkUnusedEntities(snap)...)
 	out = append(out, checkUnfoundedRelationship(snap)...)
+	out = append(out, checkRumorMill(snap)...)
 	// The narrative spine's own rules (MAD-360) — one findings system, the
 	// same ledger, the same `grimoire canon check`.
 	out = append(out, story.Validate(snap.Spine)...)
@@ -759,6 +765,21 @@ func checkUnreachableSecret(snap *Snapshot) []campaign.Finding {
 			}
 		}
 	}
+	// A rumour attached to a secret fact is the cheapest clue path there
+	// is (MAD-374): someone in town is already saying the thing, or
+	// something adjacent to it. A live rumour — circulating or confirmed,
+	// not debunked into silence or gone dormant — with no holders yet
+	// still counts: the DM planted the lead, rumor_orphan is the check
+	// that nags about the planting.
+	rumored := map[string]bool{}
+	for _, r := range snap.Rumors {
+		if r.FactID == "" {
+			continue
+		}
+		if r.Status == campaign.RumorStatusCirculating || r.Status == campaign.RumorStatusConfirmed {
+			rumored[r.FactID] = true
+		}
+	}
 	var out []campaign.Finding
 	for _, f := range snap.Facts {
 		if f.Visibility != campaign.VisibilitySecret || f.SupersededBy != "" {
@@ -767,7 +788,7 @@ func checkUnreachableSecret(snap *Snapshot) []campaign.Finding {
 		if f.Confidence != campaign.ConfidenceCanon && f.Confidence != campaign.ConfidenceDerived {
 			continue
 		}
-		if anyRow[f.ID] || granting[f.ID] || planned[f.ID] || questRevealed[f.ID] {
+		if anyRow[f.ID] || granting[f.ID] || planned[f.ID] || questRevealed[f.ID] || rumored[f.ID] {
 			continue
 		}
 		out = append(out, campaign.Finding{
@@ -1033,4 +1054,80 @@ func entityName(snap *Snapshot, id string) string {
 		}
 	}
 	return id
+}
+
+/* ---------- the rumour mill (MAD-374) ---------- */
+
+// checkRumorMill runs the mill's two health checks:
+//
+//   - rumor_orphan (warn): a circulating rumour nobody repeats. A rumour
+//     with no holders is a row, not a rumour — the DM wrote it and never
+//     gave it a mouth, so the party can never hear it. Debunked and
+//     dormant rumours are exempt: nobody repeating a dead rumour is the
+//     rumour having died, which is its own status.
+//
+//   - rumor_dead_end (info): a rumour about an entity with no live
+//     storyline — no live fact, relationship or event touches the subject.
+//     The companion of dormant_region: talking about a place nothing is
+//     happening in is a table the DM cannot cash. Info, not warn — a
+//     rumour can precede the story that pays it off, which is a legitimate
+//     way to plant one.
+func checkRumorMill(snap *Snapshot) []campaign.Finding {
+	holderCount := map[string]int{}
+	for _, h := range snap.RumorHolders {
+		holderCount[h.RumorID]++
+	}
+	inFacts := map[string]bool{}
+	for _, f := range snap.Facts {
+		if f.SupersededBy != "" {
+			continue
+		}
+		inFacts[f.SubjectEntity] = true
+		if f.ObjectEntity != "" {
+			inFacts[f.ObjectEntity] = true
+		}
+	}
+	inRels := map[string]bool{}
+	for _, r := range snap.Relationships {
+		inRels[r.FromEntity] = true
+		inRels[r.ToEntity] = true
+	}
+	inEvents := map[string]bool{}
+	for _, e := range snap.Events {
+		if e.LocationEntity != "" {
+			inEvents[e.LocationEntity] = true
+		}
+		for _, p := range e.Participants {
+			inEvents[p.EntityID] = true
+		}
+	}
+	var out []campaign.Finding
+	for _, r := range snap.Rumors {
+		if r.Status == campaign.RumorStatusCirculating && holderCount[r.ID] == 0 {
+			out = append(out, campaign.Finding{
+				Check: CheckRumorOrphan, Severity: campaign.SeverityWarn,
+				RecordKind: "rumor", RecordID: r.ID,
+				Message: fmt.Sprintf("rumour %q is circulating but nobody repeats it — give it a holder or it can never be heard", r.Statement),
+			})
+		}
+		if r.AboutEntity == "" {
+			continue
+		}
+		if inFacts[r.AboutEntity] || inRels[r.AboutEntity] || inEvents[r.AboutEntity] {
+			continue
+		}
+		out = append(out, campaign.Finding{
+			Check: CheckRumorDeadEnd, Severity: campaign.SeverityInfo,
+			RecordKind: "rumor", RecordID: r.ID,
+			Message: fmt.Sprintf("rumour %q is about %s, which has no live storyline — nothing true, tied or witnessed touches it (pairs with dormant_region)",
+				r.Statement, entityName(snap, r.AboutEntity)),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Check != out[j].Check {
+			return out[i].Check < out[j].Check
+		}
+		return out[i].RecordID < out[j].RecordID
+	})
+	return out
 }

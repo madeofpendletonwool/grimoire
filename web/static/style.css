@@ -2998,6 +2998,12 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .camp-dungeon-svg .camp-node:active { cursor: grabbing; }
 .camp-dungeon-svg .camp-edge[data-edge] { cursor: pointer; }
 .camp-dungeon-svg .camp-edge.is-ghost { stroke-dasharray: 3 3; opacity: 0.4; }
+
+/* The rumour mill (MAD-374): the mill list reuses the fact row classes —
+   statement, chip row, holder line — so a rumour reads like anything else
+   the campaign says, with the DM's actions riding the same chip buttons. */
+.camp-rumors-panel { display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-rumors { display: flex; flex-direction: column; gap: var(--sp-2); }
 .camp-dungeon-rooms { display: flex; flex-direction: column; gap: var(--sp-1); }
 
 /* The table: members, roles, invites. */

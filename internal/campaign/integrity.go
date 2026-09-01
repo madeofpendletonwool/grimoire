@@ -108,6 +108,13 @@ type Snapshot struct {
 	// plan checks read (MAD-366). The full progression model is
 	// internal/faction; this view carries only what the rules need.
 	FactionPlans []FactionPlanView
+	// Rumors and RumorHolders are the campaign's rumour mill (MAD-374):
+	// the statements in circulation and who repeats them, truth values
+	// included — this is the DM snapshot. The rumor checks and the
+	// location dossier read them; the scoped reads live in
+	// internal/knowledge.
+	Rumors       []Rumor
+	RumorHolders []RumorHolder
 }
 
 // FactionPlanView is one faction plan as the integrity checks see it: ids,
@@ -583,6 +590,66 @@ func LoadSnapshot(ctx context.Context, scope Scope, db *sql.DB, campaignID strin
 	for _, id := range order {
 		s.FactionPlans = append(s.FactionPlans, *byPlan[id])
 	}
+
+	// The rumour mill (MAD-374): statements in circulation and who repeats
+	// them, truth values included — this is the DM snapshot the checks and
+	// the dossier read. The player-safe reads live in internal/knowledge.
+	rows, err = db.QueryContext(ctx, `
+		SELECT id, campaign_id, statement, truth, COALESCE(about_entity, ''), COALESCE(fact_id, ''),
+		       origin, spread, status, dm_only, created_by, created_at, updated_at
+		  FROM rumors WHERE campaign_id = ?
+		 ORDER BY created_at, id`, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("integrity rumors: %w", err)
+	}
+	for rows.Next() {
+		var (
+			r             Rumor
+			about, factID sql.NullString
+			created, upd  int64
+		)
+		if err := rows.Scan(&r.ID, &r.CampaignID, &r.Statement, &r.Truth, &about, &factID,
+			&r.Origin, &r.Spread, &r.Status, &r.DMOnly, &r.CreatedBy, &created, &upd); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		r.AboutEntity = about.String
+		r.FactID = factID.String
+		r.CreatedAt = unixMilli(created)
+		r.UpdatedAt = unixMilli(upd)
+		s.Rumors = append(s.Rumors, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	rows, err = db.QueryContext(ctx, `
+		SELECT h.rumor_id, h.entity_id, h.variant, COALESCE(h.since_event, ''), h.created_at
+		  FROM rumor_holders h JOIN rumors r ON r.id = h.rumor_id
+		 WHERE r.campaign_id = ?
+		 ORDER BY h.rumor_id, h.entity_id`, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("integrity rumor holders: %w", err)
+	}
+	for rows.Next() {
+		var (
+			h       RumorHolder
+			created int64
+		)
+		if err := rows.Scan(&h.RumorID, &h.EntityID, &h.Variant, &h.SinceEvent, &created); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		h.CreatedAt = unixMilli(created)
+		s.RumorHolders = append(s.RumorHolders, h)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
 
 	return s, nil
 }

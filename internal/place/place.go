@@ -161,6 +161,17 @@ func Dossier(snap *campaign.Snapshot, entityID string) (Location, bool) {
 		return d.Quests[i].ID < d.Quests[j].ID
 	})
 
+	// Rumours circulating here: the statements being spread about this
+	// place, newest last. The player snapshot's rows were loaded without
+	// truth or fact ever crossing the scope line; the DM's carry both.
+	// Circulating only — the mill panel is where the whole table lives,
+	// the dossier answers "what are people saying?".
+	for _, r := range snap.Rumors {
+		if r.Status == campaign.RumorStatusCirculating && r.AboutEntity == entityID {
+			d.Rumours = append(d.Rumours, r.Statement)
+		}
+	}
+
 	if d.Rumours == nil {
 		d.Rumours = []string{}
 	}

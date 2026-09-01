@@ -54,6 +54,7 @@ const (
 	ReviewProposedEntity         = "proposed_entity"
 	ReviewProposedPlanTransition = "proposed_plan_transition"
 	ReviewProposedQuest          = "proposed_quest"
+	ReviewProposedRumor          = "proposed_rumor"
 	ReviewLowAgreement           = "low_agreement"
 	ReviewContradiction          = "contradiction"
 	ReviewEngineFlag             = "engine_flag"

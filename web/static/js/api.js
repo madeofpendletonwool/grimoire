@@ -419,6 +419,61 @@ export const api = {
 			body: JSON.stringify(place),
 		}).then(json),
 
+	// The rumour mill (MAD-374): statements in circulation and who
+	// repeats them. Reads resolve the caller's scope server-side — a
+	// player's list never carries a truth value; writes and hearing are
+	// DM-only; generation stages a batch behind the review gate.
+	campaignRumors: (cid, params) => {
+		const q = new URLSearchParams(params || {}).toString();
+		return fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors${q ? "?" + q : ""}`).then(json);
+	},
+
+	campaignRumor: (cid, rid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}`).then(json),
+
+	campaignRumorCreate: (cid, rumor) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(rumor),
+		}).then(json),
+
+	campaignRumorUpdate: (cid, rid, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	campaignRumorDelete: (cid, rid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}`, { method: "DELETE" }).then(json),
+
+	campaignRumorHolderSet: (cid, rid, holder) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}/holders`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(holder),
+		}).then(json),
+
+	campaignRumorHolderDelete: (cid, rid, eid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}/holders/${encodeURIComponent(eid)}`, {
+			method: "DELETE",
+		}).then(json),
+
+	campaignRumorHeard: (cid, rid, knower, sinceEvent) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}/heard`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ knower, since_event: sinceEvent || "" }),
+		}).then(json),
+
+	campaignRumorGenerate: (cid, req) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/generate`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(req),
+		}).then(json),
+
 	// The campaign chat (MAD-311): threads pinned to the campaign and to the
 	// caller's resolved scope. The scope is decided server-side from the
 	// membership row — this surface never chooses a perspective.

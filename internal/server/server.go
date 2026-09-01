@@ -281,6 +281,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/campaigns/{id}/dungeons/{did}/edges/{eid}", s.handleDeleteDungeonEdge)
 	mux.HandleFunc("POST /api/campaigns/{id}/dungeons/{did}/dress", s.handleDungeonDress)
 	mux.HandleFunc("POST /api/campaigns/{id}/dungeons/{did}/place", s.handleDungeonPlace)
+	// The rumour mill (MAD-374): statements in circulation, who repeats
+	// them, and the truth value the DM holds and no player scope ever
+	// reads. Reads resolve the caller's scope; writes and hearing are
+	// DM-only; generation stages a batch behind the review gate.
+	mux.HandleFunc("GET /api/campaigns/{id}/rumors", s.handleCampaignRumors)
+	mux.HandleFunc("POST /api/campaigns/{id}/rumors", s.handleCreateCampaignRumor)
+	mux.HandleFunc("POST /api/campaigns/{id}/rumors/generate", s.handleRumorGenerate)
+	mux.HandleFunc("GET /api/campaigns/{id}/rumors/{rid}", s.handleCampaignRumor)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/rumors/{rid}", s.handleUpdateCampaignRumor)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/rumors/{rid}", s.handleDeleteCampaignRumor)
+	mux.HandleFunc("POST /api/campaigns/{id}/rumors/{rid}/heard", s.handleRumorHeard)
+	mux.HandleFunc("POST /api/campaigns/{id}/rumors/{rid}/holders", s.handleSetRumorHolder)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/rumors/{rid}/holders/{eid}", s.handleDeleteRumorHolder)
 	// The campaign clock (MAD-365): calendar, clock ledger, schedule, travel.
 	mux.HandleFunc("GET /api/campaigns/{id}/calendar", s.handleCampaignCalendar)
 	mux.HandleFunc("PUT /api/campaigns/{id}/calendar", s.handlePutCampaignCalendar)
