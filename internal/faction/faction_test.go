@@ -8,7 +8,7 @@ import (
 )
 
 func machine(initial string, states []string, edges ...[2]string) campaign.StateMachine {
-	m := campaign.StateMachine{Initial: initial, States: states}
+	m := campaign.StateMachine{Initial: initial, States: campaign.States(states...)}
 	for _, e := range edges {
 		m.Edges = append(m.Edges, campaign.StateEdge{From: e[0], To: e[1]})
 	}

@@ -353,6 +353,22 @@ export const api = {
 			body: JSON.stringify({ from, to, ...(days != null ? { days } : {}) }),
 		}).then(json),
 
+	// The simulation tick (MAD-367): preview a window of world-state
+	// outcomes (nothing written but the tick's own row), then stage it as
+	// one proposal batch behind the review gate. Deciding that batch — on
+	// the ordinary proposals surface — moves the clock.
+	campaignSimulate: (cid, days, seed) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/simulate`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ days, ...(seed != null ? { seed } : {}) }),
+		}).then(json),
+
+	campaignSimulateStage: (cid, tickID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/simulate/${encodeURIComponent(tickID)}/stage`, {
+			method: "POST",
+		}).then(json),
+
 	// The faction surface (MAD-366): the scope-filtered dossier and the
 	// DM-only plans. A player's dossier carries the public face and aware
 	// edges; plans never cross a player scope, server-side by construction.
@@ -384,6 +400,78 @@ export const api = {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ to, reason }),
+		}).then(json),
+
+	// The location surface (MAD-370): the places listing and the
+	// scope-resolved dossier. The place block editor is DM-only; a player's
+	// dossier carries the block's public half and none of the rest,
+	// server-side by construction.
+	campaignLocations: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/locations`).then(json),
+
+	campaignLocation: (cid, eid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/locations/${encodeURIComponent(eid)}`).then(json),
+
+	campaignPlacePut: (cid, eid, place) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/locations/${encodeURIComponent(eid)}/place`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(place),
+		}).then(json),
+
+	// The rumour mill (MAD-374): statements in circulation and who
+	// repeats them. Reads resolve the caller's scope server-side — a
+	// player's list never carries a truth value; writes and hearing are
+	// DM-only; generation stages a batch behind the review gate.
+	campaignRumors: (cid, params) => {
+		const q = new URLSearchParams(params || {}).toString();
+		return fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors${q ? "?" + q : ""}`).then(json);
+	},
+
+	campaignRumor: (cid, rid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}`).then(json),
+
+	campaignRumorCreate: (cid, rumor) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(rumor),
+		}).then(json),
+
+	campaignRumorUpdate: (cid, rid, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	campaignRumorDelete: (cid, rid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}`, { method: "DELETE" }).then(json),
+
+	campaignRumorHolderSet: (cid, rid, holder) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}/holders`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(holder),
+		}).then(json),
+
+	campaignRumorHolderDelete: (cid, rid, eid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}/holders/${encodeURIComponent(eid)}`, {
+			method: "DELETE",
+		}).then(json),
+
+	campaignRumorHeard: (cid, rid, knower, sinceEvent) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/${encodeURIComponent(rid)}/heard`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ knower, since_event: sinceEvent || "" }),
+		}).then(json),
+
+	campaignRumorGenerate: (cid, req) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rumors/generate`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(req),
 		}).then(json),
 
 	// The campaign chat (MAD-311): threads pinned to the campaign and to the
@@ -596,6 +684,125 @@ export const api = {
 
 	campaignQuests: (cid) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests`).then(json),
+
+	// The quest graph (MAD-369): the DM's board and the player's journal.
+	campaignQuestDetail: (cid, questID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}`).then(json),
+
+	campaignQuestUpdate: (cid, questID, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	campaignQuestDelete: (cid, questID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}`, { method: "DELETE" }).then(json),
+
+	campaignQuestEntityAdd: (cid, questID, entityID, role) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}/entities`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ entity_id: entityID, role }),
+		}).then(json),
+
+	campaignQuestEntityRemove: (cid, questID, entityID, role) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}/entities/${encodeURIComponent(entityID)}` +
+			(role ? `?role=${encodeURIComponent(role)}` : ""), { method: "DELETE" }).then(json),
+
+	campaignQuestJournal: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/journal`).then(json),
+
+	campaignQuestTransition: (cid, questID, to) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}/transition`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ to }),
+		}).then(json),
+
+	// The quest designer (MAD-371): a hook becomes a staged branching
+	// quest, and "branch this quest" proposes two exclusive outcomes off a
+	// live state. Both come back as proposal batches for the review queue.
+	questDesign: (cid, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/design/quest`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	questBranch: (cid, questID, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}/design/branch`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	// The place designer (MAD-372): a premise becomes a settlement, and a
+	// location that already exists gets fleshed out around what is there.
+	// Both come back as proposal batches for the review queue.
+	locationDesign: (cid, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/design/location`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	locationFleshOut: (cid, entityID, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/locations/${encodeURIComponent(entityID)}/design/flesh-out`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	// The dungeon designer (MAD-373): the seeded room graph, its map,
+	// and the dressing pass. Creating and editing need no model; dressing
+	// is the model pass; placing stages a proposal batch.
+	dungeons: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons`).then(json),
+
+	dungeonCreate: (cid, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	dungeonGet: (cid, did) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}`).then(json),
+
+	dungeonDelete: (cid, did) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}`, { method: "DELETE" }).then(json),
+
+	dungeonRoomPatch: (cid, did, roomID, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/rooms/${encodeURIComponent(roomID)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	dungeonEdgeAdd: (cid, did, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/edges`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	dungeonEdgeDelete: (cid, did, edgeID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/edges/${encodeURIComponent(edgeID)}`, { method: "DELETE" }).then(json),
+
+	dungeonDress: (cid, did) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/dress`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		}).then(json),
+
+	dungeonPlace: (cid, did) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/dungeons/${encodeURIComponent(did)}/place`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		}).then(json),
 
 	actCreate: (cid, act) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/acts`, {

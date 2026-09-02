@@ -56,6 +56,16 @@ type PlayerView interface {
 	// and nothing else. PrivateTruth and the rest of the payload are DM
 	// structure this interface cannot express.
 	FactionFacade(ctx context.Context, campaignID, id string) (face, reputation string, err error)
+	// QuestJournal is the player-visible quest read (MAD-369): public
+	// quests only, the current state's label, the states already visited —
+	// and never an unvisited branch, a state detail or an edge's requires.
+	QuestJournal(ctx context.Context, campaignID string) ([]QuestJournalEntry, error)
+	// PlaceSnapshot builds the location dossier's input snapshot from this
+	// scope's own reads (MAD-370): met entities with the one location's
+	// public place block grafted on, held facts, witnessed events, aware
+	// edges, and public quests with their site links. Secrets, private
+	// truth and unmet entities are absent because their rows never load.
+	PlaceSnapshot(ctx context.Context, campaignID, locationID string) (*campaign.Snapshot, error)
 }
 
 // playerView is the PlayerView implementation: the wide store's scoped reads

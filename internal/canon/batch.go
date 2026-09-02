@@ -49,6 +49,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 )
 
@@ -73,12 +74,20 @@ const (
 	BatchSourceScene       = "scene"
 	BatchSourceNLCommand   = "nl_command"
 	BatchSourceSessionPrep = "session_prep"
+	BatchSourceTick        = "tick"
+	BatchSourceDowntime    = "downtime"
+	BatchSourceQuest       = "quest"
+	BatchSourceLocation    = "location"
+	BatchSourceDungeon     = "dungeon"
+	BatchSourceRumor       = "rumor"
 )
 
 // batchSources is the validated source vocabulary.
 var batchSources = map[string]bool{
 	BatchSourceSkeleton: true, BatchSourceStoryPlan: true, BatchSourceScene: true,
-	BatchSourceNLCommand: true, BatchSourceSessionPrep: true,
+	BatchSourceNLCommand: true, BatchSourceSessionPrep: true, BatchSourceTick: true,
+	BatchSourceDowntime: true, BatchSourceQuest: true, BatchSourceLocation: true,
+	BatchSourceDungeon: true, BatchSourceRumor: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -166,8 +175,14 @@ func reviewKindForBatchItem(kind string) (string, bool) {
 	}
 	switch kind {
 	case ReviewProposedFact, ReviewProposedEvent, ReviewProposedDiscovery,
-		ReviewProposedRelationship, ReviewProposedEntity:
+		ReviewProposedRelationship, ReviewProposedEntity, ReviewProposedQuest:
 		return kind, true
+	case "quest":
+		return ReviewProposedQuest, true
+	case KindPlanTransition, ReviewProposedPlanTransition:
+		return ReviewProposedPlanTransition, true
+	case "rumor", ReviewProposedRumor:
+		return ReviewProposedRumor, true
 	}
 	return "", false
 }
@@ -578,7 +593,7 @@ func (s *Store) DecideBatch(ctx context.Context, campaignID, batchID, decision s
 		toApply = append(toApply, &batchPlan{review: r})
 	}
 	if len(toApply) == 0 {
-		return s.finishBatchDecision(ctx, campaignID, batch, res, decision)
+		return s.finishDecide(ctx, campaignID, batch, res, decision)
 	}
 
 	// The refusal pass: an item whose dependency is (or becomes) dismissed,
@@ -744,7 +759,44 @@ func (s *Store) DecideBatch(ctx context.Context, campaignID, batchID, decision s
 		outcome[r.ID].ResultRef = resultRef
 	}
 
-	return s.finishBatchDecision(ctx, campaignID, batch, res, decision)
+	return s.finishDecide(ctx, campaignID, batch, res, decision)
+}
+
+// finishDecide wraps finishBatchDecision with the source-specific
+// completions: a tick batch that leaves open hands off to the tick finalizer
+// — the campaign clock's move by exactly the window and the sim_ticks row's
+// status flip — and a downtime batch to the downtime finalizer, same
+// contract under reason 'downtime'. Whatever path decided it. The finalizers
+// are idempotent (guarded on their own rows' statuses), so a failed
+// completion heals on the decision retry a decided batch allows.
+func (s *Store) finishDecide(ctx context.Context, campaignID string, batch *Batch, res *BatchDecision, decision string) (*BatchDecision, error) {
+	out, err := s.finishBatchDecision(ctx, campaignID, batch, res, decision)
+	if err != nil {
+		return nil, err
+	}
+	if out.Batch != nil && out.Batch.Status != BatchOpen {
+		switch out.Batch.Source {
+		case BatchSourceTick:
+			if s.tickFinalizer != nil {
+				if err := s.tickFinalizer.FinalizeTickBatch(ctx, out.Batch); err != nil {
+					return nil, fmt.Errorf("finish tick batch %s: %w", out.Batch.ID, err)
+				}
+			}
+		case BatchSourceDowntime:
+			if s.downtimeFinalizer != nil {
+				if err := s.downtimeFinalizer.FinalizeDowntimeBatch(ctx, out.Batch); err != nil {
+					return nil, fmt.Errorf("finish downtime batch %s: %w", out.Batch.ID, err)
+				}
+			}
+		case BatchSourceDungeon:
+			// The dungeon finalizer is internal: it needs only the
+			// campaign store every canon store already carries.
+			if err := s.finalizeDungeonBatch(ctx, out.Batch); err != nil {
+				return nil, fmt.Errorf("finish dungeon batch %s: %w", out.Batch.ID, err)
+			}
+		}
+	}
+	return out, nil
 }
 
 // batchItemBefore orders two independent items: entities first, then facts,
@@ -837,15 +889,22 @@ func (s *Store) finishBatchDecision(ctx context.Context, campaignID string, batc
 
 // batchResolution remembers what this batch's applied items created, so a
 // later item's references resolve against them: entity names and local ids,
-// fact statements and local ids. Lookup is case-insensitive on names (the
-// "Duke Aldric" case), exact on local ids.
+// fact statements and local ids, event local ids. Lookup is
+// case-insensitive on names (the "Duke Aldric" case), exact on local ids.
 type batchResolution struct {
 	entities map[string]string
 	facts    map[string]string
+	events   map[string]string
 }
 
 func newBatchResolution() *batchResolution {
-	return &batchResolution{entities: map[string]string{}, facts: map[string]string{}}
+	return &batchResolution{entities: map[string]string{}, facts: map[string]string{}, events: map[string]string{}}
+}
+
+func (b *batchResolution) noteEvent(localID, id string) {
+	if localID != "" {
+		b.events[localID] = id
+	}
 }
 
 func (b *batchResolution) noteEntity(localID, name, id string) {
@@ -906,20 +965,47 @@ func (s *Store) applyBatchItem(ctx context.Context, rev *Review, p map[string]an
 		return s.applyGeneratedEvent(ctx, rev, p, decidedBy, res)
 	case ReviewProposedDiscovery:
 		return s.applyGeneratedDiscovery(ctx, rev, p, decidedBy, res)
+	case ReviewProposedPlanTransition:
+		return s.applyGeneratedPlanTransition(ctx, rev, p, decidedBy, res)
+	case ReviewProposedQuest:
+		return s.applyGeneratedQuest(ctx, rev, p, decidedBy, res)
+	case ReviewProposedRumor:
+		return s.applyGeneratedRumor(ctx, rev, p, decidedBy)
 	default:
 		return "", fmt.Errorf("%w: batch item kind %s cannot be accepted here", ErrInvalid, rev.Kind)
 	}
 }
 
-// applyGeneratedEntity creates the accepted entity node and teaches the
-// batch its name, so later items can reference it. A modified payload may
-// have renamed the entity; both the staged name and the applied one
-// resolve, so siblings that referenced either keep resolving.
+// applyGeneratedEntity writes an accepted entity item into the graph. Two
+// payloads share one kind: a whole new entity (the default), and the
+// flesh-out update (MAD-372) — entity_update names an existing entity
+// whose payload the item's payload block replaces and whose summary is
+// only set when it was empty, because a flesh-out proposes around what is
+// already there, never replacing it. The structured payload blocks (a
+// location's place and travel blocks, an npc's agent block) are written
+// verbatim; the generator computed the merge at staging time.
 func (s *Store) applyGeneratedEntity(ctx context.Context, rev *Review, p map[string]any, decidedBy string, res *batchResolution) (string, error) {
 	kind := str(p, "kind")
 	name := str(p, "name")
 	summary := str(p, "summary")
-	e, err := s.campaigns.CreateEntity(ctx, rev.CampaignID, kind, name, summary, nil)
+	payload, _ := p["payload"].(map[string]any)
+	if updateID := str(p, "entity_update"); updateID != "" {
+		existing, err := s.campaigns.GetEntity(ctx, campaign.ScopeDM, rev.CampaignID, updateID)
+		if err != nil {
+			return "", fmt.Errorf("accept entity update: %w", err)
+		}
+		var summaryPtr *string
+		if summary != "" && existing.Summary == "" {
+			summaryPtr = &summary
+		}
+		updated, err := s.campaigns.UpdateEntity(ctx, rev.CampaignID, updateID, nil, summaryPtr, nil, payload)
+		if err != nil {
+			return "", fmt.Errorf("accept entity update: %w", err)
+		}
+		res.noteEntity(str(p, "local_id"), updated.Name, updated.ID)
+		return updated.ID, nil
+	}
+	e, err := s.campaigns.CreateEntity(ctx, rev.CampaignID, kind, name, summary, payload)
 	if err != nil {
 		return "", fmt.Errorf("accept entity: %w", err)
 	}
@@ -1049,6 +1135,7 @@ func (s *Store) applyGeneratedEvent(ctx context.Context, rev *Review, p map[stri
 	if err != nil {
 		return "", fmt.Errorf("accept event: %w", err)
 	}
+	res.noteEvent(str(p, "local_id"), ev.ID)
 	for _, part := range parts {
 		if err := s.campaigns.AddParticipant(ctx, rev.CampaignID, ev.ID, part.entity, part.role); err != nil {
 			return "", fmt.Errorf("accept event participant: %w", err)
@@ -1057,8 +1144,186 @@ func (s *Store) applyGeneratedEvent(ctx context.Context, rev *Review, p map[stri
 	return ev.ID, nil
 }
 
+// applyGeneratedPlanTransition applies an accepted tick advance to its plan
+// through the faction store — the same persistence AdvancePlan writes, minus
+// re-deriving the arithmetic, which the tick already did deterministically.
+// The payload is the whole advance: from/to state, the carried progress, the
+// moves with their carries, and the event that caused it (a sibling local
+// id this batch already applied). The plan must still sit where the advance
+// was computed from; if the world moved it since, the accept fails loudly
+// and nothing is written.
+func (s *Store) applyGeneratedPlanTransition(ctx context.Context, rev *Review, p map[string]any, decidedBy string, res *batchResolution) (string, error) {
+	if err := s.requireFactions(); err != nil {
+		return "", err
+	}
+	planID := str(p, "plan_id")
+	if planID == "" {
+		return "", fmt.Errorf("%w: plan transition payload has no plan_id", ErrInvalid)
+	}
+	pr := faction.Progression{
+		FromState:    str(p, "from_state"),
+		ToState:      str(p, "to_state"),
+		FromProgress: numField(p["from_progress"]),
+		ToProgress:   numField(p["to_progress"]),
+		Days:         int(numField(p["days"])),
+		Gain:         numField(p["gain"]),
+		Halted:       str(p, "halted"),
+	}
+	if arr, ok := p["moves"].([]any); ok {
+		for _, item := range arr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			pr.Moves = append(pr.Moves, faction.StepMove{
+				To:    str(m, "to"),
+				Carry: numField(m["carry"]),
+			})
+		}
+	}
+	if arr, ok := p["terms"].([]any); ok {
+		for _, item := range arr {
+			t, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			pr.Terms = append(pr.Terms, faction.Term{
+				Label: str(t, "label"), Delta: numField(t["delta"]), Reason: str(t, "reason"),
+			})
+		}
+	}
+	eventID := ""
+	if ref := str(p, "event"); ref != "" && res != nil {
+		eventID = res.events[ref]
+	}
+	plan, err := s.factions.ApplyAdvance(ctx, rev.CampaignID, planID, pr, eventID)
+	if err != nil {
+		return "", fmt.Errorf("accept plan transition: %w", err)
+	}
+	return plan.ID, nil
+}
+
+// applyGeneratedQuest writes an accepted quest proposal into the campaign
+// graph. Two payloads share one kind: a whole new quest (the designer's
+// output — machine, cast links, state facts) and a machine edit of an
+// existing quest (the "branch this quest" operation, which carries quest_id).
+// Every entity and fact reference is resolved BEFORE anything is written, so
+// a bad reference fails the accept with nothing half-written.
+func (s *Store) applyGeneratedQuest(ctx context.Context, rev *Review, p map[string]any, decidedBy string, res *batchResolution) (string, error) {
+	if err := s.requireGraphStores(); err != nil {
+		return "", err
+	}
+	machineRaw, err := json.Marshal(p["machine"])
+	if err != nil {
+		return "", fmt.Errorf("%w: quest payload has no machine: %v", ErrInvalid, err)
+	}
+	machine, err := campaign.ParseStateMachine(string(machineRaw))
+	if err != nil {
+		return "", err
+	}
+
+	// The branch operation: an edit of a quest the campaign already holds.
+	// UpdateQuest is the same path a hand edit takes — it validates the
+	// machine and refuses to orphan any recorded transition.
+	if questID := str(p, "quest_id"); questID != "" {
+		if _, err := s.campaigns.UpdateQuest(ctx, rev.CampaignID, questID, campaign.QuestUpdate{Machine: &machine}); err != nil {
+			return "", fmt.Errorf("accept quest edit: %w", err)
+		}
+		return questID, nil
+	}
+
+	name := str(p, "name")
+	if name == "" {
+		return "", fmt.Errorf("%w: quest payload has no name", ErrInvalid)
+	}
+	type linkSlot struct{ entity, role string }
+	type factSlot struct{ state, fact, disposition string }
+	var links []linkSlot
+	seenLink := map[string]bool{}
+	if arr, ok := p["entities"].([]any); ok {
+		for _, item := range arr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			entity := str(m, "entity")
+			role := str(m, "role")
+			if entity == "" || role == "" {
+				continue
+			}
+			id, err := s.resolveBatchEntityRef(ctx, rev.CampaignID, entity, res)
+			if err != nil {
+				return "", err
+			}
+			k := id + "\x00" + role
+			if seenLink[k] {
+				continue
+			}
+			seenLink[k] = true
+			links = append(links, linkSlot{id, role})
+		}
+	}
+	var facts []factSlot
+	seenFact := map[string]bool{}
+	if arr, ok := p["state_facts"].([]any); ok {
+		for _, item := range arr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			state := str(m, "state")
+			factRef := str(m, "fact")
+			disposition := str(m, "disposition")
+			if state == "" || factRef == "" {
+				continue
+			}
+			if disposition == "" {
+				disposition = campaign.QuestFactReveals
+			}
+			id, err := s.resolveBatchFactRef(ctx, rev.CampaignID, factRef, res)
+			if err != nil {
+				return "", err
+			}
+			k := state + "\x00" + id
+			if seenFact[k] {
+				continue
+			}
+			seenFact[k] = true
+			facts = append(facts, factSlot{state, id, disposition})
+		}
+	}
+
+	q, err := s.campaigns.CreateQuest(ctx, rev.CampaignID, campaign.QuestInput{
+		Name: name, Summary: str(p, "summary"), Machine: machine,
+	})
+	if err != nil {
+		return "", fmt.Errorf("accept quest: %w", err)
+	}
+	for _, l := range links {
+		if _, err := s.campaigns.AddQuestEntity(ctx, rev.CampaignID, q.ID, l.entity, l.role); err != nil {
+			return "", fmt.Errorf("accept quest cast (%s): %w", l.role, err)
+		}
+	}
+	for _, f := range facts {
+		if _, err := s.campaigns.SetQuestStateFact(ctx, rev.CampaignID, q.ID, f.state, f.fact, f.disposition); err != nil {
+			return "", fmt.Errorf("accept quest state fact (%s): %w", f.state, err)
+		}
+	}
+	return q.ID, nil
+}
+
+// numField reads a JSON number field, 0 when absent or not a number.
+func numField(v any) float64 {
+	if n, ok := v.(float64); ok {
+		return n
+	}
+	return 0
+}
+
 // applyGeneratedDiscovery records the accepted discovery with its awareness
-// row. The fact may be one this same batch created.
+// row. The fact may be one this same batch created; the event the discovery
+// happened at may be a sibling this same batch applied (since_event carries
+// its local id).
 func (s *Store) applyGeneratedDiscovery(ctx context.Context, rev *Review, p map[string]any, decidedBy string, res *batchResolution) (string, error) {
 	factRef := str(p, "fact")
 	if factRef == "" {
@@ -1075,6 +1340,10 @@ func (s *Store) applyGeneratedDiscovery(ctx context.Context, rev *Review, p map[
 			return "", err
 		}
 	}
+	var sinceEvent string
+	if ref := str(p, "since_event"); ref != "" && res != nil {
+		sinceEvent = res.events[ref]
+	}
 	confidence := 1.0
 	if c, ok := p["confidence"].(float64); ok && c >= 0 && c <= 1 {
 		confidence = c
@@ -1087,9 +1356,56 @@ func (s *Store) applyGeneratedDiscovery(ctx context.Context, rev *Review, p map[
 		Confidence:   confidence,
 		AcceptedBy:   decidedBy,
 		Stance:       str(p, "stance"),
+		SinceEvent:   sinceEvent,
 	})
 	if err != nil {
 		return "", fmt.Errorf("accept discovery: %w", err)
 	}
 	return d.ID, nil
+}
+
+// applyGeneratedRumor writes the accepted rumour into the mill: the row
+// itself plus its holders, through the same knowledge store the DM-facing
+// API uses. The truth value rode in the review queue's DM-only surface and
+// lands in the DM-only column; a player scope never sees either. Holder
+// variants are part of the payload — the drifted wording is the charm, and
+// the generator computed the distribution as a join before any prompt.
+func (s *Store) applyGeneratedRumor(ctx context.Context, rev *Review, p map[string]any, decidedBy string) (string, error) {
+	statement := str(p, "statement")
+	if statement == "" {
+		return "", fmt.Errorf("%w: rumor payload has no statement", ErrInvalid)
+	}
+	truth := str(p, "truth")
+	if truth != campaign.RumorTruthTrue && truth != campaign.RumorTruthFalse && truth != campaign.RumorTruthDistorted {
+		return "", fmt.Errorf("%w: rumor payload truth %q", ErrInvalid, truth)
+	}
+	in := knowledge.RumorInput{
+		Statement: statement, Truth: truth,
+		AboutEntity: str(p, "about_entity"), FactID: str(p, "fact_id"),
+		Origin: str(p, "origin"), Spread: str(p, "spread"),
+		Status: campaign.RumorStatusCirculating, CreatedBy: decidedBy,
+	}
+	if in.Spread == "" {
+		in.Spread = campaign.RumorSpreadLocal
+	}
+	r, err := s.knowledge.CreateRumor(ctx, rev.CampaignID, in)
+	if err != nil {
+		return "", fmt.Errorf("accept rumor: %w", err)
+	}
+	if holders, ok := p["holders"].([]any); ok {
+		for _, h := range holders {
+			m, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			entity := str(m, "entity")
+			if entity == "" {
+				continue
+			}
+			if _, err := s.knowledge.SetRumorHolder(ctx, rev.CampaignID, r.ID, entity, str(m, "variant"), ""); err != nil {
+				return "", fmt.Errorf("accept rumor holder: %w", err)
+			}
+		}
+	}
+	return r.ID, nil
 }

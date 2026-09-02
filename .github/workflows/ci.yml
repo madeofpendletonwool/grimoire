@@ -35,7 +35,12 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test -race -count=1 ./...
+        # The default 10m per-package timeout is a hang detector, not a
+        # performance budget. The race-instrumented canon and server
+        # suites legitimately run 9-11 minutes on 2-core runners (every
+        # test boots SQLite and replays the full migration set), so the
+        # ceiling is raised rather than the tests trimmed.
+        run: go test -race -count=1 -timeout 30m ./...
 
       # The DOM-free front-end modules (ADR 14) — today the window manager's
       # layout tree. No install step: there are no dependencies, and the root

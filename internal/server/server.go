@@ -24,6 +24,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
+	"github.com/madeofpendletonwool/grimoire/internal/downtime"
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
@@ -34,6 +35,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
+	"github.com/madeofpendletonwool/grimoire/internal/sim"
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
@@ -86,6 +88,14 @@ type Server struct {
 	// deterministic planner helpers. Wired with WithStory; nil disables the
 	// story endpoints.
 	stories *story.Store
+	// The simulation tick (MAD-367): advance the world by N days. Wired
+	// with WithSim (needs the canon engine, the faction plans and the
+	// campaign store); nil disables the simulate endpoints.
+	sims *sim.Store
+	// Downtime resolution (MAD-368): the tick pointed at one character.
+	// Wired with WithDowntime (needs everything the tick needs); nil
+	// disables the downtime endpoints.
+	downtime *downtime.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -233,8 +243,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/campaigns/{id}/awareness", s.handleSetCampaignAwareness)
 	mux.HandleFunc("GET /api/campaigns/{id}/quests", s.handleCampaignQuests)
 	mux.HandleFunc("POST /api/campaigns/{id}/quests", s.handleCreateCampaignQuest)
+	// The journal route is a literal, so it wins over {qid} below it — the
+	// player-facing read lives at a stable path of its own.
+	mux.HandleFunc("GET /api/campaigns/{id}/quests/journal", s.handleQuestJournal)
 	mux.HandleFunc("GET /api/campaigns/{id}/quests/{qid}", s.handleCampaignQuest)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/quests/{qid}", s.handleUpdateCampaignQuest)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/quests/{qid}", s.handleDeleteCampaignQuest)
 	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/transition", s.handleQuestTransition)
+	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/entities", s.handleAddQuestEntity)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/quests/{qid}/entities/{eid}", s.handleRemoveQuestEntity)
 
 	// The faction surface (MAD-366): the scope-filtered dossier and the
 	// DM-only plan machinery.
@@ -244,6 +261,39 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/factions/{eid}/plans", s.handleCreateFactionPlan)
 	mux.HandleFunc("PATCH /api/campaigns/{id}/plans/{pid}", s.handleUpdateFactionPlan)
 	mux.HandleFunc("POST /api/campaigns/{id}/plans/{pid}/transition", s.handleFactionPlanTransition)
+	// The location surface (MAD-370): the places listing, the
+	// scope-resolved dossier, and the place block editor. The dossier is a
+	// read of the graph plus the payload's place block — no new rows.
+	mux.HandleFunc("GET /api/campaigns/{id}/locations", s.handleCampaignLocations)
+	mux.HandleFunc("GET /api/campaigns/{id}/locations/{eid}", s.handleCampaignLocation)
+	mux.HandleFunc("PUT /api/campaigns/{id}/locations/{eid}/place", s.handlePutCampaignPlace)
+	// The dungeon designer (MAD-373): a seeded room graph, its map, and
+	// the dressing pass. Creating, editing and mapping need no model —
+	// the layout is pure arithmetic; dressing is the model pass, placing
+	// stages a proposal batch behind the review gate. DM-only.
+	mux.HandleFunc("GET /api/campaigns/{id}/dungeons", s.handleCampaignDungeons)
+	mux.HandleFunc("POST /api/campaigns/{id}/dungeons", s.handleCreateCampaignDungeon)
+	mux.HandleFunc("GET /api/campaigns/{id}/dungeons/{did}", s.handleCampaignDungeon)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/dungeons/{did}", s.handleUpdateCampaignDungeon)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/dungeons/{did}", s.handleDeleteCampaignDungeon)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/dungeons/{did}/rooms/{rid}", s.handleUpdateDungeonRoom)
+	mux.HandleFunc("POST /api/campaigns/{id}/dungeons/{did}/edges", s.handleAddDungeonEdge)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/dungeons/{did}/edges/{eid}", s.handleDeleteDungeonEdge)
+	mux.HandleFunc("POST /api/campaigns/{id}/dungeons/{did}/dress", s.handleDungeonDress)
+	mux.HandleFunc("POST /api/campaigns/{id}/dungeons/{did}/place", s.handleDungeonPlace)
+	// The rumour mill (MAD-374): statements in circulation, who repeats
+	// them, and the truth value the DM holds and no player scope ever
+	// reads. Reads resolve the caller's scope; writes and hearing are
+	// DM-only; generation stages a batch behind the review gate.
+	mux.HandleFunc("GET /api/campaigns/{id}/rumors", s.handleCampaignRumors)
+	mux.HandleFunc("POST /api/campaigns/{id}/rumors", s.handleCreateCampaignRumor)
+	mux.HandleFunc("POST /api/campaigns/{id}/rumors/generate", s.handleRumorGenerate)
+	mux.HandleFunc("GET /api/campaigns/{id}/rumors/{rid}", s.handleCampaignRumor)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/rumors/{rid}", s.handleUpdateCampaignRumor)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/rumors/{rid}", s.handleDeleteCampaignRumor)
+	mux.HandleFunc("POST /api/campaigns/{id}/rumors/{rid}/heard", s.handleRumorHeard)
+	mux.HandleFunc("POST /api/campaigns/{id}/rumors/{rid}/holders", s.handleSetRumorHolder)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/rumors/{rid}/holders/{eid}", s.handleDeleteRumorHolder)
 	// The campaign clock (MAD-365): calendar, clock ledger, schedule, travel.
 	mux.HandleFunc("GET /api/campaigns/{id}/calendar", s.handleCampaignCalendar)
 	mux.HandleFunc("PUT /api/campaigns/{id}/calendar", s.handlePutCampaignCalendar)
@@ -254,6 +304,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/campaigns/{id}/schedule/{sid}", s.handleUpdateCampaignSchedule)
 	mux.HandleFunc("DELETE /api/campaigns/{id}/schedule/{sid}", s.handleDeleteCampaignSchedule)
 	mux.HandleFunc("POST /api/campaigns/{id}/travel", s.handleCampaignTravel)
+	// The simulation tick (MAD-367): preview a window of world-state
+	// outcomes, then stage them as one proposal batch behind the review
+	// gate. Accepting the batch — on the ordinary batch surface — moves
+	// the clock by exactly the window, exactly once. DM-only.
+	mux.HandleFunc("POST /api/campaigns/{id}/simulate", s.handleCampaignSimulate)
+	mux.HandleFunc("POST /api/campaigns/{id}/simulate/{tid}/stage", s.handleCampaignSimulateStage)
+	// Downtime resolution (MAD-368): the tick pointed at one character. A
+	// player may request it for their own character; the outcome is a
+	// proposal the DM stages and decides. The player response carries the
+	// request, never the computed result — what they find out is the DM's
+	// to reveal.
+	mux.HandleFunc("POST /api/campaigns/{id}/downtime", s.handleCampaignDowntime)
+	mux.HandleFunc("POST /api/campaigns/{id}/downtime/{did}/stage", s.handleCampaignDowntimeStage)
 	mux.HandleFunc("GET /api/campaigns/{id}/graph", s.handleCampaignGraph)
 	mux.HandleFunc("GET /api/campaigns/{id}/search", s.handleCampaignSearch)
 	// The campaign chat (MAD-311): the DM Grimoire and the Player Grimoire.
@@ -308,6 +371,19 @@ func (s *Server) Handler() http.Handler {
 	// proposal batch plus the spine's acts and session plans. DM-only, and
 	// gated on the model key like every generator surface.
 	mux.HandleFunc("POST /api/campaigns/{id}/design/skeleton", s.handleCampaignSkeleton)
+	// The quest designer (MAD-371): a hook becomes a branching quest —
+	// staged as a proposal batch, nothing written until it is decided.
+	// "Branch this quest" is the mid-campaign operation on the same
+	// surface: two exclusive outcomes off a state of a live quest. DM-only,
+	// gated on the model key.
+	mux.HandleFunc("POST /api/campaigns/{id}/design/quest", s.handleCampaignQuestDesign)
+	mux.HandleFunc("POST /api/campaigns/{id}/quests/{qid}/design/branch", s.handleQuestBranch)
+	// The location designer (MAD-372): a premise becomes a settlement —
+	// the place, its people, its sub-locations, its hooks and its secrets —
+	// staged as one proposal batch; flesh-out proposes around an existing
+	// location, never replacing it. DM-only, gated on the model key.
+	mux.HandleFunc("POST /api/campaigns/{id}/design/location", s.handleCampaignLocationDesign)
+	mux.HandleFunc("POST /api/campaigns/{id}/locations/{eid}/design/flesh-out", s.handleLocationFleshOut)
 	// The story planner and scene designer (MAD-362): plan the next session
 	// or a whole act forward from the campaign as it stands, or design one
 	// scene. Scenes land in the spine; the promised awareness changes stage

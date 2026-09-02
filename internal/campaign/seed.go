@@ -214,20 +214,35 @@ func Seed(ctx context.Context, db *sql.DB, owner, player string) (*Fixture, erro
 		return nil, fmt.Errorf("seed link: %w", err)
 	}
 
-	// The quest: a real state machine with a branch, partway through.
-	q, err := s.CreateQuest(ctx, cid, "The Missing Miners", StateMachine{
-		Initial: "unknown",
-		States:  []string{"unknown", "wreckage_found", "survivors_found", "trusted_survivor", "accused_survivor", "cult_revealed", "assaulted_cult", "abandoned"},
-		Edges: []StateEdge{
-			{From: "unknown", To: "wreckage_found"},
-			{From: "wreckage_found", To: "survivors_found"},
-			{From: "survivors_found", To: "trusted_survivor"},
-			{From: "survivors_found", To: "accused_survivor"},
-			{From: "trusted_survivor", To: "cult_revealed"},
-			{From: "accused_survivor", To: "cult_revealed"},
-			{From: "cult_revealed", To: "assaulted_cult"},
-			{From: "cult_revealed", To: "abandoned"},
-			{From: "unknown", To: "abandoned"},
+	// The quest: a real state machine with a branch, partway through. The
+	// branch is the point — trust or accuse the survivor — and the endings
+	// are marked terminal so the quest checks read it honestly.
+	q, err := s.CreateQuest(ctx, cid, QuestInput{
+		Name:    "The Missing Miners",
+		Summary: "Find the miners who vanished on the Greyfall road.",
+		Machine: StateMachine{
+			Initial: "unknown",
+			States: []State{
+				{Key: "unknown", Label: "Miners missing"},
+				{Key: "wreckage_found", Label: "Wreckage found"},
+				{Key: "survivors_found", Label: "Survivors found"},
+				{Key: "trusted_survivor", Label: "Survivor trusted"},
+				{Key: "accused_survivor", Label: "Survivor accused"},
+				{Key: "cult_revealed", Label: "The cult revealed"},
+				{Key: "assaulted_cult", Label: "The cult broken", Terminal: TerminalSuccess},
+				{Key: "abandoned", Label: "The search abandoned", Terminal: TerminalAbandoned},
+			},
+			Edges: []StateEdge{
+				{From: "unknown", To: "wreckage_found", Label: "find the caravan"},
+				{From: "wreckage_found", To: "survivors_found", Label: "track the survivors"},
+				{From: "survivors_found", To: "trusted_survivor", Label: "trust the survivor"},
+				{From: "survivors_found", To: "accused_survivor", Label: "accuse the survivor"},
+				{From: "trusted_survivor", To: "cult_revealed", Label: "follow the tip"},
+				{From: "accused_survivor", To: "cult_revealed", Label: "break the story"},
+				{From: "cult_revealed", To: "assaulted_cult", Label: "storm the chapterhouse"},
+				{From: "cult_revealed", To: "abandoned", Label: "walk away"},
+				{From: "unknown", To: "abandoned", Label: "give up the search"},
+			},
 		},
 	})
 	if err != nil {

@@ -22,6 +22,12 @@ let loadSeq = 0; // guards stale entity-list fetches
 let clockInfo = null; // the last GET /clock body (date, weather, strip, due)
 let scheduleEntries = []; // the schedule at the caller's scope
 let editingScheduleID = null; // the entry whose inline editor is open
+let quests = []; // the board: DM machines or player journal entries
+let selectedQuestID = null; // the quest whose detail chart is open (DM)
+let dungeons = []; // the workshop listing (DM)
+let rumors = []; // the mill: whatever the server sent at the caller's scope
+let selectedDungeonID = null; // the dungeon whose map is open (DM)
+let dungeonDetail = null; // the open dungeon's full view
 
 function wire() {
 	// The entity creator's kind select is static; fill it once.
@@ -59,6 +65,36 @@ function wire() {
 	$("camp-advance-form").addEventListener("submit", onAdvanceClock);
 	$("camp-schedule").addEventListener("click", onScheduleClick);
 	$("camp-schedule").addEventListener("submit", onScheduleInlineSubmit);
+	// The simulation tick (MAD-367): preview, then optionally stage the
+	// outcomes as a proposal — the clock only moves once the DM accepts
+	// that proposal on the ordinary review queue.
+	$("camp-simulate-form").addEventListener("submit", onSimulate);
+	$("camp-simulate-result").addEventListener("click", onSimulateResultClick);
+	// The quest board (MAD-369): the list, the machine chart and the DM's
+	// move control, all delegated so re-renders need no re-binds.
+	$("camp-quests").addEventListener("click", onQuestBoardClick);
+	$("camp-quest-detail").addEventListener("submit", onQuestMoveSubmit);
+	$("camp-quest-detail").addEventListener("click", onQuestDetailClick);
+	// The quest designer (MAD-371): the hook form on the quest board. The
+	// structure is computed server-side; the batch it stages opens in the
+	// review view, the same hand-off the skeleton generator makes.
+	$("camp-quest-design-form").addEventListener("submit", onQuestDesign);
+	$("camp-place-design-form").addEventListener("submit", onPlaceDesign);
+	// The dungeon workshop (MAD-373): the create form, the listing and
+	// the map with its drag-and-edit surface, all delegated so
+	// re-renders need no re-binds.
+	$("camp-dungeon-form").addEventListener("submit", onDungeonDesign);
+	$("camp-dungeons").addEventListener("click", onDungeonBoardClick);
+	$("camp-dungeon-detail").addEventListener("click", onDungeonDetailClick);
+	$("camp-dungeon-detail").addEventListener("submit", onDungeonDetailSubmit);
+	$("camp-dungeon-detail").addEventListener("pointerdown", onRoomPointerDown);
+	// The rumour mill (MAD-374): hand-authored rumours, generated batches
+	// (review-gated like every generator), and the board's delegated
+	// actions — heard, hold, debunk, confirm, forget.
+	$("camp-rumor-form").addEventListener("submit", onRumorSubmit);
+	$("camp-rumor-generate-form").addEventListener("submit", onRumorGenerate);
+	$("camp-rumors").addEventListener("click", onRumorBoardClick);
+	$("camp-rumors").addEventListener("change", onRumorBoardChange);
 	for (const radio of document.querySelectorAll('input[name="camp-object"]')) {
 		radio.addEventListener("change", () => syncObjectKind());
 	}
@@ -78,6 +114,8 @@ function wire() {
 	// delegation.
 	$("camp-sheet-body").addEventListener("click", onSheetClick);
 	$("camp-sheet-body").addEventListener("submit", onFactionPlanSubmit);
+	$("camp-sheet-body").addEventListener("submit", onPlaceSubmit);
+	$("camp-sheet-body").addEventListener("submit", onFleshOutSubmit);
 	$("camp-sheet-body").addEventListener("change", onFactionPlanStatusChange);
 	$("camp-invite-form").addEventListener("submit", onMintInvite);
 	$("camp-members-body").addEventListener("change", onMemberRoleChange);
@@ -96,6 +134,11 @@ async function openCampaign() {
 function closeCampaign() {
 	current = null;
 	selected = null;
+	selectedQuestID = null;
+	quests = [];
+	selectedDungeonID = null;
+	dungeonDetail = null;
+	dungeons = [];
 }
 
 const isDM = () => current && (current.my_role === "dm" || current.my_role === "keeper");
@@ -145,13 +188,22 @@ async function selectCampaign(id) {
 	$("camp-fact-form").hidden = !isDM();
 	$("camp-members-panel").hidden = !isDM();
 	$("camp-cmd-form").hidden = !isDM();
+	$("camp-quest-design-form").hidden = !isDM();
+	$("camp-place-design-form").hidden = !isDM();
+	$("camp-dungeon-form").hidden = !isDM();
+	$("camp-rumor-form").hidden = !isDM();
+	$("camp-rumor-generate-form").hidden = !isDM();
 	if (!isDM()) $("camp-cmd-result").hidden = true;
 	kindFilter = "";
 	renderKindChips();
 	editingScheduleID = null;
+	selectedQuestID = null;
 	await loadEntities();
 	loadClock();
 	loadSchedule();
+	loadQuests();
+	loadRumors();
+	if (isDM()) loadDungeons(); else clearDungeons();
 	if (isDM()) {
 		loadMembers();
 		loadInvites();
@@ -349,6 +401,7 @@ async function loadEntities() {
 	}
 	if (seq !== loadSeq) return;
 	entities = data.entities || [];
+	fillPlaceNear();
 	const list = clear($("camp-entities"));
 	if (entities.length === 0) {
 		list.append(el("p", { class: "camp-status", text: "Nothing here yet." }));
@@ -469,6 +522,27 @@ function renderSheet() {
 		mount.append(el("p", { class: "camp-status", text: "Opening the dossier…" }));
 		body.append(mount);
 		loadFactionDossier(selected.id);
+	}
+
+	// The location page (MAD-370): the place block as an editable form and
+	// everything else as read-only chips into the entity browser — a view
+	// of the graph, not a second place to type things.
+	if (selected.kind === "location") {
+		const mount = el("div", { class: "camp-location", attrs: { id: "camp-location-body" } });
+		mount.append(el("p", { class: "camp-status", text: "Opening the dossier…" }));
+		body.append(mount);
+		loadLocationDossier(selected.id);
+	}
+
+	// What are people saying about them? (MAD-374): the NPC sheet's
+	// rumour section — the statements in circulation about this one,
+	// loaded at the caller's scope and rendered as quotes.
+	if (selected.kind === "npc" || selected.kind === "pc" || selected.kind === "faction") {
+		const mount = el("div", { class: "camp-sheet-section", attrs: { "data-rumors-for": selected.id } });
+		mount.append(el("h4", { class: "camp-sheet-heading", text: "What people are saying" }));
+		mount.append(el("p", { class: "camp-status", text: "Listening…" }));
+		body.append(mount);
+		loadSheetRumors(selected.id);
 	}
 
 	if (isDM()) {
@@ -599,6 +673,7 @@ function renderClock() {
 		strip.append(cell);
 	}
 	$("camp-advance-form").hidden = !isDM();
+	$("camp-simulate-form").hidden = !isDM();
 }
 
 // recurrences renders a recurrence value ("every_n_days:7") as a chip label.
@@ -758,7 +833,83 @@ async function onAdvanceClock(e) {
 	}
 }
 
+// The simulation tick (MAD-367): a deterministic preview of one window —
+// nothing written to the graph but the tick's own row — with a "stage as
+// proposal" hand-off into the review queue. Accepting that proposal is what
+// actually moves the clock.
+let simulateTickID = null;
+
+async function onSimulate(e) {
+	e.preventDefault();
+	const days = parseInt($("camp-simulate-days").value, 10) || 14;
+	const rawSeed = $("camp-simulate-seed").value.trim();
+	const seed = rawSeed ? parseInt(rawSeed, 10) : undefined;
+	try {
+		const data = await api.campaignSimulate(current.id, days, seed);
+		simulateTickID = data.tick?.id || null;
+		renderSimulateResult(data);
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+function renderSimulateResult(data) {
+	const box = clear($("camp-simulate-result"));
+	box.hidden = false;
+	const r = data.result || {};
+	box.append(el("p", { class: "camp-status", text: `Day ${r.from_day} → ${r.to_day} (seed ${r.seed})${data.offline ? " — offline, deterministic summary only" : ""}` }));
+	const flavour = data.flavour || {};
+	const line = (id, fallback) => flavour[id] || fallback;
+	for (const p of r.plans || []) {
+		if (!p.moved) continue;
+		const id = `plan-${p.plan_id}`;
+		const fallback = `moves from ${p.progression.from_state} to ${p.progression.to_state} (gain ${p.progression.gain}).`;
+		box.append(el("p", { class: "camp-sim-line", text: `⛭ ${p.faction_name}: ${p.name} — ${line(id, fallback)}` }));
+	}
+	for (const d of r.due || []) {
+		const id = `due-${d.entry_id}-${d.day}`;
+		box.append(el("p", { class: "camp-sim-line", text: `☾ day ${d.day}: ${line(id, `${d.name} happens as scheduled.`)}` }));
+	}
+	for (const m of r.missed || []) {
+		box.append(el("p", { class: "camp-sim-line camp-sim-warn", text: `⚠ ${m.name} (day ${m.day}) is still pending, behind the clock.` }));
+	}
+	for (const a of r.actions || []) {
+		const id = `npcact-${a.npc}`;
+		box.append(el("p", { class: "camp-sim-line", text: `☺ day ${a.day}: ${line(id, a.summary)}` }));
+	}
+	for (const c of r.consequences || []) {
+		const id = `react-${c.reactor}-${c.plan_id}`;
+		box.append(el("p", { class: "camp-sim-line", text: `⚔ day ${c.day}: ${line(id, c.summary)}` }));
+	}
+	if (!(r.plans?.some((p) => p.moved) || r.due?.length || r.actions?.length || r.consequences?.length)) {
+		box.append(el("p", { class: "camp-status", text: "Nothing moves in this window." }));
+	} else {
+		box.append(el("button", { class: "enc-btn primary", text: "Stage as proposal", attrs: { type: "button", "data-act": "stage-tick" } }));
+	}
+}
+
+async function onSimulateResultClick(e) {
+	const btn = e.target.closest("[data-act='stage-tick']");
+	if (!btn || !simulateTickID) return;
+	try {
+		await api.campaignSimulateStage(current.id, simulateTickID);
+		renderMeta("Staged — decide it on the review queue.");
+		$("camp-simulate-result").hidden = true;
+		simulateTickID = null;
+		reviewFor(current.id);
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
 async function onSheetClick(e) {
+	// The location dossier's chips link into the entity browser: one click
+	// opens the entity the chip names, exactly like the browser's own rows.
+	const open = e.target.closest("[data-open-eid]");
+	if (open) {
+		selectEntity(open.dataset.openEid);
+		return;
+	}
 	const activate = e.target.closest("[data-plan-activate]");
 	if (activate) {
 		try {
@@ -993,6 +1144,754 @@ function layout(nodes) {
 		});
 	}
 	return pos;
+}
+
+/* ---------- the dungeon workshop (MAD-373) ---------- */
+
+// The dungeon surface: knobs in, a seeded room graph out, drawn as the
+// map its grid says it is. The whole exchange needs no model — the
+// layout is arithmetic on the server — and every edit (dragging a room,
+// adding or cutting an edge) writes rows back; an edit never re-rolls
+// the dungeon. Dressing asks the model to name the rooms it was handed;
+// placing stages the whole dungeon as one proposal batch.
+
+const DUNGEON_CELL = 64; // one grid cell, whole pixels
+
+function clearDungeons() {
+	dungeons = [];
+	selectedDungeonID = null;
+	dungeonDetail = null;
+	clear($("camp-dungeons"));
+	clear($("camp-dungeon-detail"));
+}
+
+async function loadDungeons() {
+	const board = $("camp-dungeons");
+	if (!current) return;
+	let data;
+	try {
+		data = await api.dungeons(current.id);
+	} catch (err) {
+		dungeons = [];
+		clear(board).append(el("p", { class: "camp-status warn", text: err.message }));
+		clear($("camp-dungeon-detail"));
+		return;
+	}
+	dungeons = data.dungeons || [];
+	renderDungeonBoard();
+	if (selectedDungeonID && dungeons.some((d) => d.id === selectedDungeonID)) {
+		await renderDungeonDetail(selectedDungeonID);
+	} else {
+		selectedDungeonID = null;
+		dungeonDetail = null;
+		clear($("camp-dungeon-detail"));
+	}
+}
+
+function renderDungeonBoard() {
+	const board = clear($("camp-dungeons"));
+	if (dungeons.length === 0) {
+		board.append(el("p", { class: "camp-status", text: "No dungeons designed yet." }));
+		return;
+	}
+	for (const d of dungeons) {
+		const row = el("div", { class: "camp-quest" + (d.id === selectedDungeonID ? " is-active" : ""), attrs: { "data-did": d.id } });
+		const head = el("div", { class: "camp-quest-head" });
+		head.append(
+			el("span", { class: "camp-quest-name", text: d.name }),
+			el("span", { class: "enc-chip" + (d.status === "placed" ? " is-on" : ""), text: d.status }),
+			el("span", { class: "enc-chip", text: `${d.size} · lv ${d.level}` }),
+		);
+		row.append(head);
+		board.append(row);
+	}
+}
+
+function onDungeonBoardClick(e) {
+	const row = e.target.closest("[data-did]");
+	if (!row) return;
+	selectedDungeonID = row.dataset.did === selectedDungeonID ? null : row.dataset.did;
+	renderDungeonBoard();
+	if (selectedDungeonID) renderDungeonDetail(selectedDungeonID);
+	else {
+		dungeonDetail = null;
+		clear($("camp-dungeon-detail"));
+	}
+}
+
+// onDungeonDesign creates a dungeon from the knobs: the same params and
+// seed always produce the same rooms — re-rolling means a new seed, a
+// recorded decision, not a refresh button.
+async function onDungeonDesign(e) {
+	e.preventDefault();
+	const body = {
+		name: $("camp-dungeon-name").value.trim(),
+		theme: $("camp-dungeon-theme").value.trim(),
+		size: $("camp-dungeon-size").value,
+		level: parseInt($("camp-dungeon-level").value, 10) || 0,
+		expected_sessions: parseInt($("camp-dungeon-sessions").value, 10) || 0,
+		combat_density: parseInt($("camp-dungeon-combat").value, 10) || 0,
+		puzzle_density: parseInt($("camp-dungeon-puzzle").value, 10) || 0,
+		explore_density: parseInt($("camp-dungeon-explore").value, 10) || 0,
+		branchiness: parseInt($("camp-dungeon-branch").value, 10) || 0,
+	};
+	const seed = parseInt($("camp-dungeon-seed").value, 10);
+	if (Number.isFinite(seed) && seed !== 0) body.seed = seed;
+	renderMeta("Designing the dungeon…");
+	let data;
+	try {
+		data = await api.dungeonCreate(current.id, body);
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	$("camp-dungeon-name").value = "";
+	renderMeta(`Designed ${data.dungeon.rooms.length} rooms — same seed, same dungeon.`);
+	selectedDungeonID = data.dungeon.id;
+	await loadDungeons();
+}
+
+// renderDungeonDetail opens one dungeon: the map drawn from the stored
+// grid (the rendering of the graph, not a second artefact), the room
+// list, and the edit controls — dress, place, add and cut edges.
+async function renderDungeonDetail(did) {
+	const box = $("camp-dungeon-detail");
+	clear(box).append(el("p", { class: "camp-status", text: "Opening the map…" }));
+	let data;
+	try {
+		data = await api.dungeonGet(current.id, did);
+	} catch (err) {
+		clear(box).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	clear(box);
+	dungeonDetail = data.dungeon;
+	box.append(renderDungeonMap(dungeonDetail));
+	box.append(dungeonEditForms(dungeonDetail));
+}
+
+// renderDungeonMap draws the deterministic map: one cell per room at its
+// stored grid position, ink lines between connected rooms, the pixel
+// font for labels. Hand-rolled SVG the way the neighbourhood map is —
+// no library, no physics, whole-pixel geometry. Rooms are draggable for
+// the DM: a drop writes the new cell back and nothing else changes.
+function renderDungeonMap(d) {
+	const rooms = d.rooms || [];
+	const edges = d.edges || [];
+	const maxX = Math.max(0, ...rooms.map((r) => r.x));
+	const maxY = Math.max(0, ...rooms.map((r) => r.y));
+	const W = (maxX + 1) * DUNGEON_CELL + DUNGEON_CELL;
+	const H = (maxY + 1) * DUNGEON_CELL + DUNGEON_CELL;
+	const cx = (x) => DUNGEON_CELL / 2 + x * DUNGEON_CELL;
+	const cy = (y) => DUNGEON_CELL / 2 + y * DUNGEON_CELL;
+	const svgNS = "http://www.w3.org/2000/svg";
+	const svg = document.createElementNS(svgNS, "svg");
+	svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+	svg.setAttribute("class", "camp-graph-svg camp-dungeon-svg");
+	svg.setAttribute("role", "img");
+	svg.setAttribute("aria-label", `Map of ${d.name}`);
+
+	const byKey = new Map(rooms.map((r) => [r.key, r]));
+	for (const e of edges) {
+		const a = byKey.get(e.from_room), b = byKey.get(e.to_room);
+		if (!a || !b) continue;
+		const line = document.createElementNS(svgNS, "line");
+		line.setAttribute("x1", cx(a.x)); line.setAttribute("y1", cy(a.y));
+		line.setAttribute("x2", cx(b.x)); line.setAttribute("y2", cy(b.y));
+		line.setAttribute("class", "camp-edge" + (e.kind === "secret_door" ? " is-ghost" : ""));
+		if (e.id) line.setAttribute("data-edge", e.id);
+		const title = document.createElementNS(svgNS, "title");
+		title.textContent = e.kind.replace("_", " ") + (e.one_way ? " (one way)" : "");
+		line.append(title);
+		svg.append(line);
+	}
+	for (const r of rooms) {
+		const g = document.createElementNS(svgNS, "g");
+		g.setAttribute("class", "camp-node" + (r.purpose === "boss" || r.purpose === "entrance" ? " is-center" : ""));
+		g.setAttribute("transform", `translate(${cx(r.x)},${cy(r.y)})`);
+		g.setAttribute("tabindex", "0");
+		g.setAttribute("aria-label", `${r.name || r.purpose} (${r.purpose}, depth ${r.depth})`);
+		g.dataset.rid = r.id;
+		g.dataset.key = r.key;
+		g.dataset.x = String(r.x);
+		g.dataset.y = String(r.y);
+		const half = 14;
+		const rect = document.createElementNS(svgNS, "rect");
+		rect.setAttribute("x", -half); rect.setAttribute("y", -half);
+		rect.setAttribute("width", half * 2); rect.setAttribute("height", half * 2);
+		const label = document.createElementNS(svgNS, "text");
+		label.setAttribute("y", half + 12);
+		label.setAttribute("class", "camp-node-label");
+		const name = r.name || r.purpose;
+		label.textContent = name.length > 16 ? name.slice(0, 15) + "…" : name;
+		const title = document.createElementNS(svgNS, "title");
+		title.textContent = `${r.key} — ${r.purpose} (depth ${r.depth})${r.detail ? `: ${r.detail}` : ""}`;
+		g.append(rect, label, title);
+		svg.append(g);
+	}
+	return svg;
+}
+
+// dungeonEditForms builds the DM controls under the map: dress, place,
+// the edge add form, and the room list with drag hints. Delegated
+// handlers run the interactions; the forms carry the dungeon id.
+function dungeonEditForms(d) {
+	const wrap = el("div", { class: "camp-dungeon-controls" });
+
+	const actions = el("div", { class: "camp-fact-chips" });
+	actions.append(el("button", {
+		class: "enc-chip", text: "dress the rooms",
+		attrs: { type: "button", "data-dress": d.id },
+	}));
+	actions.append(el("button", {
+		class: "enc-chip", text: "place in the world",
+		attrs: { type: "button", "data-place": d.id },
+	}));
+	actions.append(el("button", {
+		class: "enc-chip", text: "delete the design",
+		attrs: { type: "button", "data-del-dungeon": d.id },
+	}));
+	wrap.append(actions);
+
+	if (d.secret) {
+		wrap.append(el("p", { class: "camp-status", text: `Secret: ${d.secret}` }));
+	}
+	if (d.key_item) {
+		wrap.append(el("p", { class: "camp-status", text: `The locked door needs ${d.key_item}.` }));
+	}
+
+	// The edge form: two rooms and a kind. Dragging writes cells; this
+	// writes connections — the two edits a map is made of.
+	const form = el("form", { class: "camp-sched-edit", attrs: { "data-edge-form": d.id } });
+	const from = el("select", { class: "enc-field", attrs: { "aria-label": "From room", required: "" } });
+	const to = el("select", { class: "enc-field", attrs: { "aria-label": "To room", required: "" } });
+	const kind = el("select", { class: "enc-field", attrs: { "aria-label": "Connection kind" } });
+	for (const k of ["door", "locked_door", "secret_door", "stair", "shaft", "passage", "collapse"]) {
+		kind.append(el("option", { text: k.replace("_", " "), attrs: { value: k } }));
+	}
+	for (const r of d.rooms) {
+		const label = `${r.name || r.purpose} (${r.key})`;
+		from.append(el("option", { text: label, attrs: { value: r.key } }));
+		to.append(el("option", { text: label, attrs: { value: r.key } }));
+	}
+	form.append(from, to, kind, el("button", { class: "enc-btn", text: "Connect", attrs: { type: "submit" } }));
+	wrap.append(el("h4", { class: "camp-sheet-heading", text: "Connect two rooms" }), form);
+
+	// The room list: purpose, depth and the encounter link, with a
+	// click-to-cut marker for edges.
+	const list = el("div", { class: "camp-dungeon-rooms" });
+	for (const r of d.rooms) {
+		const row = el("div", { class: "camp-fact", attrs: { "data-room": r.id } });
+		const chips = el("span", { class: "camp-fact-chips" });
+		chips.append(el("span", { class: "enc-chip", text: r.purpose }));
+		chips.append(el("span", { class: "enc-chip", text: `depth ${r.depth}` }));
+		if (r.encounter_id) chips.append(el("span", { class: "enc-chip is-on", text: "encounter linked" }));
+		row.append(
+			el("p", { class: "camp-fact-statement prose", text: `${r.name || r.purpose}${r.detail ? ` — ${r.detail}` : ""}` }),
+			chips,
+		);
+		list.append(row);
+	}
+	wrap.append(el("h4", { class: "camp-sheet-heading", text: "The rooms" }), list);
+	return wrap;
+}
+
+// onDungeonDetailClick runs the map's chip actions and edge cutting.
+async function onDungeonDetailClick(e) {
+	if (!current || !dungeonDetail) return;
+	const did = dungeonDetail.id;
+
+	if (e.target.closest("[data-dress]")) {
+		renderMeta("Dressing the rooms…");
+		try {
+			const data = await api.dungeonDress(current.id, did);
+			dungeonDetail = data.dungeon;
+			renderMeta("The rooms are dressed.");
+			await renderDungeonDetail(did);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	if (e.target.closest("[data-place]")) {
+		renderMeta("Staging the placement…");
+		try {
+			await api.dungeonPlace(current.id, did);
+			renderMeta("The placement is staged — accept it on the review queue.");
+			await reviewFor(current.id);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	if (e.target.closest("[data-del-dungeon]")) {
+		try {
+			await api.dungeonDelete(current.id, did);
+			selectedDungeonID = null;
+			renderMeta("The design is deleted.");
+			await loadDungeons();
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	// Cutting an edge: click a map edge (they carry data-edge).
+	const edgeEl = e.target.closest("[data-edge]");
+	if (edgeEl && edgeEl.dataset.edge) {
+		try {
+			const data = await api.dungeonEdgeDelete(current.id, did, edgeEl.dataset.edge);
+			dungeonDetail = data.dungeon;
+			await renderDungeonDetail(did);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+	}
+}
+
+// onDungeonDetailSubmit runs the edge form: two rooms and a kind.
+async function onDungeonDetailSubmit(e) {
+	if (!current || !dungeonDetail) return;
+	const form = e.target.closest("[data-edge-form]");
+	if (!form) return;
+	e.preventDefault();
+	const [from, to, kind] = form.querySelectorAll("select");
+	if (from.value === to.value) {
+		renderMeta("A room cannot connect to itself.", true);
+		return;
+	}
+	try {
+		const data = await api.dungeonEdgeAdd(current.id, dungeonDetail.id, {
+			from: from.value, to: to.value, kind: kind.value,
+		});
+		dungeonDetail = data.dungeon;
+		renderMeta("Connected.");
+		await renderDungeonDetail(dungeonDetail.id);
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+/* ---------- dragging a room writes the cell back ---------- */
+
+// onRoomPointerDown begins a drag on a map room (DM, mouse or touch):
+// the room follows the pointer in whole cells and the drop writes the
+// new cell back. An edit never re-rolls the dungeon — the PATCH carries
+// x and y only.
+function onRoomPointerDown(e) {
+	if (!isDM() || !dungeonDetail) return;
+	const g = e.target.closest("svg .camp-node");
+	if (!g || !g.dataset.rid) return;
+	e.preventDefault();
+	const svg = g.closest("svg");
+	const cell = DUNGEON_CELL;
+	const toCell = (evt) => {
+		const box = svg.getBoundingClientRect();
+		const scale = (box.width / svg.viewBox.baseVal.width) || 1;
+		const x = Math.floor(((evt.clientX - box.left) / scale) / cell);
+		const y = Math.floor(((evt.clientY - box.top) / scale) / cell);
+		return { x: Math.max(0, x), y: Math.max(0, y) };
+	};
+	const home = { x: Number(g.dataset.x), y: Number(g.dataset.y) };
+	const place = (at) => g.setAttribute("transform", `translate(${cell / 2 + at.x * cell},${cell / 2 + at.y * cell})`);
+	g.setPointerCapture?.(e.pointerId);
+	const move = (ev) => place(toCell(ev));
+	const up = async (ev) => {
+		svg.removeEventListener("pointermove", move);
+		svg.removeEventListener("pointerup", up);
+		const at = toCell(ev);
+		if (at.x === home.x && at.y === home.y) return; // a tap, not a drag
+		try {
+			const data = await api.dungeonRoomPatch(current.id, dungeonDetail.id, g.dataset.rid, { x: at.x, y: at.y });
+			dungeonDetail = data.dungeon;
+			renderDungeonDetail(dungeonDetail.id);
+		} catch (err) {
+			renderMeta(err.message, true);
+			renderDungeonDetail(dungeonDetail.id); // put the room back
+		}
+	};
+	svg.addEventListener("pointermove", move);
+	svg.addEventListener("pointerup", up);
+}
+
+/* ---------- the place designer (MAD-372) ---------- */
+
+// fillPlaceNear offers the campaign's existing places as the near anchor:
+// a village generated near Blackwater gets the road and the edge to the
+// Blackwater that already exists, never a second one.
+function fillPlaceNear() {
+	const select = $("camp-place-near");
+	if (!select) return;
+	const prev = select.value;
+	clear(select).append(el("option", { text: "Nowhere in particular", attrs: { value: "" } }));
+	for (const ent of entities.filter((e) => e.kind === "location")) {
+		select.append(el("option", { text: ent.name, attrs: { value: ent.id } }));
+	}
+	if ([...select.options].some((o) => o.value === prev)) select.value = prev;
+}
+
+// onPlaceDesign runs one place-design exchange: the premise, the
+// settlement kind, the scale band, an optional near anchor. The place, its
+// people, its sub-locations, its hooks and its secrets come back as one
+// proposal batch; nothing lands in the graph until the DM accepts it
+// there.
+async function onPlaceDesign(e) {
+	e.preventDefault();
+	const premise = $("camp-place-premise").value.trim();
+	if (!premise) return;
+	renderMeta("Designing the place…");
+	try {
+		await api.locationDesign(current.id, {
+			premise,
+			kind: $("camp-place-kind").value,
+			scale: $("camp-place-scale").value,
+			near: $("camp-place-near").value,
+		});
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	$("camp-place-premise").value = "";
+	renderMeta("The place is staged — accept it on the review queue.");
+	await loadEntities();
+	await reviewFor(current.id);
+}
+
+// onFleshOutSubmit runs the flesh-out exchange from the location sheet: a
+// place that already exists gets its missing block, people and secrets
+// proposed around what is already there. Parts re-roll one piece of the
+// shape — the people, say, keeping the geography.
+async function onFleshOutSubmit(e) {
+	const form = e.target.closest("[data-fleshout]");
+	if (!form) return;
+	e.preventDefault();
+	if (!current || !selected) return;
+	const body = {
+		premise: form.querySelector("input").value.trim(),
+	};
+	const parts = form.querySelector("select").value;
+	if (parts) body.parts = [parts];
+	renderMeta("Fleshing the place out…");
+	try {
+		await api.locationFleshOut(current.id, selected.id, body);
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	renderMeta("The proposal is staged — accept it on the review queue.");
+	await reviewFor(current.id);
+}
+
+/* ---------- the quest board (MAD-369) ---------- */
+
+// onQuestDesign runs one quest-design exchange (MAD-371): the hook, an
+// optional shape, fork count and depth. The quest, its cast and its
+// revealed secrets come back as a proposal batch; nothing lands in the
+// graph until the DM accepts it there.
+async function onQuestDesign(e) {
+	e.preventDefault();
+	const hook = $("camp-quest-hook").value.trim();
+	if (!hook) return;
+	const kind = $("camp-quest-kind").value;
+	const branchPoints = parseInt($("camp-quest-branches").value, 10) || 0;
+	const depth = parseInt($("camp-quest-depth").value, 10) || 0;
+	renderMeta("Designing the quest…");
+	try {
+		await api.questDesign(current.id, { hook, kind, branch_points: branchPoints, depth });
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	$("camp-quest-hook").value = "";
+	renderMeta("The quest is staged — accept it on the review queue.");
+	await reviewFor(current.id);
+}
+
+// The DM reads every machine; everyone else reads the journal — the public
+// quests, their current state and the states already visited. The server
+// enforces the leak rules; this module renders whatever comes back.
+async function loadQuests() {
+	const board = $("camp-quests");
+	if (!current) return;
+	let data;
+	try {
+		data = isDM() ? await api.campaignQuests(current.id) : await api.campaignQuestJournal(current.id);
+	} catch (err) {
+		quests = [];
+		clear(board).append(el("p", { class: "camp-status warn", text: err.message }));
+		clear($("camp-quest-detail"));
+		return;
+	}
+	quests = data.quests || [];
+	if (!isDM()) selectedQuestID = null;
+	renderQuestBoard();
+	if (isDM() && selectedQuestID) await renderQuestDetail(selectedQuestID);
+	else clear($("camp-quest-detail"));
+}
+
+function questStateLabel(q, key) {
+	const st = (q.state_machine?.states || []).find((s) => s.key === key);
+	return st?.label || key;
+}
+
+function renderQuestBoard() {
+	const board = clear($("camp-quests"));
+	if (quests.length === 0) {
+		board.append(el("p", { class: "camp-status", text: isDM() ? "No quests recorded yet." : "Nothing offered yet." }));
+		return;
+	}
+	for (const q of quests) {
+		const row = el("div", { class: "camp-quest" + (q.id === selectedQuestID ? " is-active" : ""), attrs: { "data-qid": q.id } });
+		const head = el("div", { class: "camp-quest-head" });
+		head.append(el("span", { class: "camp-quest-name", text: q.name }));
+		head.append(el("span", { class: "enc-chip" + (q.status === "active" ? " is-on" : ""), text: q.status || "active" }));
+		row.append(head);
+		if (isDM()) {
+			row.append(el("p", {
+				class: "camp-quest-now",
+				text: "at " + (questStateLabel(q, q.current_state) || q.current_state),
+			}));
+			if (q.visibility === "secret") row.append(el("span", { class: "enc-chip", text: "secret" }));
+		} else {
+			// The journal: the trail of visited states, current one last.
+			const trail = el("div", { class: "camp-quest-trail" });
+			for (const st of q.visited || []) {
+				trail.append(el("span", {
+					class: "camp-quest-step" + (st.key === q.current_state?.key ? " is-now" : ""),
+					text: st.label || st.key,
+				}));
+			}
+			row.append(trail);
+		}
+		if (q.summary) row.append(el("p", { class: "camp-quest-summary prose", text: q.summary }));
+		board.append(row);
+	}
+}
+
+function onQuestBoardClick(e) {
+	if (!isDM()) return; // the player list is read-only
+	const row = e.target.closest("[data-qid]");
+	if (!row) return;
+	selectedQuestID = row.dataset.qid === selectedQuestID ? null : row.dataset.qid;
+	renderQuestBoard();
+	if (selectedQuestID) renderQuestDetail(selectedQuestID);
+	else clear($("camp-quest-detail"));
+}
+
+// renderQuestDetail opens one machine as a deterministic chart plus the
+// links into the graph and the DM's move control. The chart is drawn the
+// way the neighbourhood map is: hand-rolled SVG, no library, no physics,
+// whole-pixel geometry.
+async function renderQuestDetail(questID) {
+	const box = $("camp-quest-detail");
+	clear(box).append(el("p", { class: "camp-status", text: "Opening the machine…" }));
+	let data;
+	try {
+		data = await api.campaignQuestDetail(current.id, questID);
+	} catch (err) {
+		clear(box).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	clear(box);
+	const q = data.quest;
+	box.append(renderQuestMachine(q, data.transitions || []));
+
+	// Who and what the quest is about.
+	const links = data.entities || [];
+	if (links.length > 0) {
+		const chips = el("div", { class: "camp-quest-links" });
+		for (const l of links) {
+			const name = entities.find((x) => x.id === l.entity_id)?.name || l.entity_id.slice(0, 8);
+			chips.append(el("span", { class: "enc-chip", text: `${l.role}: ${name}`, attrs: { "data-unlink": l.entity_id, "data-role": l.role, title: "unlink" } }));
+		}
+		box.append(chips);
+	}
+
+	// The move control: only an active quest moves, and only along real edges.
+	if (q.status === "active") {
+		const moves = (q.state_machine?.edges || []).filter((ed) => ed.from === q.current_state);
+		if (moves.length > 0) {
+			const form = el("form", { class: "camp-quest-move", attrs: { "data-move": q.id } });
+			const pick = el("select", { class: "enc-field", attrs: { "aria-label": "Move the quest" } });
+			for (const m of moves) {
+				pick.append(el("option", {
+					text: (m.label ? `${m.label} — ` : "") + (questStateLabel(q, m.to) || m.to),
+					attrs: { value: m.to },
+				}));
+			}
+			form.append(pick, el("button", { class: "enc-btn", text: "Move", attrs: { type: "submit" } }));
+			box.append(form);
+		}
+		// Branch this quest (MAD-371): two exclusive outcomes off a state
+		// the DM picks, proposed as a batch — the mid-campaign fork.
+		const branchable = (q.state_machine?.states || []).filter((s) => !s.terminal);
+		if (branchable.length > 0) {
+			const form = el("form", { class: "camp-quest-move", attrs: { "data-branch": q.id } });
+			const pick = el("select", { class: "enc-field", attrs: { "aria-label": "Branch the quest at" } });
+			for (const st of branchable) {
+				pick.append(el("option", {
+					text: (st.label || st.key) + (st.key === q.current_state ? "  (here)" : ""),
+					attrs: { value: st.key, selected: st.key === q.current_state ? "" : null },
+				}));
+			}
+			const notes = el("input", {
+				class: "enc-field",
+				attrs: { type: "text", placeholder: "direction, if any", "aria-label": "Branch notes" },
+			});
+			form.append(pick, notes, el("button", { class: "enc-btn", text: "Branch", attrs: { type: "submit" } }));
+			box.append(form);
+		}
+		box.append(el("button", {
+			class: "enc-chip", text: "abandon the quest",
+			attrs: { type: "button", "data-abandon": q.id },
+		}));
+	}
+}
+
+async function onQuestMoveSubmit(e) {
+	e.preventDefault();
+	const branch = e.target.closest("[data-branch]");
+	if (branch) {
+		try {
+			await api.questBranch(current.id, branch.dataset.branch, {
+				state: branch.querySelectorAll("select")[0].value,
+				notes: branch.querySelector("input").value.trim(),
+			});
+			renderMeta("The branch is staged — accept it on the review queue.");
+			await reviewFor(current.id);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	const form = e.target.closest("[data-move]");
+	if (!form) return;
+	try {
+		await api.campaignQuestTransition(current.id, form.dataset.move, form.querySelector("select").value);
+		await loadQuests();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+async function onQuestDetailClick(e) {
+	const abandon = e.target.closest("[data-abandon]");
+	if (abandon) {
+		try {
+			await api.campaignQuestDelete(current.id, abandon.dataset.abandon);
+			await loadQuests();
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	const unlink = e.target.closest("[data-unlink]");
+	if (unlink) {
+		try {
+			await api.campaignQuestEntityRemove(current.id, selectedQuestID, unlink.dataset.unlink, unlink.dataset.role);
+			await renderQuestDetail(selectedQuestID);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+	}
+}
+
+// renderQuestMachine draws one state machine: layers by BFS distance from
+// the initial state, states sorted by key inside a layer so the chart is
+// stable across renders, the current state in gold, endings ringed, edges
+// already taken inked and untaken branches ghosted.
+function renderQuestMachine(q, transitions) {
+	const machine = q.state_machine || { states: [], edges: [] };
+	const states = machine.states || [];
+	const edges = machine.edges || [];
+	const taken = new Set((transitions || []).map((t) => `${t.from_state}>${t.to_state}`));
+
+	// BFS layers from the initial state; a state nothing reaches still
+	// renders, one layer past the deepest reached.
+	const dist = new Map([[machine.initial, 0]]);
+	const frontier = [machine.initial];
+	while (frontier.length > 0) {
+		const next = [];
+		for (const from of frontier) {
+			for (const ed of edges) {
+				if (ed.from === from && !dist.has(ed.to)) {
+					dist.set(ed.to, dist.get(from) + 1);
+					next.push(ed.to);
+				}
+			}
+		}
+		frontier.length = 0;
+		frontier.push(...next);
+	}
+	let layers = states.map((s) => dist.has(s.key) ? dist.get(s.key) : 999);
+	const maxLayer = Math.max(0, ...layers.map((d) => (d === 999 ? -1 : d)));
+	const byLayer = new Map();
+	states.forEach((s, i) => {
+		const layer = layers[i] === 999 ? maxLayer + 1 : layers[i];
+		if (!byLayer.has(layer)) byLayer.set(layer, []);
+		byLayer.get(layer).push(s);
+	});
+
+	const COL = 190, ROW = 64, PAD = 14;
+	const rows = Math.max(...[...byLayer.values()].map((r) => r.length), 1);
+	const W = Math.max(360, (byLayer.size) * COL + PAD * 2);
+	const H = rows * ROW + PAD * 2 + 8;
+	const pos = new Map();
+	for (const [layer, group] of [...byLayer.entries()].sort((a, b) => a[0] - b[0])) {
+		group.sort((a, b) => a.key.localeCompare(b.key));
+		const top = (H - group.length * ROW) / 2;
+		group.forEach((s, i) => {
+			pos.set(s.key, { x: Math.round(PAD + layer * COL + 70), y: Math.round(top + i * ROW + ROW / 2) });
+		});
+	}
+
+	const svgNS = "http://www.w3.org/2000/svg";
+	const svg = document.createElementNS(svgNS, "svg");
+	svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+	svg.setAttribute("class", "camp-graph-svg camp-quest-svg");
+	svg.setAttribute("role", "img");
+	svg.setAttribute("aria-label", `State machine of ${q.name}`);
+
+	for (const ed of edges) {
+		const a = pos.get(ed.from), b = pos.get(ed.to);
+		if (!a || !b) continue;
+		const line = document.createElementNS(svgNS, "line");
+		line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+		line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+		line.setAttribute("class", "camp-edge" + (taken.has(`${ed.from}>${ed.to}`) ? " is-taken" : " is-ghost"));
+		svg.append(line);
+		const label = ed.label || "";
+		if (label) {
+			const mid = document.createElementNS(svgNS, "text");
+			mid.setAttribute("x", Math.round((a.x + b.x) / 2));
+			mid.setAttribute("y", Math.round((a.y + b.y) / 2) - 3);
+			mid.setAttribute("class", "camp-edge-label");
+			mid.textContent = label.length > 16 ? label.slice(0, 15) + "…" : label;
+			svg.append(mid);
+		}
+	}
+	for (const s of states) {
+		const p = pos.get(s.key);
+		const g = document.createElementNS(svgNS, "g");
+		g.setAttribute("class", "camp-node camp-qnode" +
+			(s.key === q.current_state ? " is-center" : "") +
+			(s.terminal ? " is-terminal" : "") +
+			(s.key === machine.initial ? " is-initial" : ""));
+		g.setAttribute("transform", `translate(${p.x},${p.y})`);
+		const name = s.label || s.key;
+		const rect = document.createElementNS(svgNS, "rect");
+		const w = Math.min(150, Math.max(70, name.length * 7 + 16));
+		rect.setAttribute("x", Math.round(-w / 2)); rect.setAttribute("y", -14);
+		rect.setAttribute("width", w); rect.setAttribute("height", 28);
+		const text = document.createElementNS(svgNS, "text");
+		text.setAttribute("y", 4);
+		text.setAttribute("class", "camp-node-label");
+		text.textContent = name.length > 19 ? name.slice(0, 18) + "…" : name;
+		const title = document.createElementNS(svgNS, "title");
+		title.textContent = s.key + (s.terminal ? ` (ending: ${s.terminal})` : "") + (s.detail ? ` — ${s.detail}` : "");
+		g.append(rect, text, title);
+		svg.append(g);
+	}
+	return svg;
 }
 
 /* ---------- the table (members + invites, DM only) ---------- */
@@ -1298,6 +2197,455 @@ async function onFactionPlanStatusChange(e) {
 		await api.campaignFactionPlanUpdate(current.id, sel.dataset.planStatus, { status: sel.value });
 		renderMeta("Plan status set.");
 		await refreshFactionDossier();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+/* ---------- the rumour mill (MAD-374) ---------- */
+
+// The mill renders whatever the server sent at the caller's scope: the
+// statement, the spread, and who repeats it. The truth column never
+// arrives below the DM — the server does not send it — so the DM's "true /
+// false / distorted" chip is rendered only when the field came back.
+async function loadRumors(params) {
+	const board = $("camp-rumors");
+	if (!current) return;
+	populateRumorSubjects();
+	let data;
+	try {
+		data = await api.campaignRumors(current.id, params);
+	} catch (err) {
+		clear(board).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	rumors = data.rumors || [];
+	renderRumors();
+}
+
+// populateRumorSubjects fills the about selects from the loaded entity
+// list — the same list the fact form draws from.
+function populateRumorSubjects() {
+	const options = entities.map((e) => ({ value: e.id, text: `${e.name} (${e.kind})` }));
+	for (const id of ["camp-rumor-about", "camp-rumor-gen-about"]) {
+		const select = $(id);
+		const prev = select.value;
+		clear(select);
+		if (id === "camp-rumor-about") select.append(el("option", { text: "nothing in particular", attrs: { value: "" } }));
+		for (const o of options) select.append(el("option", { text: o.text, attrs: { value: o.value } }));
+		if ([...select.options].some((op) => op.value === prev)) select.value = prev;
+	}
+}
+
+function renderRumors() {
+	const board = clear($("camp-rumors"));
+	if (rumors.length === 0) {
+		board.append(el("p", { class: "camp-status", text: "Nothing is circulating yet." }));
+		return;
+	}
+	const nameOf = (id) => entities.find((e) => e.id === id)?.name || id.slice(0, 8);
+	for (const r of rumors) {
+		const row = el("div", { class: "camp-fact", attrs: { "data-rid": r.id } });
+		row.append(el("p", { class: "camp-fact-statement prose", text: `“${r.statement}”` }));
+		const chips = el("div", { class: "camp-fact-chips" });
+		if (r.truth) {
+			// DM eyes only: the server never sends truth below the DM.
+			const truthChip = el("span", { class: "enc-chip" + (r.truth === "true" ? " is-on" : ""), text: `truth: ${r.truth}` });
+			chips.append(truthChip);
+		}
+		chips.append(el("span", { class: "enc-chip", text: r.spread || "local" }));
+		if (r.status && r.status !== "circulating") chips.append(el("span", { class: "enc-chip", text: r.status }));
+		if (r.about && r.about.name) {
+			chips.append(el("button", {
+				class: "enc-chip", text: `about ${r.about.name}`,
+				attrs: { type: "button", "data-open-eid": r.about.id },
+			}));
+		}
+		row.append(chips);
+		// Who is repeating it, in their own words.
+		if ((r.holders || []).length) {
+			const holds = el("p", { class: "camp-aliases" });
+			holds.textContent = "Said by " + r.holders.map((h) => h.entity === "party" ? "the party" : (nameOf(h.entity) + (h.variant ? ` — “${h.variant}”` : ""))).join("; ");
+			row.append(holds);
+		}
+		if (isDM()) {
+			const actions = el("div", { class: "camp-fact-chips" });
+			actions.append(el("button", { class: "enc-chip", text: "the party heard it", attrs: { type: "button", "data-heard": r.id, title: "Write the stance the rumour earns for the party" } }));
+			actions.append(el("button", { class: "enc-chip", text: "give it a voice", attrs: { type: "button", "data-hold": r.id, title: "Record an NPC repeating it" } }));
+			if (r.status !== "debunked") actions.append(el("button", { class: "enc-chip", text: "debunk", attrs: { type: "button", "data-status": r.id, "data-to": "debunked" } }));
+			if (r.status !== "confirmed") actions.append(el("button", { class: "enc-chip", text: "confirm", attrs: { type: "button", "data-status": r.id, "data-to": "confirmed" } }));
+			actions.append(el("button", { class: "enc-chip", text: "forget", attrs: { type: "button", "data-forget": r.id } }));
+			row.append(actions);
+		}
+		board.append(row);
+	}
+}
+
+async function onRumorSubmit(e) {
+	if (e.target.id !== "camp-rumor-form") return;
+	e.preventDefault();
+	if (!current || !isDM()) return;
+	const statement = $("camp-rumor-statement").value.trim();
+	if (!statement) return;
+	const body = {
+		statement,
+		truth: $("camp-rumor-truth").value,
+		about: $("camp-rumor-about").value,
+		spread: $("camp-rumor-spread").value,
+	};
+	renderMeta("Setting it circulating…");
+	try {
+		await api.campaignRumorCreate(current.id, body);
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	$("camp-rumor-statement").value = "";
+	renderMeta("The rumour is in the mill.");
+	await loadRumors();
+}
+
+async function onRumorGenerate(e) {
+	if (e.target.id !== "camp-rumor-generate-form") return;
+	e.preventDefault();
+	if (!current || !isDM()) return;
+	const about = $("camp-rumor-gen-about").value;
+	if (!about) return;
+	const n = (id) => parseInt($(id).value, 10) || 0;
+	renderMeta("Drawing the rumours — the truth mix and the holders are computed; the model words them…");
+	try {
+		await api.campaignRumorGenerate(current.id, {
+			about,
+			true: n("camp-rumor-gen-true"),
+			false: n("camp-rumor-gen-false"),
+			distorted: n("camp-rumor-gen-distorted"),
+		});
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	renderMeta("The rumours are staged — decide the batch on the review queue.");
+	await reviewFor(current.id);
+}
+
+async function onRumorBoardClick(e) {
+	if (!current || !isDM()) return;
+	const rid = e.target.closest("[data-rid]")?.dataset.rid;
+	if (!rid) return;
+	if (e.target.closest("[data-heard]")) {
+		renderMeta("The party hears the rumour…");
+		try {
+			const res = await api.campaignRumorHeard(current.id, rid, "party");
+			renderMeta(res.heard.outcome === "granted"
+				? `Recorded: the party now ${res.heard.stance === "suspects" ? "suspects" : "is wrong about"} the fact behind it.`
+				: res.heard.outcome === "knows_already" ? "The party already knows the fact — gossip changes nothing."
+				: res.heard.outcome === "carried" ? "The party carries the rumour — nothing in the graph for it to touch yet."
+				: "The party already held exactly that.");
+		} catch (err) {
+			renderMeta(err.message, true);
+			return;
+		}
+		await loadRumors();
+		return;
+	}
+	if (e.target.closest("[data-hold]")) {
+		const voice = prompt("Who repeats it? Type an NPC's name:", "");
+		if (!voice) return;
+		const match = entities.find((x) => x.name.toLowerCase() === voice.trim().toLowerCase());
+		if (!match) { renderMeta(`Nobody called ${voice} in the campaign.`, true); return; }
+		const variant = prompt(`What exactly does ${match.name} say?`, "") || "";
+		try {
+			await api.campaignRumorHolderSet(current.id, rid, { entity: match.id, variant });
+		} catch (err) {
+			renderMeta(err.message, true);
+			return;
+		}
+		await loadRumors();
+		return;
+	}
+	const statusBtn = e.target.closest("[data-status]");
+	if (statusBtn) {
+		try {
+			await api.campaignRumorUpdate(current.id, statusBtn.dataset.status, { status: statusBtn.dataset.to });
+		} catch (err) {
+			renderMeta(err.message, true);
+			return;
+		}
+		await loadRumors();
+		return;
+	}
+	if (e.target.closest("[data-forget]")) {
+		if (!confirm("Take this rumour out of the mill?")) return;
+		try {
+			await api.campaignRumorDelete(current.id, rid);
+		} catch (err) {
+			renderMeta(err.message, true);
+			return;
+		}
+		await loadRumors();
+	}
+}
+
+async function onRumorBoardChange(e) {
+	// Reserved for per-row selects; nothing yet.
+	void e;
+}
+
+// loadSheetRumors fills the sheet's "what people are saying" section for
+// one entity — the statements circulating about them, at the caller's
+// scope. The server sends quotes only; the mill panel carries the rest.
+async function loadSheetRumors(eid) {
+	let data;
+	try {
+		data = await api.campaignRumors(current.id, { about: eid, status: "circulating" });
+	} catch (err) {
+		const box = document.querySelector(`[data-rumors-for="${eid}"]`);
+		if (box) clear(box).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	const box = document.querySelector(`[data-rumors-for="${eid}"]`);
+	if (!box || !selected || selected.id !== eid) return; // the sheet moved on
+	clear(box);
+	const list = el("div", { class: "camp-facts" });
+	for (const r of data.rumors || []) {
+		const row = el("div", { class: "camp-fact" });
+		row.append(el("p", { class: "camp-fact-statement prose", text: `“${r.statement}”` }));
+		if ((r.holders || []).length) {
+			const said = el("p", { class: "camp-aliases" });
+			said.textContent = "Said by " + r.holders.map((h) => h.entity === "party" ? "the party" : (h.name || h.entity)).join(", ");
+			row.append(said);
+		}
+		list.append(row);
+	}
+	box.append(list.children.length
+		? list
+		: el("p", { class: "camp-status", text: "Nothing yet — the mill is quiet about them." }));
+}
+
+/* ---------- the location page (MAD-370) ---------- */
+
+// The dossier is a read, not a write: present NPCs, children, items,
+// secrets, events and sited quests arrive as live graph rows the server
+// assembled at the caller's scope. The only editable thing is the place
+// block; the read-aloud description belongs in the entity summary, where
+// campaign search reads it. This module renders whatever comes back and
+// decides nothing.
+let locationDossier = null; // the last dossier body for the selected location
+
+async function loadLocationDossier(eid) {
+	const mount = document.getElementById("camp-location-body");
+	if (!mount || !current || !selected || selected.id !== eid) return;
+	let data;
+	try {
+		data = await api.campaignLocation(current.id, eid);
+	} catch (err) {
+		clear(mount).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	if (!selected || selected.id !== eid) return; // the sheet moved on
+	locationDossier = data.location;
+	renderLocationDossier(clear(mount));
+}
+
+async function refreshLocationDossier() {
+	if (selected && selected.kind === "location") await loadLocationDossier(selected.id);
+}
+
+// entityChip renders one read-only chip that links into the entity browser.
+function entityChip(e, label) {
+	return el("button", {
+		class: "enc-chip",
+		text: label || e.name,
+		attrs: { type: "button", "data-open-eid": e.id, title: `${e.kind}${e.status && e.status !== "active" ? " · " + e.status : ""}` },
+	});
+}
+
+function renderLocationDossier(mount) {
+	const d = locationDossier;
+	if (!d) return;
+	const wrap = el("div", { class: "camp-location-body" });
+	const p = d.place || {};
+
+	// The place block: the DM edits it, a player reads its public half.
+	if (isDM()) {
+		wrap.append(section("The place", placeForm(p)));
+	} else {
+		const face = el("div", { class: "camp-faction-face" });
+		const line = (label, v) => { if (v) face.append(el("p", { class: "prose", text: `${label}: ${v}` })); };
+		line("Kind", p.kind);
+		line("Scale", p.scale);
+		line("Population", p.population);
+		line("Government", p.government);
+		line("Defences", p.defences);
+		line("State", p.state);
+		if ((p.services || []).length) face.append(el("p", { class: "prose", text: `Services: ${p.services.join(", ")}` }));
+		if ((p.senses || []).length) face.append(el("p", { class: "prose", text: `You notice ${p.senses.join("; ")}` }));
+		const chips = el("div", { class: "camp-fact-chips" });
+		if (p.climate) chips.append(el("span", { class: "enc-chip", text: p.climate }));
+		if (p.danger) chips.append(el("span", { class: "enc-chip is-on", text: `danger ${p.danger}` }));
+		if (chips.children.length) face.append(chips);
+		if (face.children.length > 0) wrap.append(section("The place", face));
+	}
+
+	// Everything else is the graph, chipped read-only.
+	const nameOf = (id) => entities.find((x) => x.id === id)?.name || id.slice(0, 8);
+	const chipRow = (list, labelFn) => {
+		const chips = el("div", { class: "camp-fact-chips" });
+		for (const item of list) chips.append(entityChip(item, labelFn ? labelFn(item) : undefined));
+		return chips;
+	};
+	const groups = [
+		["Present", d.present],
+		["Within", d.children],
+		["Items here", d.items],
+	];
+	let anyGroup = false;
+	const ties = el("div", { class: "camp-faction-ties" });
+	for (const [label, list] of groups) {
+		if (!list || list.length === 0) continue;
+		anyGroup = true;
+		ties.append(el("p", { class: "camp-sheet-heading", text: label }), chipRow(list));
+	}
+	// Routes out: the travel block, read where it is there and rendered
+	// nowhere when it is not (a player's payload never carried it).
+	if ((d.routes || []).length) {
+		anyGroup = true;
+		const chips = el("div", { class: "camp-fact-chips" });
+		for (const r of d.routes) {
+			chips.append(el("button", {
+				class: "enc-chip",
+				text: `${nameOf(r.to)} — ${r.days} day${r.days === 1 ? "" : "s"}${r.terrain ? ` (${r.terrain})` : ""}`,
+				attrs: { type: "button", "data-open-eid": r.to },
+			}));
+		}
+		ties.append(el("p", { class: "camp-sheet-heading", text: "Roads out" }), chips);
+	}
+	if ((d.quests || []).length) {
+		anyGroup = true;
+		const chips = el("div", { class: "camp-fact-chips" });
+		for (const q of d.quests) {
+			chips.append(el("button", {
+				class: "enc-chip",
+				text: `${q.name}${q.status && q.status !== "active" ? ` (${q.status})` : ""}`,
+				attrs: { type: "button", "data-open-eid": q.id, title: q.summary || "" },
+			}));
+		}
+		ties.append(el("p", { class: "camp-sheet-heading", text: "Quests sited here" }), chips);
+	}
+	if (anyGroup) wrap.append(section("What the graph says", ties));
+
+	// Secrets: fact statements, DM-only by construction.
+	if ((d.secrets || []).length) {
+		wrap.append(section("Secrets", factsList(d.secrets)));
+	}
+
+	// History: the events sited here, in play order.
+	if ((d.events || []).length) {
+		wrap.append(section("History", eventList(d.events)));
+	}
+
+	// What are people saying about this? The statements circulating here
+	// — the server loads only what the caller's scope may read; the full
+	// mill with holders and (for the DM) truth values lives in the panel.
+	if ((d.rumours || []).length) {
+		const list = el("ul", { class: "camp-events" });
+		for (const statement of d.rumours) {
+			list.append(el("li", { class: "camp-event", text: `“${statement}”` }));
+		}
+		wrap.append(section("Rumours", list));
+	} else {
+		wrap.append(section("Rumours", el("p", { class: "camp-status", text: "Nobody is saying anything yet." })));
+	}
+
+	// The flesh-out path (MAD-372): a name and one line becomes a place —
+	// the missing block, people and secrets proposed around what is
+	// already here, staged as a batch. Parts re-roll one piece.
+	if (isDM()) {
+		const form = el("form", { class: "camp-plan-form", attrs: { "data-fleshout": d.id } });
+		form.append(el("p", { class: "camp-sheet-heading", text: "Flesh this place out" }));
+		form.append(el("input", {
+			class: "enc-field",
+			attrs: { type: "text", placeholder: "what has changed, or leave blank", "aria-label": "Flesh-out premise" },
+		}));
+		const parts = el("select", { class: "enc-field", attrs: { "aria-label": "Which part" } });
+		for (const [value, label] of [
+			["", "Everything with room"],
+			["place", "The block"],
+			["sublocations", "The sub-locations"],
+			["npcs", "The people"],
+			["hooks", "The hooks"],
+			["secrets", "The secrets"],
+		]) {
+			parts.append(el("option", { text: label, attrs: { value } }));
+		}
+		form.append(parts, el("button", { class: "enc-btn", text: "Propose", attrs: { type: "submit" } }));
+		wrap.append(section("Design", form));
+	}
+
+	mount.append(wrap);
+}
+
+// placeForm is the DM's block editor. The description is deliberately not
+// here: it belongs in the entity summary, where campaign search reads it.
+function placeForm(p) {
+	const form = el("form", { class: "camp-plan-form", attrs: { id: "camp-place-form" } });
+	const field = (cls, label, value, attrs) => {
+		const wrap = el("label", { class: "camp-place-field" });
+		wrap.append(el("span", { class: "camp-sheet-heading", text: label }));
+		wrap.append(el("input", { class: "enc-field " + cls, attrs: { type: "text", value: value || "", ...attrs } }));
+		return wrap;
+	};
+	form.append(
+		field("camp-place-kind", "Kind", p.kind, { placeholder: "town, ruin, dungeon…" }),
+		field("camp-place-scale", "Scale", p.scale, { placeholder: "large village" }),
+		field("camp-place-population", "Population", p.population, { placeholder: "about 900" }),
+		field("camp-place-government", "Government", p.government, { placeholder: "a merchant council" }),
+		field("camp-place-defences", "Defences", p.defences, { placeholder: "a palisade" }),
+		field("camp-place-climate", "Climate", p.climate, { placeholder: "temperate" }),
+		field("camp-place-state", "State", p.state, { placeholder: "flooding after the rains" }),
+	);
+	const danger = field("camp-place-danger", "Danger (0-5)", p.danger ? String(p.danger) : "", { type: "number", min: "0", max: "5", step: "1" });
+	form.append(danger);
+	const list = (cls, label, values, placeholder) => {
+		const wrap = el("label", { class: "camp-place-field" });
+		wrap.append(el("span", { class: "camp-sheet-heading", text: label }));
+		wrap.append(el("textarea", { class: "enc-field " + cls, attrs: { rows: "2", placeholder }, }));
+		wrap.querySelector("textarea").value = (values || []).join("\n");
+		return wrap;
+	};
+	form.append(
+		list("camp-place-services", "Services (one per line)", p.services, "inn\nmarket"),
+		list("camp-place-senses", "Sensory notes (one per line)", p.senses, "gull noise\ndamp wool"),
+		list("camp-place-truth", "Private truth (DM only)", [p.private_truth], "what is really going on"),
+		el("button", { class: "enc-btn", text: "Record the place", attrs: { type: "submit" } }),
+	);
+	return form;
+}
+
+async function onPlaceSubmit(e) {
+	const form = e.target.closest("#camp-place-form");
+	if (!form) return;
+	e.preventDefault();
+	if (!current || !selected) return;
+	const val = (cls) => form.querySelector("." + cls)?.value.trim() || "";
+	const lines = (cls) => form.querySelector("." + cls).value.split("\n").map((l) => l.trim()).filter(Boolean);
+	const place = {
+		kind: val("camp-place-kind"),
+		scale: val("camp-place-scale"),
+		population: val("camp-place-population"),
+		government: val("camp-place-government"),
+		defences: val("camp-place-defences"),
+		climate: val("camp-place-climate"),
+		state: val("camp-place-state"),
+		danger: parseInt(val("camp-place-danger"), 10) || 0,
+		services: lines("camp-place-services"),
+		senses: lines("camp-place-senses"),
+		private_truth: val("camp-place-truth"),
+	};
+	try {
+		await api.campaignPlacePut(current.id, selected.id, place);
+		renderMeta("The place is recorded.");
+		await refreshLocationDossier();
 	} catch (err) {
 		renderMeta(err.message, true);
 	}

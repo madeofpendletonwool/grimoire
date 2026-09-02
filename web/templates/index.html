@@ -407,19 +407,54 @@
 						<div class="camp-entity-list" id="camp-entities" role="listbox" aria-label="Entities"></div>
 						<div class="camp-hits" id="camp-hits" hidden></div>
 					</div>
-					<form class="camp-panel" id="camp-new-entity" autocomplete="off" hidden>
-						<h3 class="enc-heading">New entity</h3>
-						<label class="camp-field"><span>Name</span>
-							<input id="camp-entity-name" class="enc-field" type="text" required aria-label="Entity name">
-						</label>
+				<form class="camp-panel" id="camp-new-entity" autocomplete="off" hidden>
+					<h3 class="enc-heading">New entity</h3>
+					<label class="camp-field"><span>Name</span>
+						<input id="camp-entity-name" class="enc-field" type="text" required aria-label="Entity name">
+					</label>
+					<label class="camp-field"><span>Kind</span>
+						<select id="camp-entity-kind" class="enc-field" aria-label="Entity kind"></select>
+					</label>
+					<label class="camp-field"><span>Summary</span>
+						<input id="camp-entity-summary" class="enc-field" type="text" aria-label="Entity summary">
+					</label>
+					<button type="submit" class="enc-btn">Add to the world</button>
+				</form>
+				<!-- The place designer (MAD-372): a premise becomes a
+				     settlement — the place, its people, its sub-locations,
+				     its hooks and its secrets — computed structure, model
+				     names, staged as one proposal batch behind the review
+				     gate. DM-only; the server refuses everyone else
+				     anyway. -->
+				<form class="camp-panel" id="camp-place-design-form" autocomplete="off" hidden>
+					<h3 class="enc-heading">Design a place</h3>
+					<label class="camp-field"><span>A premise becomes a settlement</span>
+						<textarea id="camp-place-premise" class="enc-idea-input" rows="2" required placeholder="A small village on the forest road, uneasy about what is in the trees" aria-label="Place premise"></textarea>
+					</label>
+					<div class="camp-field-row">
 						<label class="camp-field"><span>Kind</span>
-							<select id="camp-entity-kind" class="enc-field" aria-label="Entity kind"></select>
+							<select id="camp-place-kind" class="enc-field" aria-label="Settlement kind">
+								<option value="village">Village</option>
+								<option value="hamlet">Hamlet</option>
+								<option value="town">Town</option>
+								<option value="city">City</option>
+							</select>
 						</label>
-						<label class="camp-field"><span>Summary</span>
-							<input id="camp-entity-summary" class="enc-field" type="text" aria-label="Entity summary">
+						<label class="camp-field"><span>Scale</span>
+							<select id="camp-place-scale" class="enc-field" aria-label="Scale band">
+								<option value="">Medium</option>
+								<option value="small">Small</option>
+								<option value="large">Large</option>
+							</select>
 						</label>
-						<button type="submit" class="enc-btn">Add to the world</button>
-					</form>
+						<label class="camp-field"><span>Near</span>
+							<select id="camp-place-near" class="enc-field" aria-label="Near anchor">
+								<option value="">Nowhere in particular</option>
+							</select>
+						</label>
+					</div>
+					<button type="submit" class="enc-btn">Design the place</button>
+				</form>
 				</div>
 
 				<!-- The sheet: one entity and everything the caller's scope may
@@ -532,6 +567,24 @@
 						</div>
 						<button type="submit" class="enc-btn">Move the days</button>
 					</form>
+					<!-- The simulation tick (MAD-367): a deterministic
+					     preview of what N days of plans, schedule and
+					     NPC goals produce, staged as a proposal only when
+					     the DM asks for it. The clock never moves on its
+					     own. -->
+					<form class="camp-simulate-form" id="camp-simulate-form" autocomplete="off" hidden>
+						<h4 class="camp-sheet-heading">Advance the world</h4>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Days</span>
+								<input id="camp-simulate-days" class="enc-field" type="number" placeholder="14" aria-label="Days to simulate">
+							</label>
+							<label class="camp-field"><span>Seed (optional)</span>
+								<input id="camp-simulate-seed" class="enc-field" type="number" aria-label="Seed">
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Simulate</button>
+						<div class="camp-simulate-result" id="camp-simulate-result" hidden></div>
+					</form>
 				</div>
 				<div class="camp-panel camp-graph-panel">
 						<h3 class="enc-heading">The map</h3>
@@ -543,6 +596,170 @@
 						</div>
 						<div class="camp-graph" id="camp-graph" aria-label="Entity neighbourhood graph"></div>
 					</div>
+					<!-- The quest board (MAD-369): the DM sees every quest's
+					     machine drawn as a deterministic chart — the
+					     current state in gold, edges already taken inked,
+					     untaken branches ghosted. Players see the journal:
+					     where each public quest stands and the states
+					     already visited, never an untaken branch. -->
+					<div class="camp-panel camp-quests-panel">
+						<h3 class="enc-heading">The quest board</h3>
+						<!-- The quest designer (MAD-371): a hook becomes a
+						     branching quest — computed structure, model
+						     names, staged as a proposal batch behind the
+						     review gate. DM-only; the server refuses
+						     everyone else anyway. -->
+						<form class="camp-invite-form" id="camp-quest-design-form" autocomplete="off" hidden>
+							<label class="camp-field"><span>A hook becomes a quest</span>
+								<textarea id="camp-quest-hook" class="enc-idea-input" rows="2" required placeholder="The caravan from the eastern mines never arrived" aria-label="Quest hook"></textarea>
+							</label>
+							<div class="camp-field-row">
+								<label class="camp-field"><span>Shape</span>
+									<select id="camp-quest-kind" class="enc-field" aria-label="Quest shape">
+										<option value="">Let the hook decide</option>
+										<option value="investigation">Investigation</option>
+										<option value="retrieval">Retrieval</option>
+										<option value="escort">Escort</option>
+										<option value="siege">Siege</option>
+										<option value="mystery">Mystery (red herring)</option>
+										<option value="betrayal">Betrayal</option>
+									</select>
+								</label>
+								<label class="camp-field"><span>Forks</span>
+									<select id="camp-quest-branches" class="enc-field" aria-label="Branch points">
+										<option value="0">Let it decide</option>
+										<option value="1">One</option>
+										<option value="2">Two</option>
+										<option value="3">Three</option>
+										<option value="4">Four</option>
+									</select>
+								</label>
+								<label class="camp-field"><span>Depth</span>
+									<input id="camp-quest-depth" class="enc-field" type="number" min="2" max="8" placeholder="4" aria-label="Quest depth">
+								</label>
+							</div>
+							<button type="submit" class="enc-btn">Design the quest</button>
+						</form>
+					<div class="camp-quests" id="camp-quests" aria-label="Quests"></div>
+					<div class="camp-quest-detail" id="camp-quest-detail" aria-live="polite"></div>
+				</div>
+				<!-- The dungeon designer (MAD-373): a seeded room graph,
+				     its map, and the dressing pass. The topology is
+				     arithmetic — theme, size, level, sessions and the
+				     density knobs in; a room graph with a boss and
+				     secrets out — so designing and mapping need no
+				     model. Dressing names the rooms; placing stages the
+				     whole dungeon as one proposal batch. DM-only. -->
+				<div class="camp-panel camp-dungeons-panel">
+					<h3 class="enc-heading">The dungeon workshop</h3>
+					<form class="camp-invite-form" id="camp-dungeon-form" autocomplete="off" hidden>
+						<label class="camp-field"><span>A dungeon from knobs, not a prompt</span>
+							<input id="camp-dungeon-name" class="enc-field" type="text" required placeholder="The Sunken Reliquary" aria-label="Dungeon name">
+						</label>
+						<label class="camp-field"><span>Theme</span>
+							<input id="camp-dungeon-theme" class="enc-field" type="text" placeholder="a drowned temple beneath the marsh" aria-label="Theme">
+						</label>
+						<div class="camp-field-row">
+							<label class="camp-field"><span>Size</span>
+								<select id="camp-dungeon-size" class="enc-field" aria-label="Size band">
+									<option value="delve">Delve</option>
+									<option value="lair">Lair</option>
+									<option value="complex">Complex</option>
+									<option value="megadungeon">Megadungeon</option>
+								</select>
+							</label>
+							<label class="camp-field"><span>Level</span>
+								<input id="camp-dungeon-level" class="enc-field" type="number" min="1" max="20" placeholder="3" aria-label="Party level">
+							</label>
+							<label class="camp-field"><span>Sessions</span>
+								<input id="camp-dungeon-sessions" class="enc-field" type="number" min="1" max="10" placeholder="1" aria-label="Expected sessions">
+							</label>
+						</div>
+						<div class="camp-field-row">
+							<label class="camp-field"><span>Combat</span>
+								<input id="camp-dungeon-combat" class="enc-field" type="number" min="0" placeholder="1" aria-label="Combat density">
+							</label>
+							<label class="camp-field"><span>Puzzle</span>
+								<input id="camp-dungeon-puzzle" class="enc-field" type="number" min="0" placeholder="1" aria-label="Puzzle density">
+							</label>
+							<label class="camp-field"><span>Explore</span>
+								<input id="camp-dungeon-explore" class="enc-field" type="number" min="0" placeholder="1" aria-label="Exploration density">
+							</label>
+							<label class="camp-field"><span>Loops</span>
+								<select id="camp-dungeon-branch" class="enc-field" aria-label="Branchiness">
+									<option value="0">none</option>
+									<option value="1" selected>one</option>
+									<option value="2">two</option>
+									<option value="3">three</option>
+								</select>
+							</label>
+						</div>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Seed (optional)</span>
+								<input id="camp-dungeon-seed" class="enc-field" type="number" placeholder="any number" aria-label="Seed">
+							</label>
+							<button type="submit" class="enc-btn">Design the dungeon</button>
+						</div>
+					</form>
+					<div class="camp-dungeons" id="camp-dungeons" aria-label="Dungeons"></div>
+					<div class="camp-dungeon-detail" id="camp-dungeon-detail" aria-live="polite"></div>
+				</div>
+				<!-- The rumour mill (MAD-374): statements in circulation and
+				     who repeats them. The truth column is the DM's and the
+				     server never sends it below the DM; players see what is
+				     being said and by whom. The DM writes rumours by hand or
+				     generates a batch — truth mix, secret-fact draw and the
+				     holder distribution are computed server-side; the model
+				     only words them — and everything lands behind the review
+				     gate. -->
+				<div class="camp-panel camp-rumors-panel">
+					<h3 class="enc-heading">The rumour mill</h3>
+					<form class="camp-invite-form" id="camp-rumor-form" autocomplete="off" hidden>
+						<label class="camp-field"><span>A rumour, in the words it travels in</span>
+							<textarea id="camp-rumor-statement" class="enc-idea-input" rows="2" required placeholder="They say the silver key opens something under the monastery" aria-label="Rumour statement"></textarea>
+						</label>
+						<div class="camp-field-row">
+							<label class="camp-field"><span>Truth (DM only)</span>
+								<select id="camp-rumor-truth" class="enc-field" aria-label="Truth">
+									<option value="true">true</option>
+									<option value="false">false</option>
+									<option value="distorted">distorted</option>
+								</select>
+							</label>
+							<label class="camp-field"><span>About</span>
+								<select id="camp-rumor-about" class="enc-field" aria-label="About entity">
+									<option value="">nothing in particular</option>
+								</select>
+							</label>
+							<label class="camp-field"><span>Spread</span>
+								<select id="camp-rumor-spread" class="enc-field" aria-label="Spread">
+									<option value="local">local</option>
+									<option value="regional">regional</option>
+									<option value="widespread">widespread</option>
+								</select>
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Set it circulating</button>
+					</form>
+					<form class="camp-invite-form" id="camp-rumor-generate-form" autocomplete="off" hidden>
+						<label class="camp-field"><span>What are they talking about?</span>
+							<select id="camp-rumor-gen-about" class="enc-field" aria-label="Generate about"></select>
+						</label>
+						<div class="camp-field-row">
+							<label class="camp-field"><span>True</span>
+								<input id="camp-rumor-gen-true" class="enc-field" type="number" min="0" max="12" placeholder="1" aria-label="True rumours">
+							</label>
+							<label class="camp-field"><span>False</span>
+								<input id="camp-rumor-gen-false" class="enc-field" type="number" min="0" max="12" placeholder="1" aria-label="False rumours">
+							</label>
+							<label class="camp-field"><span>Distorted</span>
+								<input id="camp-rumor-gen-distorted" class="enc-field" type="number" min="0" max="12" placeholder="0" aria-label="Distorted rumours">
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Generate a batch</button>
+					</form>
+					<div class="camp-rumors" id="camp-rumors" aria-label="Rumours"></div>
+				</div>
 					<details class="camp-panel camp-members" id="camp-members-panel" hidden>
 						<summary class="enc-heading">The table</summary>
 						<div class="camp-members-body" id="camp-members-body"></div>
