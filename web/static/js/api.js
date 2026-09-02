@@ -189,13 +189,31 @@ export const api = {
 		fetch(`/api/encounter/statblock?name=${encodeURIComponent(name)}`, { signal }).then(json),
 
 	// What the party can afford at a target difficulty. The DMG tables stay on
-	// the server, the same as the verdict.
-	encounterBudget: (party, difficulty, signal) =>
+	// the server, the same as the verdict. A campaign id is optional: with
+	// one and no party, the budget is computed for the campaign's declared
+	// party block — that is what prefills the builder's party boxes.
+	encounterBudget: (party, difficulty, campaignId, signal) =>
 		fetch("/api/encounter/budget", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ party, difficulty }),
+			body: JSON.stringify({ party, difficulty, campaign_id: campaignId || "" }),
 			signal,
+		}).then(json),
+
+	// The campaign's declared party block (MAD-378): the whole sheet each pc
+	// carries, the levels the encounter math runs on, and the keys that could
+	// not be read. DM only.
+	campaignParty: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/party`).then(json),
+
+	// A campaign-scoped encounter: the one record a planned fight has, visible
+	// to the continuity engine. Creating with no party uses the campaign's
+	// declared levels.
+	saveCampaignEncounter: (cid, name, party, monsters, notes) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/encounters`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name, party, monsters, notes: notes || "" }),
 		}).then(json),
 
 	// Deck builder: commander proposals, the streamed draft, list analysis,

@@ -115,6 +115,7 @@ nav:
       - Locations: campaign/locations.md
       - Quests: campaign/quests.md
       - Dungeons: campaign/dungeons.md
+      - Encounters: campaign/encounters.md
       - Rumours: campaign/rumors.md
       - Travel: campaign/travel.md
       - The Simulation Tick: campaign/simulation.md

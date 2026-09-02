@@ -8,6 +8,10 @@
 // The server owns everything that must be right: the DMG budget, the XP math,
 // and the shortlist of creatures the model is allowed to use. The verdict on
 // screen is always the server's, recomputed from the party and roster.
+//
+// A DM who runs a campaign can prefill the party boxes from its declared
+// party block (MAD-378) — the campaign is a prefill and a save scope, never
+// a requirement; a table with no campaign sees exactly the old surface.
 
 import { $, el, clear, isNarrow, debounce } from "./dom.js";
 import { api, streamEncounterDesign } from "./api.js";
@@ -21,6 +25,8 @@ let notes = ""; // the design write-up, Markdown
 let band = "Medium"; // target difficulty
 let title = ""; // the encounter's name from the designer
 let currentID = null; // saved encounter id, null while unsaved
+let campaignID = ""; // the campaign the builder is designing against, "" for none
+let partyFromCampaign = false; // the boxes still hold the campaign's declared party
 let designing = false;
 let evalAbort = null;
 let searchAbort = null;
@@ -52,6 +58,12 @@ function wire() {
 	$("enc-party-count").addEventListener("input", onQuickParty);
 	$("enc-party-level").addEventListener("input", onQuickParty);
 
+	$("enc-campaign").addEventListener("change", onPickCampaign);
+	$("enc-party-from").addEventListener("click", (e) => {
+		if (!e.target.closest("[data-party-from-edit]")) return;
+		takeBackParty();
+	});
+
 	$("enc-add-party").addEventListener("submit", (e) => {
 		e.preventDefault();
 		const lvl = parseInt($("enc-level").value, 10);
@@ -59,6 +71,7 @@ function wire() {
 		if (party.length >= 12) return;
 		party.push(lvl);
 		$("enc-level").value = "1";
+		stopTrackingCampaignParty();
 		syncPartyInputs();
 		refresh();
 	});
@@ -66,6 +79,7 @@ function wire() {
 		const rm = e.target.closest("[data-party-rm]");
 		if (!rm) return;
 		party.splice(parseInt(rm.dataset.partyRm, 10), 1);
+		stopTrackingCampaignParty();
 		syncPartyInputs();
 		refresh();
 	});
@@ -123,6 +137,7 @@ function wire() {
 /** Open the builder surface. */
 function openEncounter() {
 	loadSavedList();
+	loadCampaigns();
 	refresh();
 	$("enc-idea").focus();
 }
@@ -164,6 +179,7 @@ function onQuickParty() {
 	const count = clampInt($("enc-party-count").value, 1, 12, 4);
 	const level = clampInt($("enc-party-level").value, 1, 20, 3);
 	party = Array.from({ length: count }, () => level);
+	stopTrackingCampaignParty();
 	renderParty();
 	renderPartySum();
 	refresh();
@@ -203,6 +219,108 @@ function clampInt(raw, min, max, fallback) {
 	return Math.min(max, Math.max(min, n));
 }
 
+/* ---------- The campaign, when there is one ---------- */
+
+// The party boxes are the DM's; a campaign is only ever a prefill (MAD-378).
+// Picking one fills the boxes from its declared party block and says where
+// the numbers came from; the first manual edit takes them back. Without a
+// campaign — or for a DM who has none — the surface is exactly what it
+// always was.
+
+async function loadCampaigns() {
+	const wrap = $("enc-campaign").closest(".enc-campaign-more");
+	try {
+		const data = await api.campaignList();
+		const mine = (data.campaigns || []).filter((c) => c.my_role === "dm" || c.my_role === "keeper");
+		if (mine.length === 0) {
+			wrap.hidden = true;
+			return;
+		}
+		const sel = $("enc-campaign");
+		const current = sel.value;
+		clear(sel);
+		sel.append(el("option", {
+			attrs: { value: "" },
+			text: "No campaign — my own table",
+		}));
+		for (const c of mine) {
+			sel.append(el("option", { attrs: { value: c.id }, text: c.name }));
+		}
+		sel.value = mine.some((c) => c.id === current) ? current : "";
+		wrap.hidden = false;
+	} catch (_) {
+		// No campaign list, no campaign features — the builder carries on.
+		wrap.hidden = true;
+	}
+}
+
+async function onPickCampaign() {
+	campaignID = $("enc-campaign").value;
+	stopTrackingCampaignParty();
+	if (!campaignID) {
+		refresh();
+		return;
+	}
+	try {
+		const data = await api.campaignParty(campaignID);
+		adoptCampaignParty(data.party || {});
+	} catch (_) {
+		// Not this campaign's DM, or it went away — the boxes stay the DM's
+		// own and the campaign only scopes the save.
+	}
+	refresh();
+}
+
+// adoptCampaignParty takes a party view (levels, label, problems) and, when
+// the campaign declares any levels, makes them the table.
+function adoptCampaignParty(view) {
+	const levels = view.levels || [];
+	if (levels.length === 0) {
+		stopTrackingCampaignParty();
+		return;
+	}
+	party = levels.slice();
+	partyFromCampaign = true;
+	syncPartyInputs();
+	renderPartyFromLine(view.label || "", view.problems || []);
+}
+
+// The provenance line: where the numbers came from, what could not be read,
+// and the affordance that takes the table back.
+function renderPartyFromLine(label, problems) {
+	const line = $("enc-party-from");
+	clear(line);
+	line.append(document.createTextNode(label || "from your campaign"));
+	if (problems.length) {
+		line.append(el("span", {
+			class: "enc-party-from-warn",
+			text: ` · ${problems.length} unreadable key${problems.length === 1 ? "" : "s"}`,
+			attrs: { title: problems.map((p) => `${p.name}: ${p.field} — ${p.detail}`).join("\n") },
+		}));
+	}
+	line.append(el("button", {
+		class: "enc-party-from-edit",
+		attrs: { type: "button", "data-party-from-edit": "" },
+		text: "edit",
+	}));
+	line.hidden = false;
+}
+
+// stopTrackingCampaignParty drops the provenance without touching the boxes:
+// the numbers are the DM's own now, whatever they started as.
+function stopTrackingCampaignParty() {
+	partyFromCampaign = false;
+	$("enc-party-from").hidden = true;
+}
+
+// The edit affordance on the line itself: claim the numbers and go straight
+// to the level box, which is the thing a DM editing a uniform table edits.
+function takeBackParty() {
+	stopTrackingCampaignParty();
+	$("enc-party-level").focus();
+	refresh();
+}
+
 /* ---------- The budget readout ---------- */
 
 // "What fits" is worth showing before anything is built: it turns the
@@ -213,7 +331,7 @@ const refreshBudget = debounce(async () => {
 	budgetAbort = controller;
 	const line = $("enc-budget");
 	try {
-		const data = await api.encounterBudget(party, band, controller.signal);
+		const data = await api.encounterBudget(party, band, campaignID, controller.signal);
 		if (controller.signal.aborted) return;
 		const b = data.budget || {};
 		const shapes = (b.shapes || []).filter((s) => s.count > 1).slice(0, 3)
@@ -267,6 +385,7 @@ async function runDesign(revising) {
 			feedback,
 			current: revising ? roster : [],
 			notes: revising ? notes : "",
+			campaign_id: campaignID,
 		}, {
 			onMeta: (meta) => {
 				const n = meta.candidates || 0;
@@ -652,6 +771,16 @@ async function onPickSaved() {
 		notes = enc.notes || "";
 		title = enc.name || "";
 		statblocks.clear();
+		// A loaded encounter knows the campaign it belongs to; the picker
+		// follows it when that campaign is one of the DM's own.
+		if (enc.campaign_id) {
+			const sel = $("enc-campaign");
+			if ([...sel.options].some((o) => o.value === enc.campaign_id)) {
+				campaignID = enc.campaign_id;
+				sel.value = campaignID;
+			}
+		}
+		stopTrackingCampaignParty();
 		$("enc-name").value = enc.name || "";
 		$("enc-delete").hidden = false;
 		syncPartyInputs();
@@ -696,7 +825,14 @@ async function onSave(e) {
 		return;
 	}
 	try {
-		const data = await api.saveEncounter(currentID, name, party, roster, notes);
+		// An update keeps whatever scope the encounter already has; a new
+		// save with a campaign picked is the campaign's — the one record a
+		// planned fight has, visible to the continuity engine.
+		const data = currentID
+			? await api.saveEncounter(currentID, name, party, roster, notes)
+			: campaignID
+				? await api.saveCampaignEncounter(campaignID, name, party, roster, notes)
+				: await api.saveEncounter(null, name, party, roster, notes);
 		const enc = data.encounter;
 		currentID = enc.id;
 		$("enc-name").value = enc.name;

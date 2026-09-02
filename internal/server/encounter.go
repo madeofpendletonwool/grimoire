@@ -38,20 +38,31 @@ func (s *Server) encountersEnabled(w http.ResponseWriter) bool {
 
 // encounterView is the JSON shape of a saved encounter. The verdict is
 // recomputed server-side from the stored party and monsters on every read.
+//
+// The campaign fields (MAD-378) are omitted when empty, so an owner-scoped
+// encounter serialises to exactly the object the builder has always received.
 type encounterView struct {
-	ID        string              `json:"id"`
-	Name      string              `json:"name"`
-	Party     []int               `json:"party"`
-	Monsters  []encounter.Monster `json:"monsters"`
-	Notes     string              `json:"notes"`
-	CreatedAt string              `json:"created_at"`
-	UpdatedAt string              `json:"updated_at"`
-	Verdict   encounter.Verdict   `json:"verdict"`
+	ID             string              `json:"id"`
+	Name           string              `json:"name"`
+	Party          []int               `json:"party"`
+	Monsters       []encounter.Monster `json:"monsters"`
+	Notes          string              `json:"notes"`
+	CampaignID     string              `json:"campaign_id,omitempty"`
+	SessionEventID string              `json:"session_event_id,omitempty"`
+	SceneID        string              `json:"scene_id,omitempty"`
+	Objective      string              `json:"objective,omitempty"`
+	Terrain        map[string]any      `json:"terrain,omitempty"`
+	Status         string              `json:"status,omitempty"`
+	CreatedAt      string              `json:"created_at"`
+	UpdatedAt      string              `json:"updated_at"`
+	Verdict        encounter.Verdict   `json:"verdict"`
 }
 
 func toEncounterView(e encounter.Encounter) encounterView {
 	return encounterView{
 		ID: e.ID, Name: e.Name, Party: e.Party, Monsters: e.Monsters, Notes: e.Notes,
+		CampaignID: e.CampaignID, SessionEventID: e.SessionEventID, SceneID: e.SceneID,
+		Objective: e.Objective, Terrain: e.Terrain, Status: e.Status,
 		CreatedAt: e.CreatedAt.Format(http.TimeFormat), UpdatedAt: e.UpdatedAt.Format(http.TimeFormat),
 		Verdict: encounter.Evaluate(e.Party, e.Monsters),
 	}

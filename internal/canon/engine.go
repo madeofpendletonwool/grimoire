@@ -34,9 +34,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -139,20 +139,41 @@ func (s SessionRef) date() time.Time {
 	return s.CreatedAt
 }
 
-// EncounterRef is one planned encounter: an 'encounter' session event on a
-// planned session whose payload carries a roster. The payload contract this
-// loader accepts is
+// EncounterRef is one planned encounter, from either of the two places a
+// campaign now holds one.
+//
+// The first is an 'encounter' session event on a planned session whose payload
+// carries a roster. The payload contract this loader accepts is
 //
 //	{"name": "...", "party": [3,3,2,3], "monsters": [{"name": "Goblin", "cr": "1/4", "count": 6}, ...]}
 //
 // — the shape the in-play encounter log and the Stage 5 session prep write.
 // Events with no monsters array are not planned encounters and are skipped.
+//
+// The second (MAD-378) is a campaign-scoped `encounters` row: the long form
+// the builder saves, roster, design notes and all. A row that names a session
+// event is that event's long form and replaces it here rather than doubling
+// it — the event stays the finding's anchor, so a campaign that adopts the
+// record does not see its findings move.
 type EncounterRef struct {
 	EventID   string
 	SessionID string
-	Name      string
-	Party     []int // the levels it was planned against, when recorded
-	Monsters  []encounter.Monster
+	// EncounterID is the encounters row this came from, empty when the
+	// encounter exists only as a session event.
+	EncounterID string
+	Name        string
+	Party       []int // the levels it was planned against, when recorded
+	Monsters    []encounter.Monster
+}
+
+// record is what a finding about this encounter points at: the session event
+// when there is one — that is the canonical marker a fight is planned, and
+// where every finding has always pointed — and the encounters row otherwise.
+func (e EncounterRef) record() (kind, id string) {
+	if e.EventID != "" {
+		return "session_event", e.EventID
+	}
+	return "encounter", e.EncounterID
 }
 
 // Snapshot is a campaign's whole state as the deterministic engine sees it:
@@ -171,10 +192,16 @@ type Snapshot struct {
 	// Empty means the mirror was never synced and stat_block_unresolved is
 	// skipped: "cannot resolve" must not become "does not exist".
 	Bestiary map[string]bool
-	// Party is the campaign's current pc levels, best-effort read from pc
-	// entity payloads ("level" key), in name order. Empty means no pc
-	// declares a level and party_level_drift is skipped.
+	// Party is the campaign's current pc levels, in name order. Empty means
+	// no pc declares a level and party_level_drift is skipped. It is
+	// PartyTable.Levels(); the field stays because every rule and every prep
+	// surface reads it.
 	Party []int
+	// PartyTable is the declared party block behind Party (MAD-378): the
+	// whole mechanical sheet each pc carries, plus the block keys that could
+	// not be read. Malformed keys are reported here, never dropped silently
+	// and never fatal to the load.
+	PartyTable *campaign.PartyTable
 	// IntroducedSession maps a fact id to the session its earliest
 	// provenance row cites — the session that introduced it. Facts whose
 	// provenance cites no session (or a session id that does not resolve)
@@ -332,27 +359,13 @@ func LoadSnapshot(ctx context.Context, db *sql.DB, campaignID string) (*Snapshot
 		}
 	}
 
-	// The current party: every live pc's declared level, in name order. The
-	// seed and the encounter surfaces both keep levels in the pc payload's
-	// "level" key; a pc without one is not level-dated and simply does not
-	// contribute.
-	type pcLevel struct {
-		name  string
-		level int
-	}
-	var pcs []pcLevel
-	for _, e := range snap.Entities {
-		if e.Kind != campaign.KindPC || e.Status == campaign.StatusDeleted {
-			continue
-		}
-		if lvl, ok := payloadLevel(e.Payload); ok {
-			pcs = append(pcs, pcLevel{name: e.Name, level: lvl})
-		}
-	}
-	sort.Slice(pcs, func(i, j int) bool { return pcs[i].name < pcs[j].name })
-	for _, p := range pcs {
-		snap.Party = append(snap.Party, p.level)
-	}
+	// The current party. The declared party block (MAD-378) is the one reader
+	// of the pc payload now; Levels() is bit-for-bit what this loader used to
+	// compute by hand — live pcs, a level only when it parses to 1..20, name
+	// order — so no finding moves. The table comes along for the surfaces
+	// that want the rest of the sheet, and for the malformed keys it reports.
+	snap.PartyTable = campaign.PartyTableOf(campaignID, snap.Entities)
+	snap.Party = snap.PartyTable.Levels()
 
 	// The narrative spine: the plan the story rules check. Loaded last so
 	// the graph snapshot it joins against is already assembled.
@@ -419,7 +432,112 @@ func loadEncounters(ctx context.Context, db *sql.DB, campaignID string, snap *Sn
 		}
 		snap.Encounters = append(snap.Encounters, ref)
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("engine encounters: %w", err)
+	}
+	return loadEncounterRecords(ctx, db, campaignID, snap)
+}
+
+// loadEncounterRecords folds the campaign-scoped `encounters` rows (MAD-378)
+// into the same list the session events produced, so a roster the builder
+// saved is checked by exactly the rules a roster in an event payload is.
+//
+// A row that names a session event is that event's long form: it replaces the
+// event's ref in place, keeping the event id so findings keep pointing where
+// they always have, and contributing the fuller roster the record holds. A row
+// naming no event is its own record and findings point at the row.
+//
+// Discarded encounters are out — a fight the DM threw away is not planned —
+// and so is the table itself when this install has never built it: the store
+// creates `encounters` on demand, and a box that has never opened the builder
+// has no table to read, exactly like the bestiary mirror above.
+func loadEncounterRecords(ctx context.Context, db *sql.DB, campaignID string, snap *Snapshot) error {
+	have, err := tableExists(ctx, db, "encounters")
+	if err != nil {
+		return err
+	}
+	if !have {
+		return nil
+	}
+	// campaign_id arrived in migration 0026; a database migrated no further
+	// than 0025 has the table but not the column, and has no campaign-scoped
+	// encounters by definition.
+	scoped, err := columnExists(ctx, db, "encounters", "campaign_id")
+	if err != nil || !scoped {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, session_event_id, name, party, monsters
+		  FROM encounters
+		 WHERE campaign_id = ? AND status != 'discarded'
+		 ORDER BY updated_at`, campaignID)
+	if err != nil {
+		return fmt.Errorf("engine encounter records: %w", err)
+	}
+	defer rows.Close()
+	byEvent := map[string]int{}
+	for i, e := range snap.Encounters {
+		if e.EventID != "" {
+			byEvent[e.EventID] = i
+		}
+	}
+	for rows.Next() {
+		var ref EncounterRef
+		var partyJSON, monstersJSON string
+		if err := rows.Scan(&ref.EncounterID, &ref.EventID, &ref.Name, &partyJSON, &monstersJSON); err != nil {
+			return err
+		}
+		// A malformed roster is not engine material, the same rule the event
+		// payloads follow; a malformed party simply carries no levels, which
+		// is what "planned against nothing recorded" already means.
+		if err := json.Unmarshal([]byte(monstersJSON), &ref.Monsters); err != nil || len(ref.Monsters) == 0 {
+			continue
+		}
+		_ = json.Unmarshal([]byte(partyJSON), &ref.Party)
+		for i := range ref.Monsters {
+			m := &ref.Monsters[i]
+			m.Name = strings.TrimSpace(m.Name)
+			m.CR = strings.TrimSpace(m.CR)
+			if m.Count <= 0 {
+				m.Count = 1
+			}
+			if m.XP <= 0 && m.CR != "" {
+				if label, err := encounter.ParseCR(m.CR); err == nil {
+					m.XP, _ = encounter.CRXP(label)
+				}
+			}
+		}
+		if at, ok := byEvent[ref.EventID]; ok && ref.EventID != "" {
+			ref.SessionID = snap.Encounters[at].SessionID
+			if ref.Name == "" {
+				ref.Name = snap.Encounters[at].Name
+			}
+			snap.Encounters[at] = ref
+			continue
+		}
+		// A record naming an event the engine did not load — the session is
+		// not planned any more, or the event is gone — stands on its own, and
+		// its findings point at the record.
+		ref.EventID = ""
+		snap.Encounters = append(snap.Encounters, ref)
+	}
 	return rows.Err()
+}
+
+// columnExists reports whether a table declares a named column. It is how the
+// engine stays readable against a database migrated to an older version than
+// the binary expects, which is an ordinary state during a rolling upgrade.
+func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
+	var one int
+	err := db.QueryRowContext(ctx,
+		`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("engine column check: %w", err)
+	}
+	return true, nil
 }
 
 // tableExists reports whether a named table is present.
@@ -434,24 +552,6 @@ func tableExists(ctx context.Context, db *sql.DB, name string) (bool, error) {
 		return false, fmt.Errorf("check table %s: %w", name, err)
 	}
 	return true, nil
-}
-
-// payloadLevel reads a pc payload's "level" key, tolerating the numeric and
-// string forms JSON round-trips produce.
-func payloadLevel(payload map[string]any) (int, bool) {
-	v, ok := payload["level"]
-	if !ok {
-		return 0, false
-	}
-	switch lvl := v.(type) {
-	case float64:
-		return int(lvl), lvl >= 1 && lvl <= 20
-	case string:
-		n, err := strconv.Atoi(strings.TrimSpace(lvl))
-		return n, err == nil && n >= 1 && n <= 20
-	default:
-		return 0, false
-	}
 }
 
 // squashName lowercases and keeps only letters and digits — the same name
@@ -827,9 +927,10 @@ func checkEncounters(snap *Snapshot) []campaign.Finding {
 				}
 			}
 			if len(missing) > 0 {
+				kind, id := e.record()
 				out = append(out, campaign.Finding{
 					Check: CheckStatBlockUnresolved, Severity: campaign.SeverityWarn,
-					RecordKind: "session_event", RecordID: e.EventID,
+					RecordKind: kind, RecordID: id,
 					Message: fmt.Sprintf("planned encounter %q uses monster(s) with no bestiary entry: %s",
 						e.Name, strings.Join(missing, ", ")),
 				})
@@ -839,9 +940,10 @@ func checkEncounters(snap *Snapshot) []campaign.Finding {
 			planned := encounter.Evaluate(e.Party, e.Monsters)
 			current := encounter.Evaluate(snap.Party, e.Monsters)
 			if planned.Difficulty != current.Difficulty {
+				kind, id := e.record()
 				out = append(out, campaign.Finding{
 					Check: CheckPartyLevelDrift, Severity: campaign.SeverityWarn,
-					RecordKind: "session_event", RecordID: e.EventID,
+					RecordKind: kind, RecordID: id,
 					Message: fmt.Sprintf("planned encounter %q was built as %s for its party but lands %s for the party as it stands today",
 						e.Name, planned.Difficulty, current.Difficulty),
 				})
