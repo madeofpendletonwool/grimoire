@@ -80,6 +80,7 @@ const (
 	BatchSourceLocation    = "location"
 	BatchSourceDungeon     = "dungeon"
 	BatchSourceRumor       = "rumor"
+	BatchSourceJourney     = "journey"
 )
 
 // batchSources is the validated source vocabulary.
@@ -87,7 +88,7 @@ var batchSources = map[string]bool{
 	BatchSourceSkeleton: true, BatchSourceStoryPlan: true, BatchSourceScene: true,
 	BatchSourceNLCommand: true, BatchSourceSessionPrep: true, BatchSourceTick: true,
 	BatchSourceDowntime: true, BatchSourceQuest: true, BatchSourceLocation: true,
-	BatchSourceDungeon: true, BatchSourceRumor: true,
+	BatchSourceDungeon: true, BatchSourceRumor: true, BatchSourceJourney: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -793,6 +794,12 @@ func (s *Store) finishDecide(ctx context.Context, campaignID string, batch *Batc
 			// campaign store every canon store already carries.
 			if err := s.finalizeDungeonBatch(ctx, out.Batch); err != nil {
 				return nil, fmt.Errorf("finish dungeon batch %s: %w", out.Batch.ID, err)
+			}
+		case BatchSourceJourney:
+			if s.journeyFinalizer != nil {
+				if err := s.journeyFinalizer.FinalizeJourneyBatch(ctx, out.Batch); err != nil {
+					return nil, fmt.Errorf("finish journey batch %s: %w", out.Batch.ID, err)
+				}
 			}
 		}
 	}

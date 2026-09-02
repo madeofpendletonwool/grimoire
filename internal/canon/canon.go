@@ -246,6 +246,11 @@ type Store struct {
 	// status flip. Wired with WithDowntimeFinalizer; internal/downtime
 	// implements it.
 	downtimeFinalizer DowntimeFinalizer
+	// journeyFinalizer, when wired, completes a decided journey batch —
+	// the clock move under reason 'travel', the fact-less rumour
+	// holdings, and the journeys row's status flip. Wired with
+	// WithJourneyFinalizer; internal/journey implements it.
+	journeyFinalizer JourneyFinalizer
 }
 
 // New builds a canon store on an open, migrated database handle with the

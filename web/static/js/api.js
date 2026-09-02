@@ -369,6 +369,41 @@ export const api = {
 			method: "POST",
 		}).then(json),
 
+	// Journeys (MAD-375): plan a road at a density — the seeded day table
+	// comes back and nothing is written but the journey's own rows — then
+	// resolve days at the table and the whole road through the batch gate.
+	campaignJourneys: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/journeys`).then(json),
+
+	campaignJourneyPlan: (cid, plan) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/journeys`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(plan),
+		}).then(json),
+
+	campaignJourney: (cid, jid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/journeys/${encodeURIComponent(jid)}`).then(json),
+
+	campaignJourneyPatch: (cid, jid, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/journeys/${encodeURIComponent(jid)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	campaignJourneyDayResolve: (cid, jid, day, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/journeys/${encodeURIComponent(jid)}/days/${day}/resolve`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body || {}),
+		}).then(json),
+
+	campaignJourneyResolve: (cid, jid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/journeys/${encodeURIComponent(jid)}/resolve`, {
+			method: "POST",
+		}).then(json),
+
 	// The faction surface (MAD-366): the scope-filtered dossier and the
 	// DM-only plans. A player's dossier carries the public face and aware
 	// edges; plans never cross a player scope, server-side by construction.

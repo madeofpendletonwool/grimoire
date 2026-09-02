@@ -26,6 +26,8 @@ let quests = []; // the board: DM machines or player journal entries
 let selectedQuestID = null; // the quest whose detail chart is open (DM)
 let dungeons = []; // the workshop listing (DM)
 let rumors = []; // the mill: whatever the server sent at the caller's scope
+let journeys = []; // the roads: the DM's journeys with their status
+let selectedJourneyID = null; // the journey whose day table is open (DM)
 let selectedDungeonID = null; // the dungeon whose map is open (DM)
 let dungeonDetail = null; // the open dungeon's full view
 
@@ -70,6 +72,11 @@ function wire() {
 	// that proposal on the ordinary review queue.
 	$("camp-simulate-form").addEventListener("submit", onSimulate);
 	$("camp-simulate-result").addEventListener("click", onSimulateResultClick);
+	// The road (MAD-375): plan a journey at a density, resolve its days
+	// as they are played, then resolve the whole road through the review
+	// gate — the same hand-off the tick makes.
+	$("camp-road-form").addEventListener("submit", onPlanJourney);
+	$("camp-journeys").addEventListener("click", onJourneyClick);
 	// The quest board (MAD-369): the list, the machine chart and the DM's
 	// move control, all delegated so re-renders need no re-binds.
 	$("camp-quests").addEventListener("click", onQuestBoardClick);
@@ -136,6 +143,9 @@ function closeCampaign() {
 	selected = null;
 	selectedQuestID = null;
 	quests = [];
+	selectedJourneyID = null;
+	journeys = [];
+	journeyDays = [];
 	selectedDungeonID = null;
 	dungeonDetail = null;
 	dungeons = [];
@@ -203,6 +213,7 @@ async function selectCampaign(id) {
 	loadSchedule();
 	loadQuests();
 	loadRumors();
+	loadJourneys();
 	if (isDM()) loadDungeons(); else clearDungeons();
 	if (isDM()) {
 		loadMembers();
@@ -899,6 +910,204 @@ async function onSimulateResultClick(e) {
 		reviewFor(current.id);
 	} catch (err) {
 		renderMeta(err.message, true);
+	}
+}
+
+/* ---------- the road (MAD-375) ---------- */
+
+let journeyDays = []; // the selected journey's day table
+
+// fillRoadOptions populates the from/to selects with the campaign's
+// locations — the same entity list the browser holds.
+function fillRoadOptions() {
+	const locations = entities.filter((e) => e.kind === "location");
+	for (const select of [$("camp-road-from"), $("camp-road-to")]) {
+		const prev = select.value;
+		clear(select);
+		select.append(el("option", { text: "—", attrs: { value: "" } }));
+		for (const loc of locations) {
+			select.append(el("option", { text: loc.name, attrs: { value: loc.id } }));
+		}
+		if (prev && locations.some((l) => l.id === prev)) select.value = prev;
+	}
+}
+
+async function onPlanJourney(e) {
+	e.preventDefault();
+	const plan = {
+		from: $("camp-road-from").value,
+		to: $("camp-road-to").value,
+		density: $("camp-road-density").value,
+		pace: $("camp-road-pace").value,
+	};
+	if (!plan.from || !plan.to) {
+		renderMeta("A journey needs a from and a to.", true);
+		return;
+	}
+	const days = parseInt($("camp-road-days").value, 10);
+	if (!Number.isNaN(days) && days > 0) plan.days = days;
+	const seed = $("camp-road-seed").value.trim();
+	if (seed) plan.seed = parseInt(seed, 10);
+	try {
+		const data = await api.campaignJourneyPlan(current.id, plan);
+		renderMeta("The road is planned — resolve days as you play them, then resolve the journey.");
+		selectedJourneyID = data.journey?.id || null;
+		await loadJourneys();
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+async function loadJourneys() {
+	if (!current) return;
+	let data;
+	try {
+		data = await api.campaignJourneys(current.id);
+	} catch (err) {
+		journeys = [];
+		renderJourneys();
+		return;
+	}
+	journeys = data.journeys || [];
+	if (!selectedJourneyID && journeys.length > 0) selectedJourneyID = journeys[0].id;
+	renderJourneys();
+	if (selectedJourneyID) loadJourneyDays();
+}
+
+async function loadJourneyDays() {
+	if (!current || !selectedJourneyID) return;
+	let data;
+	try {
+		data = await api.campaignJourney(current.id, selectedJourneyID);
+	} catch (err) {
+		journeyDays = [];
+		renderJourneys();
+		return;
+	}
+	journeyDays = data.days || [];
+	const box = $("camp-journey-days-" + selectedJourneyID);
+	if (box) renderDayTable(box, data.journey);
+}
+
+// kindChip is one event kind's table glyph.
+const kindGlyphs = {
+	encounter: "⚔", discovery: "✦", hazard: "⚠", social: "☺", rumour: "❝", landmark: "⌂", uneventful: "·",
+};
+
+function renderJourneys() {
+	const box = clear($("camp-journeys"));
+	$("camp-road-form").hidden = !isDM();
+	if (isDM()) fillRoadOptions();
+	if (!isDM()) return;
+	if ((journeys || []).length === 0) {
+		box.append(el("p", { class: "camp-status", text: "No journeys on the roads yet." }));
+		return;
+	}
+	for (const j of journeys) box.append(journeyRow(j));
+}
+
+function journeyRow(j) {
+	const row = el("div", { class: "camp-journey", attrs: { "data-jid": j.id } });
+	const head = el("div", { class: "camp-journey-head" });
+	const chips = el("span", { class: "camp-fact-chips" });
+	chips.append(el("span", { class: "enc-chip", text: `${j.days}d` }));
+	chips.append(el("span", { class: "enc-chip", text: j.density }));
+	if (j.status !== "planned") chips.append(el("span", { class: "enc-chip" + (j.status === "done" ? " is-on" : ""), text: j.status }));
+	head.append(
+		el("span", { class: "camp-journey-route", text: `${j.from_name} → ${j.to_name}` }),
+		chips,
+	);
+	if (isDM() && j.status !== "done" && j.status !== "abandoned") {
+		head.append(
+			el("button", { class: "enc-chip", text: "abandon", attrs: { type: "button", "data-abandon-journey": j.id } }),
+		);
+	}
+	row.append(head);
+	if (selectedJourneyID === j.id || journeys.length === 1) {
+		const days = el("div", { class: "camp-journey-days", id: "camp-journey-days-" + j.id });
+		renderDayTable(days, j);
+		row.append(days);
+	}
+	return row;
+}
+
+// renderDayTable draws the strip: each day a card with its weather and
+// its incident, resolved days inked and unresolved ghosted — the same
+// grammar the quest board's taken and untaken branches use.
+function renderDayTable(box, j) {
+	const strip = clear(box);
+	if (!j) return;
+	strip.append(el("p", { class: "camp-journey-line", text: j.line || `${j.days} days.` }));
+	if ((journeyDays || []).length === 0) return;
+	const wrap = el("div", { class: "camp-journey-strip f-parchment", attrs: { role: "list", "aria-label": "Day table" } });
+	for (const d of journeyDays) {
+		const card = el("div", {
+			class: "camp-day" + (d.resolved ? " is-inked" : " is-ghost"),
+			attrs: {
+				role: "listitem",
+				title: `${d.date || "day " + d.clock_day} — ${d.weather?.summary || ""}, ${d.weather?.temp_c}°, ${d.weather?.wind || ""}` + (d.encounter_budget ? ` — ${d.encounter_budget}` : ""),
+			},
+		});
+		card.append(
+			el("span", { class: "camp-day-when", text: d.date || "day " + d.clock_day }),
+			el("span", { class: "camp-day-kind", text: `${kindGlyphs[d.event_kind] || "·"} ${d.event_kind}` }),
+			el("span", { class: "camp-day-weather", text: `${d.weather?.summary || ""} ${d.weather?.temp_c}°` }),
+		);
+		if (d.detail) card.append(el("p", { class: "camp-day-detail", text: d.detail }));
+		if (d.entity_name) card.append(el("span", { class: "camp-day-entity", text: d.entity_name }));
+		if (isDM() && !d.resolved && j.status !== "done" && j.status !== "abandoned") {
+			card.append(el("button", {
+				class: "enc-chip", text: "happened",
+				attrs: { type: "button", "data-resolve-day": String(d.index) },
+			}));
+		}
+		wrap.append(card);
+	}
+	strip.append(wrap);
+	if (isDM() && j.status !== "done" && j.status !== "abandoned") {
+		strip.append(el("button", {
+			class: "enc-btn primary", text: "Resolve the journey",
+			attrs: { type: "button", "data-resolve-journey": j.id },
+		}));
+	}
+}
+
+async function onJourneyClick(e) {
+	const day = e.target.closest("[data-resolve-day]");
+	if (day) {
+		const jid = day.closest("[data-jid]")?.dataset.jid;
+		if (!jid) return;
+		const idx = day.dataset.resolveDay;
+		const detail = prompt("What actually happened that day (leave empty to keep the roll's account)?");
+		if (detail === null) return;
+		try {
+			await api.campaignJourneyDayResolve(current.id, jid, idx, detail ? { detail } : {});
+			await loadJourneyDays();
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	const whole = e.target.closest("[data-resolve-journey]");
+	if (whole) {
+		try {
+			await api.campaignJourneyResolve(current.id, whole.dataset.resolveJourney);
+			renderMeta("The road is staged — decide it on the review queue.");
+			await loadJourneys();
+			reviewFor(current.id);
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
+		return;
+	}
+	const abandon = e.target.closest("[data-abandon-journey]");
+	if (abandon) {
+		try {
+			await api.campaignJourneyPatch(current.id, abandon.dataset.abandonJourney, { status: "abandoned" });
+			await loadJourneys();
+		} catch (err) {
+			renderMeta(err.message, true);
+		}
 	}
 }
 

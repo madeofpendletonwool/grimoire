@@ -86,6 +86,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
+	"github.com/madeofpendletonwool/grimoire/internal/journey"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
@@ -1533,6 +1534,15 @@ func runServe() error {
 	}
 	canonEngine = canonEngine.WithDowntimeFinalizer(downtimeEngine)
 
+	// Journeys (MAD-375): the road between two places at the DM's asked
+	// density, same gate, reason 'travel' on the clock. Its store is the
+	// journey finalizer.
+	journeyEngine, err := journey.New(store.DB(), campaigns, canonEngine, knowledge)
+	if err != nil {
+		return err
+	}
+	canonEngine = canonEngine.WithJourneyFinalizer(journeyEngine)
+
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
 		func(ctx context.Context) error { return buildIndex(ctx, store) })
@@ -1546,7 +1556,7 @@ func runServe() error {
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)
-	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine)
+	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine).WithJourneys(journeyEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {

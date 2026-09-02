@@ -3085,6 +3085,34 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .camp-sim-line { font-size: var(--fs-sm); color: var(--parchment); font-family: var(--font-prose); }
 .camp-sim-warn { color: var(--gold-bright); }
 
+/* The road (MAD-375): the plan form, the journey list, and the day table
+   as a strip — resolved days inked, unresolved ghosted, the quest board's
+   grammar applied to a week of travel. */
+.camp-road-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--stone-line); }
+.camp-journeys { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
+.camp-journey { display: flex; flex-direction: column; gap: var(--sp-1); }
+.camp-journey-head { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
+.camp-journey-route { color: var(--parchment); font-family: var(--font-prose); font-size: var(--fs-sm); flex: 1; min-width: 8rem; }
+.camp-journey-line { margin: 0; color: var(--ink-soft); font-family: var(--font-prose); font-size: var(--fs-xs); }
+.camp-journey-strip { display: flex; gap: 0.4rem; overflow-x: auto; padding: var(--sp-2); }
+.camp-day {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	min-width: 9.5rem;
+	max-width: 12rem;
+	padding: 0.45rem 0.55rem;
+	border: 1px solid transparent;
+}
+.camp-day.is-inked { color: var(--ink); box-shadow: inset 0 -3px 0 var(--gold); }
+.camp-day.is-ghost { color: var(--ink-soft); opacity: 0.75; border-color: var(--ink-soft); }
+.camp-day-when { font-family: var(--font-pixel); font-size: var(--fs-xs); letter-spacing: 0.04em; opacity: 0.8; }
+.camp-day-kind { font-family: var(--font-display); font-size: var(--fs-sm); color: inherit; }
+.camp-day-weather { font-family: var(--font-prose); font-size: var(--fs-xs); opacity: 0.75; }
+.camp-day-detail { margin: 0.15rem 0 0; font-family: var(--font-prose); font-size: var(--fs-xs); color: inherit; }
+.camp-day-entity { font-family: var(--font-pixel); font-size: var(--fs-xs); color: var(--gold-dim); }
+.camp-journey-days { display: flex; flex-direction: column; gap: var(--sp-1); }
+
 /* Parchment-context text: the sheet and the map carry their status lines in
    ink-soft, not parchment-on-parchment. */
 .camp-sheet { color: var(--ink); font-family: var(--font-prose); min-height: 12rem; }
