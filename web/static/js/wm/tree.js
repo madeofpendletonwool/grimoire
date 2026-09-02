@@ -158,6 +158,16 @@ export function insert(root, targetId, node, how = "row-after") {
 	if (!target) return root;
 
 	if (how === "tab") {
+		// Join the container the target is already in, rather than wrapping the
+		// target in a second one. Nesting gave a tab strip per tool — four of
+		// them stacked above one window — instead of one strip with four tabs.
+		const host = parentOf(root, targetId);
+		if (host && host.t === "tabs") {
+			const at = host.kids.indexOf(target) + 1;
+			const kids = host.kids.slice();
+			kids.splice(at, 0, node);
+			return replace(root, host.id, () => ({ ...host, kids, active: at }));
+		}
 		return replace(root, targetId, (n) =>
 			n.t === "tabs"
 				? { ...n, kids: [...n.kids, node], active: n.kids.length }

@@ -17,8 +17,8 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
-	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 	"github.com/madeofpendletonwool/grimoire/internal/story"
+	"github.com/madeofpendletonwool/grimoire/internal/testdb"
 )
 
 // newPrepServer boots a server with no model key at all — the canon engine
@@ -27,14 +27,11 @@ import (
 // 503 in this same configuration, which the test asserts for contrast.
 func newPrepServer(t *testing.T) (*Server, fixture, *index.Store) {
 	t.Helper()
-	store, err := index.Open(t.TempDir() + "/test.db")
+	store, err := index.Open(testdb.Path(t))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := migrate.Up(store.DB()); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	users, err := auth.New(store.DB(), 0, 0)
 	if err != nil {
 		t.Fatalf("open auth store: %v", err)

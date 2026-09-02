@@ -26,6 +26,7 @@ import * as wm from "./wm/wm.js";
 import { initWM, openTool } from "./wm/wm.js";
 import { initDrag } from "./wm/drag.js";
 import { initKeys, pushModal, popModal, refreshSheet, pretty } from "./wm/keys.js";
+import { openMenu, closeMenu, toolItems } from "./wm/menu.js";
 import * as ws from "./wm/workspaces.js";
 
 /* ---------- the rail ---------- */
@@ -142,6 +143,42 @@ function initRail() {
 	$("topbar-search").addEventListener("click", () => openPalette());
 }
 
+/* ---------- the tool picker and the command menu ---------- */
+
+/**
+ * Ask which tool, then do something with it. Split right, split down and
+ * "open a tool" all need a tool before they mean anything; all three used to
+ * open the rules palette instead, which cannot open one.
+ */
+function pickTool(title, run) {
+	openMenu({
+		title,
+		items: toolItems(state.corpus, run),
+		onClose: popModal,
+	});
+	pushModal();
+}
+
+/** Everything the shell can do, in one list. */
+function openCommandMenu(cmd) {
+	const items = [
+		...toolItems(state.corpus, (id) => openTool(id)).map((it) => ({ ...it, hint: "Open" })),
+		{ label: "Split right", hint: "Window", run: cmd.splitRight },
+		{ label: "Split down", hint: "Window", run: cmd.splitDown },
+		{ label: "Tab / untab", hint: "Window", run: cmd.toggleTabs },
+		{ label: "Zoom window", hint: "Window", run: cmd.zoom },
+		{ label: "Close window", hint: "Window", run: cmd.close },
+		{ label: "Close every window", hint: "Window", run: cmd.closeAll },
+		{ label: "Reset workspace to preset", hint: "Workspace", run: cmd.resetWorkspace },
+		...ws.list().map((entry) => ({
+			label: entry.name, hint: `Workspace ${entry.slot}`, run: () => ws.switchTo(entry.slot),
+		})),
+		{ label: "Keyboard shortcuts", hint: "Help", run: () => toggleSheet(true) },
+	];
+	openMenu({ title: "Commands", items, onClose: popModal });
+	pushModal();
+}
+
 /* ---------- keyboard ---------- */
 
 /**
@@ -150,31 +187,35 @@ function initRail() {
  * drift apart.
  */
 function commands() {
-	return {
+	const cmd = {
 		palette: () => openPalette(),
-		commands: () => openPalette(),   // the command menu shares the palette shell
 		help: () => toggleSheet(),
+		// Escape unwinds one layer at a time, topmost first.
 		dismiss: () => {
+			if (closeMenu()) return;
 			if (!$("wm-sheet-layer").hidden) return toggleSheet(false);
 			closePalette();
 		},
 
 		open: (id) => openTool(id),
-		picker: () => openPalette(),
 		close: () => wm.closeWindow(),
 		closeAll: () => wm.closeAll(),
-		zoom: () => wm.toggleTabsOnFocused(),
+		zoom: () => wm.toggleZoom(),
 		focus: (dir) => wm.moveFocus(dir),
 		move: (dir) => wm.moveWindow(dir),
 		prevTab: () => wm.cycleTab(-1),
 		nextTab: () => wm.cycleTab(1),
 		toggleTabs: () => wm.toggleTabsOnFocused(),
-		splitRight: () => openPalette(),
-		splitDown: () => openPalette(),
+
+		picker: () => pickTool("Open a tool", (id) => openTool(id)),
+		splitRight: () => pickTool("Split right", (id) => wm.splitFocused("row", id)),
+		splitDown: () => pickTool("Split down", (id) => wm.splitFocused("col", id)),
 
 		workspace: (n) => ws.switchTo(n),
 		resetWorkspace: () => ws.reset(),
 	};
+	cmd.commands = () => openCommandMenu(cmd);
+	return cmd;
 }
 
 /* ---------- account, meta ---------- */

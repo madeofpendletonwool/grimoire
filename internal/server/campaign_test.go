@@ -19,7 +19,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
-	"github.com/madeofpendletonwool/grimoire/internal/migrate"
+	"github.com/madeofpendletonwool/grimoire/internal/testdb"
 )
 
 // recorder names the type the call() helper returns, so signatures below read
@@ -49,14 +49,11 @@ func dmSession(t *testing.T, s *Server) *http.Cookie {
 // knowledge layer and migrations applied — the shape runServe serves.
 func newCampaignServer(t *testing.T) (*Server, *campaign.Store, *knowledge.Store, *auth.Store) {
 	t.Helper()
-	store, err := index.Open(t.TempDir() + "/test.db")
+	store, err := index.Open(testdb.Path(t))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := migrate.Up(store.DB()); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	users, err := auth.New(store.DB(), 0, 0)
 	if err != nil {
 		t.Fatalf("open auth store: %v", err)

@@ -6,30 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/madeofpendletonwool/grimoire/internal/migrate"
-	_ "modernc.org/sqlite" // the pure-Go driver the app opens the real file with
+	"github.com/madeofpendletonwool/grimoire/internal/testdb"
 )
 
-// openDB opens a scratch database with the same DSN shape the app uses and
-// applies the migrations — user_layouts exists only through the runner.
+// openDB hands the test a private, fully migrated database — a file copy of
+// the template testdb builds once per binary. The user_layouts table exists
+// only through the migration runner.
 func openDB(t *testing.T) *sql.DB {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "uistate.db")
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", path)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
-	if err := migrate.Up(db); err != nil {
-		t.Fatalf("migrate up: %v", err)
-	}
-	return db
+	return testdb.Open(t)
 }
 
 func users(t *testing.T, db *sql.DB, ids ...string) {

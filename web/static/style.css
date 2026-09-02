@@ -1285,8 +1285,16 @@ kbd {
 
 /* Tables inside prose — the SRD's class and equipment tables ride their
    sections as HTML, and the markdown pass re-renders them as real cells. */
+/* A wide table scrolls inside its own box rather than pushing the page out
+   from under itself. The SRD's equipment tables are wider than a 400px window
+   and there is no honest way to reflow them, so they get a scroller —
+   `display: block` is what gives the table an overflow box of its own, and
+   `width: max-content` keeps its natural column widths up to the full page. */
 .prose table {
-	width: 100%;
+	display: block;
+	width: max-content;
+	max-width: 100%;
+	overflow-x: auto;
 	border-collapse: collapse;
 	margin: 0 0 1em;
 	font-size: 0.92em;
@@ -1319,6 +1327,7 @@ kbd {
 	padding: var(--sp-5) var(--sp-4) var(--sp-6);
 }
 .enc-saved select {
+	min-width: 8rem;
 	background: transparent;
 	border: none;
 	border-bottom: 1px solid var(--stone-line);
@@ -2416,6 +2425,7 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
    select, not a framed one — border-image on a <select> is not reliable across
    platforms, and a dropdown that looks like a button invites the wrong click. */
 .deck-saved-wrap select {
+	min-width: 8rem;
 	background: transparent;
 	border: none;
 	border-bottom: 1px solid var(--stone-line);
@@ -2856,8 +2866,11 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	padding-bottom: 0.2rem;
 }
 
-.sess-campaign-wrap { display: flex; align-items: center; gap: var(--sp-2); }
+.sess-campaign-wrap { display: flex; align-items: center; gap: var(--sp-2); flex: 1 1 12rem; min-width: 0; }
 .sess-campaign-wrap select {
+	flex: 1 1 auto;
+	min-width: 8rem;
+	max-width: 100%;
 	padding: 0.25rem 0.5rem;
 	font-family: var(--font-prose);
 	font-size: var(--fs-sm);
@@ -3019,13 +3032,15 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .camp-sheet .camp-status { color: var(--ink-soft); }
 .camp-graph { margin-top: var(--sp-2); }
 
-.sess-new { display: flex; gap: var(--sp-2); }
-.sess-new .sess-field { flex: 1; }
+.sess-new { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.sess-new .sess-field { flex: 1 1 10rem; }
 .sess-field { padding: 0.35rem 0.6rem; min-width: 0; background: transparent; font-family: var(--font-prose); font-size: var(--fs-sm); color: var(--parchment); }
 .sess-field:focus { outline: none; }
 .sess-btn {
 	padding: 0.3rem 0.85rem;
 	align-self: flex-start;
+	flex: none;
+	white-space: nowrap;
 	color: #1a1208;
 	cursor: pointer;
 	font-family: var(--font-pixel);
@@ -3434,8 +3449,11 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	gap: var(--sp-4);
 	align-items: stretch;
 }
-.planner-toolbar { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
-.planner-toolbar select { max-width: 24rem; }
+/* Wraps, because in a narrow window a select, a button and a sentence do not
+   fit on one line — and a select squeezed to 36px is not a control. */
+.planner-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
+.planner-toolbar select { flex: 1 1 10rem; min-width: 8rem; max-width: 24rem; }
+.planner-toolbar .sess-hint { flex: 1 1 14rem; min-width: 0; }
 .planner-empty { margin: 0; color: var(--ink-soft); font-family: var(--font-prose); }
 .planner-empty-hint { margin: 0; color: var(--ink-soft); font-family: var(--font-prose); }
 .planner-board { display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -3562,4 +3580,94 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 
 @media (prefers-reduced-motion: reduce) {
 	.rail-accel { transition: none; }
+}
+
+/* ---------- Tools at window width ----------
+   Every rule above that says `@media (max-width: 55rem)` is answering the
+   question "how wide is the browser?". Since the window manager landed, that
+   is the wrong question: a tool's width is its window's width, and three
+   windows on a 1440px screen are 430px each while the viewport is still
+   1440px. The viewport queries never fired, so two-column bodies stayed two
+   columns and crushed both halves together.
+
+   These are the same rules asked of `.wm-body`, which wm.css declares as a
+   size container named `tool`. The viewport queries stay for the pages that
+   are not windows (the gate, the share view) and for phones, where the two
+   measurements agree.
+
+   Three widths, and every tool answers the same three:
+     1060px  a three-column body drops to two
+      720px  a multi-column body drops to one
+      560px  the tool compacts — smaller padding, sidebars become overlays
+
+   A new tool inherits nothing here automatically, but it inherits the
+   breakpoints: name your body grid, add it to the 720px block, done. */
+
+@container tool (max-width: 1060px) {
+	.camp-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+	.camp-col-side { grid-column: 1 / -1; }
+}
+
+@container tool (max-width: 720px) {
+	.enc-body,
+	.deck-body,
+	.sess-body,
+	.camp-body,
+	.cchat-body { grid-template-columns: 1fr; }
+	.camp-col-side { grid-column: auto; }
+	.resolver-grid { grid-template-columns: 1fr; }
+	.study-grades { grid-template-columns: repeat(2, 1fr); }
+	.study-meta { margin-left: 0; flex-basis: 100%; }
+	.study-decks { flex-basis: 100%; }
+	.reader-guides { flex-basis: 100%; }
+	.planner-cols { grid-template-columns: 1fr; }
+	.camp-pair,
+	.camp-field-row { grid-template-columns: 1fr; }
+	.msg-user .bubble { max-width: 92%; }
+}
+
+@container tool (max-width: 560px) {
+	/* Padding first: at this width the frame's own 6px border and the page
+	   gutter are competing for the same room, and the gutter has to give. */
+	.transcript { padding: var(--sp-4) var(--sp-3) var(--sp-3); }
+	.composer-dock { padding: 0 var(--sp-3) var(--sp-3); }
+	.study { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
+	.reader { padding: var(--sp-3) var(--sp-3) var(--sp-4); }
+	.encounter { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
+	.deckbuilder { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
+	.enc-sheet { padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+	.enc-action-row .ask { margin-left: 0; }
+
+	/* The reading surface's contents column becomes an overlay behind its
+	   toggle, exactly as it does on a phone — a 15rem sidebar inside a 500px
+	   window leaves no page. */
+	.reader-contents { display: inline-flex; }
+	.reader-toc {
+		display: none;
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		z-index: 6;
+		width: min(78%, 300px);
+		box-shadow: var(--shadow-2);
+	}
+	#reader-view.toc-open .reader-toc { display: block; }
+	.reader-page { padding: var(--sp-4) var(--sp-3) var(--sp-3); }
+
+	/* Ask campaign's thread list goes the same way, but it has no toggle:
+	   the threads are reachable from the campaign surface, so hiding the
+	   rail here loses nothing. */
+	.cchat-rail-panel { display: none; }
+
+	/* The conversation header keeps the title and the actions; the chip and
+	   the mode toggle drop their labels, as they do on a phone. */
+	.chat-head .corpus-chip { padding: 0.15rem 0.4rem; font-size: 0; gap: 0; }
+	.chat-head .corpus-chip .gi { width: 1rem; height: 1rem; }
+	.chat-head .mode-opt { font-size: 0; padding: 0.25rem 0.45rem; gap: 0; }
+	.chat-head .mode-opt .gi { width: 1rem; height: 1rem; }
+
+	.study-grades { grid-template-columns: 1fr; }
+	.study-card { padding: var(--sp-3) var(--sp-4); }
+	.study-prompt { font-size: 1.1rem; }
 }

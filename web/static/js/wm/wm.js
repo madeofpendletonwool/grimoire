@@ -19,10 +19,24 @@ import { toolDef, knownTool } from "./registry.js";
 
 /* ---------- state ---------- */
 
+/**
+ * The smallest a window may get before it stops being a window.
+ *
+ * Splitting without a floor is how six tools in a row became six 5px slivers:
+ * flexbox will happily shrink a pane to nothing, and none of the tools survive
+ * it. Past this point a new tool joins the focused window as a tab instead of
+ * splitting it — the layout stays usable rather than technically correct.
+ * The same numbers are the CSS floor (--wm-min-w / --wm-min-h in wm.css), so
+ * a deliberate split scrolls rather than crushing.
+ */
+const MIN_W = 360;
+const MIN_H = 260;
+
 const wm = {
 	root: null,        // the tree, or null for an empty workspace
 	focus: null,       // id of the focused leaf
 	corpus: "mtg",
+	zoom: null,        // id of the window filling the workspace, if any
 	mounted: new Map(), // leaf id -> { el, tool, handle, bodyEl }
 	listeners: new Set(),
 	rendering: false,
@@ -97,7 +111,7 @@ export function setCorpusScope(corpus) {
  * Open a tool. Singleton tools focus their existing window instead of opening
  * a second one — see the note on `instances` in registry.js.
  */
-export function openTool(id, { how = "row-after" } = {}) {
+export function openTool(id, { how = "row-after", fit = true } = {}) {
 	if (!knownTool(id)) return null;
 
 	const existing = T.findByTool(wm.root, id);
@@ -106,13 +120,27 @@ export function openTool(id, { how = "row-after" } = {}) {
 		return existing.id;
 	}
 
+	// An explicit "split right" is honoured however tight it is — the user
+	// asked. Opening from the rail or the keyboard is not that request, and
+	// there tabbing beats a pane too narrow to read.
+	const placement = fit && !fitsSplit(how) ? "tab" : how;
+
 	const leaf = T.leaf(id);
-	wm.root = wm.root ? T.insert(wm.root, wm.focus ?? T.firstLeaf(wm.root).id, leaf, how) : leaf;
+	wm.root = wm.root ? T.insert(wm.root, wm.focus ?? T.firstLeaf(wm.root).id, leaf, placement) : leaf;
 	wm.focus = leaf.id;
 	reconcileMounts();
 	render();
 	changed();
 	return leaf.id;
+}
+
+/** Would halving the focused window leave both halves usable? */
+function fitsSplit(how) {
+	if (how === "tab" || isNarrow()) return true;
+	const rec = wm.mounted.get(wm.focus);
+	if (!rec?.el.isConnected) return true;
+	const box = rec.el.getBoundingClientRect();
+	return how.startsWith("row") ? box.width / 2 >= MIN_W : box.height / 2 >= MIN_H;
 }
 
 export function closeWindow(id = wm.focus) {
@@ -159,8 +187,28 @@ export function closeAll() {
 
 export function splitFocused(dir, tool) {
 	if (!wm.focus) return openTool(tool);
-	const id = openTool(tool, { how: `${dir}-after` });
-	return id;
+	return openTool(tool, { how: `${dir}-after`, fit: false });
+}
+
+/**
+ * Fill the workspace with the focused window, and put it back.
+ *
+ * Zoom is a class, not a different tree: the other windows stay in the
+ * document, hidden behind this one. Rendering only the zoomed window would
+ * detach the rest, and every tool addresses its own markup by id — the same
+ * reason a tabbed container builds all of its panels.
+ */
+export function toggleZoom(id = wm.focus) {
+	if (!id || !T.find(wm.root, id)) return;
+	wm.zoom = wm.zoom === id ? null : id;
+	paintZoom();
+	focusBody(id);
+}
+
+function paintZoom() {
+	if (wm.zoom && !T.find(wm.root, wm.zoom)) wm.zoom = null;
+	$("wm-root").classList.toggle("has-zoom", !!wm.zoom);
+	for (const [id, rec] of wm.mounted) rec.el.classList.toggle("is-zoomed", id === wm.zoom);
 }
 
 export function toggleTabsOnFocused() {
@@ -211,7 +259,13 @@ export const commitResize = () => changed();
 export function setFocus(id, { render: doRender = true } = {}) {
 	if (!id || id === wm.focus || !T.find(wm.root, id)) return;
 	wm.focus = id;
-	if (doRender) paintFocus();
+	// Focusing a window nobody can see is worse than losing the zoom, so
+	// moving off the zoomed window unzooms rather than focusing behind it.
+	if (wm.zoom && wm.zoom !== id) wm.zoom = null;
+	if (doRender) {
+		paintFocus();
+		paintZoom();
+	}
 }
 
 /**
@@ -233,11 +287,13 @@ function revealLeaf(id) {
 		}
 	}
 	wm.focus = id;
+	if (wm.zoom && wm.zoom !== id) wm.zoom = null;
 	if (structural) {
 		render();
 		changed();
 	} else {
 		paintFocus();
+		paintZoom();
 	}
 	focusBody(id);
 }
@@ -420,6 +476,7 @@ function render() {
 		try { hadFocus.focus({ preventScroll: true }); } catch (_) { /* gone */ }
 	}
 	paintFocus();
+	paintZoom();
 }
 
 function build(node) {

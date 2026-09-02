@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,7 +17,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
-	"github.com/madeofpendletonwool/grimoire/internal/migrate"
+	"github.com/madeofpendletonwool/grimoire/internal/testdb"
 )
 
 // newSessionServer builds a server with accounts, the campaign graph, the
@@ -27,14 +26,11 @@ import (
 // campaign and session tables come from goose.
 func newSessionServer(t *testing.T) *Server {
 	t.Helper()
-	store, err := index.Open(filepath.Join(t.TempDir(), "test.db"))
+	store, err := index.Open(testdb.Path(t))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := migrate.Up(store.DB()); err != nil {
-		t.Fatalf("migrate up: %v", err)
-	}
 	users, err := auth.New(store.DB(), 0, 0)
 	if err != nil {
 		t.Fatalf("open auth store: %v", err)

@@ -52,7 +52,22 @@ export function initKeys(cmd, { corpus = "mtg" } = {}) {
 	/* --- finding things --- */
 	g("mod+k", "palette", "Search rules and cards", "Find");
 	g("mod+shift+p", "commands", "Command menu", "Find");
-	g("?", "help", "Keyboard shortcuts", "Find", { typing: false });
+	g("?", "help", "Keyboard shortcuts", "Find", { typing: false, also: `${LEADER} ?` });
+	km.add("global", `${LEADER} ?`, cmd.help, { label: "Keyboard shortcuts", group: "Find", listed: false });
+
+	/* --- the two ways in ---
+	   Alt is the fast path, but it is not ours to promise. A desktop window
+	   manager claims Alt+1..9 and Alt+Shift+arrows for its own workspaces —
+	   i3, GNOME and KDE all ship that as a default — and takes them long
+	   before the browser sees the keystroke. So every Alt action here also
+	   hangs off the leader, which nothing else wants, and the cheat sheet
+	   prints both. If Alt does nothing on your machine, the leader still
+	   works and no shortcut is lost.
+
+	   Tools take a plain letter after the leader; window commands take
+	   Shift plus a letter. They used to share the letter space, and the
+	   registry's accelerators — added last — silently won: "split right"
+	   and "reset to preset" were printed on the sheet and did nothing. */
 
 	/* --- workspaces ---
 	   All nine bind; only the first is listed. Nine near-identical rows push
@@ -61,42 +76,82 @@ export function initKeys(cmd, { corpus = "mtg" } = {}) {
 	for (let i = 1; i <= 9; i++) {
 		km.add("global", `alt+${i}`, () => cmd.workspace(i), {
 			label: i === 1 ? "Switch workspace (1-9)" : `Workspace ${i}`,
-			group: "Workspaces", listed: i === 1,
+			group: "Workspaces", listed: i === 1, also: `${LEADER} ${i}`,
+		});
+		km.add("global", `${LEADER} ${i}`, () => cmd.workspace(i), {
+			label: i === 1 ? "Workspace 1-9" : `Workspace ${i}`,
+			group: "Workspaces", listed: false, hint: i === 1, hintKeys: "1-9",
 		});
 	}
 
 	/* --- focus and layout ---
 	   Alt rather than Ctrl throughout: Ctrl+1..9 switches browser tabs and
 	   Ctrl+W closes them, and neither is ours to take. */
+	// Eight bindings, two lines: four near-identical rows for "focus left,
+	// focus right, focus up, focus down" push the rest of the sheet off the
+	// screen and teach nothing the arrow keys do not already say.
+	const ARROWS = "\u2190\u2191\u2193\u2192";
 	for (const dir of ["left", "right", "up", "down"]) {
-		km.add("global", `alt+arrow${dir}`, () => cmd.focus(dir),
-			{ label: `Focus ${dir}`, group: "Windows" });
-		km.add("global", `alt+shift+arrow${dir}`, () => cmd.move(dir),
-			{ label: `Move window ${dir}`, group: "Windows" });
+		const first = dir === "left";
+		km.add("global", `alt+arrow${dir}`, () => cmd.focus(dir), {
+			label: "Move focus", group: "Windows", listed: first,
+			also: `${LEADER} arrow${dir}`, caps: [`Alt+${ARROWS}`], alsoCaps: [pretty(LEADER), ARROWS],
+		});
+		km.add("global", `${LEADER} arrow${dir}`, () => cmd.focus(dir), {
+			label: "Move focus", group: "Windows", listed: false,
+			hint: first, hintKeys: ARROWS,
+		});
+
+		km.add("global", `alt+shift+arrow${dir}`, () => cmd.move(dir), {
+			label: "Move window", group: "Windows", listed: first,
+			also: `${LEADER} shift+arrow${dir}`,
+			caps: [`Alt+Shift+${ARROWS}`], alsoCaps: [pretty(LEADER), `Shift+${ARROWS}`],
+		});
+		km.add("global", `${LEADER} shift+arrow${dir}`, () => cmd.move(dir), {
+			label: "Move window", group: "Windows", listed: false,
+			hint: first, hintKeys: `\u21e7${ARROWS}`,
+		});
 	}
-	g("alt+w", "close", "Close window", "Windows");
-	g("alt+f", "zoom", "Zoom window", "Windows");
-	g("alt+[", "prevTab", "Previous tab", "Windows");
-	g("alt+]", "nextTab", "Next tab", "Windows");
-	km.add("global", "alt+enter", cmd.picker, { label: "Open a tool", group: "Windows", listed: false });
 
-	/* --- the leader ---
-	   Everything reachable directly is also reachable here, plus the things
-	   no safe direct binding was left for. */
-	km.add("global", `${LEADER} v`, cmd.splitRight, { label: "Split right", group: "Leader" });
-	km.add("global", `${LEADER} s`, cmd.splitDown, { label: "Split down", group: "Leader" });
-	km.add("global", `${LEADER} t`, cmd.toggleTabs, { label: "Tab / untab", group: "Leader" });
-	km.add("global", `${LEADER} w`, cmd.close, { label: "Close window", group: "Leader" });
-	km.add("global", `${LEADER} x`, cmd.closeAll, { label: "Close every window", group: "Leader" });
-	km.add("global", `${LEADER} r`, cmd.resetWorkspace, { label: "Reset to preset", group: "Leader" });
+	// Command, label, the key it takes after the leader, and the direct Alt
+	// binding if one was left unclaimed. Everything reachable directly is
+	// also reachable from the leader; the rest live on the leader alone.
+	const windowCmds = [
+		["close",          "Close window",       "shift+w",     "alt+w"],
+		["zoom",           "Zoom window",        "shift+f",     "alt+f"],
+		["prevTab",        "Previous tab",       "[",           "alt+["],
+		["nextTab",        "Next tab",           "]",           "alt+]"],
+		["picker",         "Open a tool",        "enter",       "alt+enter"],
+		["toggleTabs",     "Tab / untab",        "shift+t"],
+		["splitRight",     "Split right",        "shift+v"],
+		["splitDown",      "Split down",         "shift+s"],
+		["closeAll",       "Close every window", "shift+x"],
+		["resetWorkspace", "Reset to preset",    "shift+r"],
+	];
 
-	// One accelerator per tool, straight from the registry — a new tool gets
-	// its shortcut, its menu entry and its cheat-sheet line for free.
+	for (const [fn, label, step, key] of windowCmds) {
+		const chord = `${LEADER} ${step}`;
+		if (key) {
+			km.add("global", key, cmd[fn], { label, group: "Windows", also: chord });
+			km.add("global", chord, cmd[fn], { label, group: "Windows", listed: false });
+		} else {
+			km.add("global", chord, cmd[fn], { label, group: "Windows" });
+		}
+	}
+
+	/* --- opening tools ---
+	   One accelerator per tool, straight from the registry: a new tool gets
+	   its shortcut, its menu entry and its cheat-sheet line for free. A
+	   duplicate accelerator costs that one tool its key, not the keyboard. */
 	for (const id of TOOL_IDS) {
 		const def = TOOLS[id];
-		km.add("global", `${LEADER} ${def.accel}`, () => cmd.open(id), {
-			label: def.title, group: "Open a tool", tool: id,
-		});
+		try {
+			km.add("global", `${LEADER} ${def.accel}`, () => cmd.open(id), {
+				label: def.title, group: "Open a tool", tool: id,
+			});
+		} catch (err) {
+			console.error(`tool ${id} could not claim ${LEADER} ${def.accel}:`, err);
+		}
 	}
 
 	/* --- always available, even mid-typing --- */
@@ -189,13 +244,26 @@ function clearPending() {
 function showHint(leader) {
 	$("wm-hint")?.remove();
 	const items = state.km.continuations(leader, activeLayers())
+		.filter((m) => m.hint !== false)
 		.filter((m) => !m.tool || toolsFor(state.corpus).includes(m.tool));
 
+	// Grouped, and with the nine workspaces and eight arrows collapsed to one
+	// row each: the leader now reaches everything, and an unsorted run of
+	// thirty keys is a wall rather than a hint.
+	const groups = new Map();
+	for (const m of items) {
+		if (!groups.has(m.group)) groups.set(m.group, []);
+		groups.get(m.group).push(m);
+	}
+
 	const bar = el("div", { class: "wm-hint f-stone", attrs: { id: "wm-hint", role: "status", "aria-live": "polite" } },
-		el("span", { class: "wm-hint-lead", text: pretty(leader) + " …" }),
-		...items.map((m) => el("span", { class: "wm-hint-item" },
-			el("kbd", { text: pretty(parseSpec(m.spec)[1]) }),
-			el("span", { text: m.label }),
+		el("span", { class: "wm-hint-lead", text: pretty(leader) + " \u2026" }),
+		...Array.from(groups, ([name, metas]) => el("span", { class: "wm-hint-group" },
+			el("span", { class: "wm-hint-groupname", text: name }),
+			...metas.map((m) => el("span", { class: "wm-hint-item" },
+				el("kbd", { text: m.hintKeys || pretty(parseSpec(m.spec)[1]) }),
+				el("span", { text: m.label }),
+			)),
 		)),
 	);
 	document.body.append(bar);
@@ -218,6 +286,23 @@ export function pretty(spec) {
 	}).join(state.mac ? "" : "+");
 }
 
+/**
+ * The keys for one binding: the direct one, then the leader chord that also
+ * reaches it. Both are printed because on many desktops only the second one
+ * survives — Alt+1..9 and Alt+Shift+arrows belong to the system's own window
+ * manager before they belong to the browser.
+ */
+function keyCaps(meta) {
+	const caps = (labels) => labels.map((text) => el("kbd", { text }));
+	const steps = (spec) => caps(parseSpec(spec).map(pretty));
+	const out = meta.caps ? caps(meta.caps) : steps(meta.spec);
+	if (meta.also || meta.alsoCaps) {
+		out.push(el("span", { class: "wm-sheet-or", text: "or" }));
+		out.push(...(meta.alsoCaps ? caps(meta.alsoCaps) : steps(meta.also)));
+	}
+	return out;
+}
+
 function buildSheet() {
 	const sheet = $("wm-sheet");
 	if (!sheet) return;
@@ -236,7 +321,7 @@ function buildSheet() {
 			el("h3", { class: "wm-sheet-heading", text: name }),
 			el("dl", { class: "wm-sheet-list" },
 				...items.flatMap((m) => [
-					el("dt", {}, ...parseSpec(m.spec).map((step) => el("kbd", { text: pretty(step) }))),
+					el("dt", {}, ...keyCaps(m)),
 					el("dd", { text: m.label }),
 				]),
 			),

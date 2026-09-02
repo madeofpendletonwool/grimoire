@@ -24,6 +24,13 @@
 
 	--wm-gutter: 6px;
 	--wm-titlebar-h: 30px;
+
+	/* The floor a pane may not shrink past. Flexbox will otherwise take a
+	   pane to nothing — six tools in a row on a 1440px screen came out as
+	   six 5px slivers. Past the floor the split scrolls instead, which is a
+	   layout you can still use. The same numbers gate placement in wm.js. */
+	--wm-min-w: 360px;
+	--wm-min-h: 260px;
 }
 
 /* ---------- the tiling area ---------- */
@@ -43,14 +50,18 @@
 	min-height: 0;
 	display: flex;
 }
-.wm-split.is-row { flex-direction: row; }
-.wm-split.is-col { flex-direction: column; }
+.wm-split.is-row { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+.wm-split.is-col { flex-direction: column; overflow-y: auto; overflow-x: hidden; }
 
 .wm-pane {
 	min-width: 0;
 	min-height: 0;
 	display: flex;
 }
+/* The floor, on the axis the split lays out along. The cross axis stays at 0
+   so a pane still gives way to its neighbours there. */
+.wm-split.is-row > .wm-pane { min-width: var(--wm-min-w); }
+.wm-split.is-col > .wm-pane { min-height: var(--wm-min-h); }
 
 /* ---------- gutters ---------- */
 
@@ -91,6 +102,18 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 	outline: none;
 }
 .wm-window.is-focused { box-shadow: var(--shadow-2); }
+
+/* Zoom fills the workspace with one window. The others stay in the document,
+   behind it: rendering only the zoomed one would detach their markup, and
+   every tool addresses its own section by id. */
+.wm-root { position: relative; }
+.wm-window.is-zoomed {
+	position: absolute;
+	inset: var(--sp-2);
+	z-index: var(--z-wm-float);
+	margin: 0;
+	box-shadow: var(--shadow-3);
+}
 
 /* Framed by f-titleplate, so the sprite owns the background and the edge —
    this sets spacing inside it and nothing else. The 6px border the frame
@@ -137,6 +160,17 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 .wm-ctl:hover, .wm-ctl:focus-visible { opacity: 1; color: var(--gold-bright); }
 .wm-ctl[data-wm="close"]:hover { color: var(--ember); }
 
+/**
+ * The body is a size container, and that is what makes a tool responsive to
+ * *its window* rather than to the viewport.
+ *
+ * Every tool was written with `@media (max-width: 55rem)` breakpoints, from
+ * the days when a surface was the whole page. In a tiling shell those never
+ * fire: three windows on a 1440px screen are 430px each while the viewport is
+ * still 1440px wide, so a two-column body stayed two columns and jammed both
+ * of them together. The rules that answer this live in style.css beside the
+ * tool they belong to, under `@container tool (...)`.
+ */
 .wm-body {
 	flex: 1;
 	min-height: 0;
@@ -144,6 +178,8 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 	overflow: auto;
 	display: flex;
 	flex-direction: column;
+	container-type: inline-size;
+	container-name: tool;
 }
 /* The tool's own section fills the body. Migrated surfaces keep their internal
    layout untouched; this only gives them somewhere to be. */
@@ -182,7 +218,10 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 /* Framed by f-tab / f-tab-active. No background, no radius: the plate has
    both, and a radius would clip its corners off (invariant 2). */
 .wm-tab {
-	flex: none;
+	/* Shrinks before the strip scrolls: five tabs in a 560px pane should
+	   ellipsise their labels, not disappear off the right-hand edge. */
+	flex: 0 1 auto;
+	min-width: 4.5rem;
 	display: flex;
 	align-items: center;
 	gap: var(--sp-1);
@@ -203,7 +242,7 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 	padding-bottom: 4px;
 }
 .wm-tab .ico { --s: 1; width: 16px; height: 16px; background-size: 256px auto; }
-.wm-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12rem; }
+.wm-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12rem; }
 
 .wm-tabbody {
 	flex: 1;
@@ -261,6 +300,24 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 	animation: rise 0.12s ease;
 }
 .wm-hint-lead { font-family: var(--font-pixel); color: var(--gold-bright); }
+/* The leader reaches everything now, so the bar is grouped: an unsorted run of
+   thirty keys is a wall. */
+.wm-hint-group {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1) var(--sp-2);
+	padding-left: var(--sp-2);
+	border-left: 1px solid var(--stone-line);
+}
+.wm-hint-groupname {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--gold);
+	opacity: 0.7;
+}
 .wm-hint-item { display: flex; align-items: center; gap: var(--sp-1); opacity: 0.85; }
 .wm-hint-item kbd {
 	font-family: var(--font-pixel);
@@ -289,8 +346,8 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 .wm-sheet {
 	position: relative;
 	width: 100%;
-	max-width: 52rem;
-	max-height: 80vh;
+	max-width: 62rem;
+	max-height: 86vh;
 	display: flex;
 	flex-direction: column;
 	padding: var(--sp-4);
@@ -310,11 +367,24 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 	font-size: var(--fs-lg);
 	color: var(--gold-bright);
 }
+.wm-sheet-note {
+	margin: 0 0 var(--sp-3);
+	font-size: var(--fs-xs);
+	color: var(--parchment-2);
+	opacity: 0.7;
+}
+.wm-sheet-note kbd {
+	font-family: var(--font-pixel);
+	color: var(--gold);
+}
 .wm-sheet-body {
 	overflow-y: auto;
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+	/* Wide enough that "Move window" and its two key groups sit on one line;
+	   at 15rem every label in the Windows group wrapped onto three. */
+	grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
 	gap: var(--sp-4);
+	align-content: start;
 }
 .wm-sheet-heading {
 	margin: 0 0 var(--sp-2);
@@ -333,7 +403,15 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 	align-items: baseline;
 	font-size: var(--fs-sm);
 }
-.wm-sheet-list dt { display: flex; gap: 2px; }
+.wm-sheet-list dt { display: flex; gap: 2px; align-items: baseline; flex-wrap: wrap; }
+/* Both keys are printed for the bindings that have two: on many desktops only
+   the leader chord survives, because Alt+1..9 belongs to the system's own
+   window manager first. */
+.wm-sheet-or {
+	font-size: var(--fs-xs);
+	opacity: 0.45;
+	padding: 0 2px;
+}
 .wm-sheet-list dd { margin: 0; color: var(--parchment-2); opacity: 0.85; }
 .wm-sheet-list kbd {
 	font-family: var(--font-pixel);
@@ -342,6 +420,97 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 	padding: 0 var(--sp-1);
 	white-space: nowrap;
 }
+
+/* ---------- the tool picker / command menu ---------- */
+
+.wm-menu-layer {
+	position: fixed;
+	inset: 0;
+	z-index: var(--z-modal);
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	padding: clamp(1rem, 10vh, 7rem) var(--sp-4) var(--sp-4);
+}
+.wm-menu-scrim {
+	position: absolute;
+	inset: 0;
+	background: rgba(10, 7, 3, 0.72);
+	backdrop-filter: blur(3px);
+}
+.wm-menu {
+	position: relative;
+	width: 100%;
+	max-width: 34rem;
+	max-height: 70vh;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	padding: var(--sp-4);
+	box-shadow: var(--shadow-3);
+	animation: rise 0.16s ease;
+}
+.wm-menu-head { display: flex; align-items: center; gap: var(--sp-2); }
+.wm-menu-title {
+	flex: 1;
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: var(--fs-md);
+	color: var(--gold-bright);
+}
+/* Underlined rather than framed, like the other in-panel fields: a nine-slice
+   frame on a control this small spends its whole height on border. */
+.wm-menu-input {
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+	color: var(--parchment);
+	font-family: var(--font-prose);
+	font-size: var(--fs-md);
+	padding: 0.3rem 0.1rem;
+}
+.wm-menu-input:focus { outline: none; border-bottom-color: var(--gold); }
+
+.wm-menu-list {
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+.wm-menu-row {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	width: 100%;
+	text-align: left;
+	background: none;
+	border: none;
+	color: var(--parchment);
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	padding: 0.35rem var(--sp-1);
+	cursor: pointer;
+}
+.wm-menu-row:hover { color: var(--gold); }
+/* The keyboard selection has to read as strongly as a hover, since the list
+   exists to be driven without a pointer. */
+.wm-menu-row.is-active {
+	color: var(--gold-bright);
+	border-left: 2px solid var(--gold);
+	padding-left: calc(var(--sp-1) - 2px);
+}
+.wm-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wm-menu-hint {
+	flex: none;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	opacity: 0.5;
+	max-width: 14rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wm-menu-empty { margin: var(--sp-3) 0; font-size: var(--fs-sm); opacity: 0.6; }
 
 /* ---------- workspaces ---------- */
 
@@ -390,5 +559,5 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
    transitions and the two entrances are not. */
 @media (prefers-reduced-motion: reduce) {
 	.wm-gutter, .wm-ctl { transition: none; }
-	.wm-hint, .wm-sheet { animation: none; }
+	.wm-hint, .wm-sheet, .wm-menu { animation: none; }
 }

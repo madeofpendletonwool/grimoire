@@ -202,6 +202,33 @@ of `$("id")` lookups inside them.
 rule, no `pixel.css` registration. If a step turns out to be missing from this
 list, that is a bug in the registry, not a step to add here.
 
+### A tool is as wide as its window, not as wide as the screen
+
+A window is a fraction of the viewport, so `@media (max-width: …)` is the wrong
+question inside a tool: three windows on a 1440px screen are 430px each while
+the viewport is still 1440px, and a two-column body stays two columns and
+crushes both halves.
+
+`.wm-body` is a size container named `tool`. Ask it instead:
+
+```css
+@container tool (max-width: 720px) {
+    .seats-body { grid-template-columns: 1fr; }
+}
+```
+
+Three widths, and every tool answers the same three — 1060px a three-column
+body drops to two, 720px a multi-column body drops to one, 560px the tool
+compacts (smaller padding, sidebars become overlays). They are collected under
+"Tools at window width" at the end of `style.css`. The viewport queries stay
+for the pages that are not windows (the gate, the share view) and for phones,
+where the two measurements agree.
+
+Two floors the window manager enforces so a tool is never asked to render in a
+sliver: `--wm-min-w` / `--wm-min-h` in `wm.css` stop a pane shrinking past
+360×260 (the split scrolls instead), and opening a tool that would break that
+floor tabs it with the focused window rather than splitting.
+
 ### Framing a surface
 
 Reach for a `f-*` utility class; they work standalone:

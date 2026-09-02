@@ -4,34 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
-	"path/filepath"
 	"testing"
 
-	"github.com/madeofpendletonwool/grimoire/internal/migrate"
-	_ "modernc.org/sqlite" // same pure-Go driver the app opens the real file with
+	"github.com/madeofpendletonwool/grimoire/internal/testdb"
 )
 
-// openDB opens a scratch database with the same DSN shape the app uses and
-// applies the migrations — campaign tables exist only through the runner, so
-// this is the only correct way to build a campaign store in tests.
+// openDB hands the test a private, fully migrated database — a file copy of
+// the template testdb builds once per binary. The campaign tables exist only
+// through the migration runner, so this is the only correct way to build a
+// campaign store in tests.
 func openDB(t *testing.T) *sql.DB {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "campaign.db")
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", path)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
-	if err := db.Ping(); err != nil {
-		t.Fatalf("ping: %v", err)
-	}
-	if err := migrate.Up(db); err != nil {
-		t.Fatalf("migrate up: %v", err)
-	}
-	return db
+	return testdb.Open(t)
 }
 
 // userIDs mints user rows the membership tables foreign-key. Fixture ids, not

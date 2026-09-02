@@ -1,0 +1,9 @@
+{
+  "name": "grimoire-frontend",
+  "private": true,
+  "type": "module",
+  "description": "Declares the front-end ES modules as ESM so node --test can run the DOM-free ones (ADR 14). There are no dependencies, no build step and no bundler; the browser loads web/static/js/**.js directly. Nothing installs this file.",
+  "scripts": {
+    "test": "node --test \"jstest/**/*.test.js\""
+  }
+}

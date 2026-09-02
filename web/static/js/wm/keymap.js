@@ -66,12 +66,34 @@ export function parseSpec(spec) {
 export const isReserved = (spec) => RESERVED.has(normalize(spec));
 
 /**
+ * The physical key behind a `KeyboardEvent.code`, for the cases where the
+ * character the OS produced is not the key that was pressed.
+ *
+ * This exists for one reason: on macOS, Option is a dead-key modifier. Option+W
+ * arrives as "\u2211", Option+1 as "\u00a1", Option+[ as "\u201c". Every alt binding
+ * would silently never fire. `code` names the key regardless.
+ */
+const PUNCT_CODES = {
+	BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";",
+	Quote: "'", Comma: ",", Period: ".", Slash: "/", Backquote: "`",
+	Minus: "-", Equal: "=",
+};
+
+function fromCode(code) {
+	if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+	if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+	return PUNCT_CODES[code] || null;
+}
+
+const ASCII_PRINTABLE = /^[\x20-\x7e]$/;
+
+/**
  * Describe a keystroke the same way a spec is written.
  *
  * Takes a plain object rather than a KeyboardEvent so this stays testable:
- * `{ key, ctrlKey, metaKey, altKey, shiftKey }`. `mac` decides whether Cmd or
- * Ctrl counts as "mod"; the other one is then ignored, so Ctrl+K on a Mac does
- * not fire the Cmd+K binding.
+ * `{ key, code, ctrlKey, metaKey, altKey, shiftKey }`. `mac` decides whether
+ * Cmd or Ctrl counts as "mod"; the other one is then ignored, so Ctrl+K on a
+ * Mac does not fire the Cmd+K binding.
  */
 export function describe(ev, mac = false) {
 	const primary = mac ? ev.metaKey : ev.ctrlKey;
@@ -80,10 +102,20 @@ export function describe(ev, mac = false) {
 	if (ev.altKey) mods.push("alt");
 
 	let key = String(ev.key || "").toLowerCase();
-	// Shift is part of the identity only for keys it does not already
-	// transform: shift+2 is "@" on its own, and demanding "shift+@" would
-	// never match.
-	if (ev.shiftKey && (key.length > 1 || key === " ")) mods.push("shift");
+
+	// Only reach for `code` when the produced character cannot be a binding —
+	// a single non-ASCII glyph. Preferring `key` everywhere else is what keeps
+	// non-QWERTY layouts binding the key the user actually sees on the cap.
+	if (key.length === 1 && !ASCII_PRINTABLE.test(key) && ev.code) {
+		key = fromCode(ev.code) || key;
+	}
+
+	// Shift is part of the identity for keys it does not already transform —
+	// shift+2 is "@" on its own, and demanding "shift+@" would never match —
+	// and for letters, where the browser reports "P" and we have already
+	// lowercased the shift back out of it. Without the second case
+	// "mod+shift+p" is unreachable.
+	if (ev.shiftKey && (key.length > 1 || key === " " || /^[a-z]$/.test(key))) mods.push("shift");
 
 	if (key === "spacebar") key = " ";
 	return [...mods, key].join("+");
@@ -110,15 +142,22 @@ export function createKeymap() {
 		const table = layers.get(layer);
 		const record = { handler, meta: { ...meta, spec, layer } };
 
+		// Rebinding in silence is how "mod+g v" ended up meaning both "split
+		// right" and "Review": the second add won, the first stayed on the
+		// cheat sheet, and the shortcut that was printed did nothing. A
+		// clash is a mistake in the table, so it is raised, not resolved.
 		if (steps.length === 1) {
+			if (table.has(steps[0])) throw new Error(`${spec} is already bound in ${layer}`);
 			table.set(steps[0], record);
 		} else {
 			const [lead, second] = steps;
 			let entry = table.get(lead);
-			if (!entry || !entry.chord) {
+			if (entry && !entry.chord) throw new Error(`${lead} is bound directly; it cannot also lead ${spec}`);
+			if (!entry) {
 				entry = { chord: new Map() };
 				table.set(lead, entry);
 			}
+			if (entry.chord.has(second)) throw new Error(`${spec} is already bound in ${layer}`);
 			entry.chord.set(second, record);
 		}
 		all.push(record.meta);
