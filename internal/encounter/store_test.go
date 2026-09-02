@@ -2,6 +2,7 @@ package encounter
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -127,5 +128,128 @@ func TestStoreUpdateKeepsUnsentFields(t *testing.T) {
 	}
 	if updated.Notes != "keep me" {
 		t.Fatalf("rename-only update lost the notes: %q", updated.Notes)
+	}
+}
+
+/* ---------- campaign scope (MAD-378) ---------- */
+
+// The zero Scope is exactly Create: an owner-scoped encounter with no
+// campaign — the fallback surface, which must not regress.
+func TestStoreCampaignScope(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	scoped, err := s.CreateIn(ctx, "alice", Scope{CampaignID: "camp-1"}, "The Zorblat Pit",
+		[]int{5, 5, 5, 5}, []Monster{{Name: "Zorblat", CR: "2", XP: 450, Count: 1}}, "notes")
+	if err != nil {
+		t.Fatalf("create in campaign: %v", err)
+	}
+	if scoped.CampaignID != "camp-1" || scoped.Status != StatusPlanned {
+		t.Fatalf("scoped encounter: %+v", scoped)
+	}
+	if scoped.SessionEventID != "" || scoped.SceneID != "" || scoped.Objective != "" || scoped.Terrain != nil {
+		t.Fatalf("reserved columns must stay empty: %+v", scoped)
+	}
+
+	plain, err := s.Create(ctx, "alice", "No campaign", []int{3}, []Monster{{Name: "Goblin", CR: "1/4", XP: 50, Count: 1}}, "")
+	if err != nil {
+		t.Fatalf("plain create: %v", err)
+	}
+	if plain.CampaignID != "" || plain.Status != StatusPlanned {
+		t.Fatalf("an owner-scoped encounter is planned and belongs to no campaign: %+v", plain)
+	}
+
+	// The campaign reads its own, regardless of which member wrote them.
+	list, err := s.ListCampaign(ctx, "camp-1")
+	if err != nil || len(list) != 1 || list[0].ID != scoped.ID {
+		t.Fatalf("list campaign = %v (err %v), want the scoped one", list, err)
+	}
+	if _, err := s.ListCampaign(ctx, ""); err == nil {
+		t.Fatal("an empty campaign id must be refused, not return everything")
+	}
+
+	got, err := s.GetCampaign(ctx, "camp-1", scoped.ID)
+	if err != nil || got.Name != "The Zorblat Pit" {
+		t.Fatalf("get campaign encounter: %+v (%v)", got, err)
+	}
+	// A foreign campaign id is indistinguishable from a missing one.
+	if _, err := s.GetCampaign(ctx, "camp-2", scoped.ID); err != ErrNotFound {
+		t.Fatalf("foreign campaign get = %v, want ErrNotFound", err)
+	}
+
+	// The builder's own picker still shows both: a campaign encounter is
+	// still its author's.
+	mine, err := s.List(ctx, "alice")
+	if err != nil || len(mine) != 2 {
+		t.Fatalf("owner list = %d encounters (err %v), want 2", len(mine), err)
+	}
+}
+
+// The vocabulary the CHECK constraint enforces is refused here first, with
+// ErrInvalid rather than a SQL error; and a session event or scene without a
+// campaign is nonsense — there is nothing for the id to belong to.
+func TestStoreRejectsBadScope(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	if _, err := s.CreateIn(ctx, "alice", Scope{CampaignID: "c", Status: "finished"}, "X", nil, nil, ""); err == nil {
+		t.Fatal("an unknown status must be refused")
+	} else if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown status = %v, want ErrInvalid", err)
+	}
+	if _, err := s.CreateIn(ctx, "alice", Scope{SessionEventID: "ev-1"}, "X", nil, nil, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a session event without a campaign = %v, want ErrInvalid", err)
+	}
+	if _, err := s.CreateIn(ctx, "alice", Scope{SceneID: "scene-1"}, "X", nil, nil, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a scene without a campaign = %v, want ErrInvalid", err)
+	}
+}
+
+// A database that has never run migration 0026 — the package's own DDL grew
+// the campaign columns instead — round-trips its old encounters through the
+// campaign-aware store unchanged.
+func TestStoreAdoptsPreCampaignTable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "encounters.db")
+	store, err := index.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+	if _, err := db.Exec(`CREATE TABLE encounters (
+		id          TEXT PRIMARY KEY,
+		owner_id    TEXT NOT NULL,
+		name        TEXT NOT NULL DEFAULT '',
+		notes       TEXT NOT NULL DEFAULT '',
+		party       TEXT NOT NULL DEFAULT '[]',
+		monsters    TEXT NOT NULL DEFAULT '[]',
+		created_at  INTEGER NOT NULL,
+		updated_at  INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatalf("pre-campaign table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO encounters (id, owner_id, name, notes, party, monsters, created_at, updated_at)
+		VALUES ('e1', 'keeper', 'Old faithful', 'keep', '[3,3]', '[{"name":"Goblin","cr":"1/4","count":6}]', 1, 2)`); err != nil {
+		t.Fatalf("seed old encounter: %v", err)
+	}
+
+	s, err := New(db)
+	if err != nil {
+		t.Fatalf("new store over the old table: %v", err)
+	}
+	ctx := context.Background()
+	got, err := s.Get(ctx, "keeper", "e1")
+	if err != nil {
+		t.Fatalf("get the old encounter: %v", err)
+	}
+	if got.Name != "Old faithful" || got.Notes != "keep" || !reflect.DeepEqual(got.Party, []int{3, 3}) || len(got.Monsters) != 1 {
+		t.Fatalf("the old encounter did not survive adoption: %+v", got)
+	}
+	if got.CampaignID != "" || got.Status != StatusPlanned {
+		t.Fatalf("adopted defaults: %+v", got)
+	}
+	// And the adopted table takes a campaign-scoped write.
+	if _, err := s.CreateIn(ctx, "keeper", Scope{CampaignID: "c1"}, "New", []int{5}, nil, ""); err != nil {
+		t.Fatalf("create in campaign on the adopted table: %v", err)
 	}
 }

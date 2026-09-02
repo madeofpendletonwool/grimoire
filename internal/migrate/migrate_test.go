@@ -269,6 +269,98 @@ func TestBaselineOverPopulatedDatabase(t *testing.T) {
 	}
 }
 
+// TestUpPreservesEncounters is MAD-378's round-trip acceptance: a database
+// from before migration 0026 holds encounters in the old owner-scoped shape,
+// and adopting the campaign columns must leave every one of those rows
+// byte-identical on the old columns — with the new columns defaulted, never
+// rewritten. 0026 rebuilds the table rather than ALTERing it (the
+// schema-compat ordering is why), so this is the test that proves the copy
+// back loses nothing.
+func TestUpPreservesEncounters(t *testing.T) {
+	db := openTemp(t)
+
+	// The pre-0026 shape: the 0001 columns, as an old install's table was.
+	pre := `CREATE TABLE IF NOT EXISTS encounters (
+		id          TEXT PRIMARY KEY,
+		owner_id    TEXT NOT NULL,
+		name        TEXT NOT NULL DEFAULT '',
+		notes       TEXT NOT NULL DEFAULT '',
+		party       TEXT NOT NULL DEFAULT '[]',
+		monsters    TEXT NOT NULL DEFAULT '[]',
+		created_at  INTEGER NOT NULL,
+		updated_at  INTEGER NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS encounters_owner ON encounters(owner_id, updated_at);`
+	for _, stmt := range []string{
+		pre,
+		`INSERT INTO encounters (id, owner_id, name, notes, party, monsters, created_at, updated_at)
+		 VALUES ('e1', 'keeper', 'Ambush on the Triboar Trail', '## The pitch',
+		     '[1,1,2]', '[{"name":"Goblin","cr":"1/4","count":4}]', 1000, 2000)`,
+		`INSERT INTO encounters (id, owner_id, name, notes, party, monsters, created_at, updated_at)
+		 VALUES ('e2', 'keeper', 'Empty one', '', '[]', '[]', 3000, 4000)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("pre-0026 setup: %v", err)
+		}
+	}
+
+	if err := Up(db); err != nil {
+		t.Fatalf("up over a pre-0026 encounters table: %v", err)
+	}
+
+	// The campaign columns arrived, with their defaults.
+	cols := columns(t, db, "encounters")
+	for _, c := range []string{"campaign_id", "session_event_id", "scene_id", "objective", "terrain", "status"} {
+		if !cols[c] {
+			t.Errorf("encounters.%s missing after Up", c)
+		}
+	}
+
+	// Every old row survived the rebuild unchanged on the old columns…
+	rows, err := db.Query(`SELECT id, owner_id, name, notes, party, monsters, created_at, updated_at
+		FROM encounters ORDER BY id`)
+	if err != nil {
+		t.Fatalf("select encounters: %v", err)
+	}
+	defer rows.Close()
+	want := map[string][7]any{
+		"e1": {"keeper", "Ambush on the Triboar Trail", "## The pitch", "[1,1,2]", `[{"name":"Goblin","cr":"1/4","count":4}]`, int64(1000), int64(2000)},
+		"e2": {"keeper", "Empty one", "", "[]", "[]", int64(3000), int64(4000)},
+	}
+	got := map[string][7]any{}
+	for rows.Next() {
+		var id string
+		var v [7]any
+		if err := rows.Scan(&id, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]); err != nil {
+			t.Fatalf("scan encounter: %v", err)
+		}
+		got[id] = v
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("encounters after Up: %d rows, want %d", len(got), len(want))
+	}
+	for id, w := range want {
+		if g, ok := got[id]; !ok || g != w {
+			t.Errorf("encounter %q did not round-trip:\n got %+v\nwant %+v", id, got[id], w)
+		}
+	}
+
+	// …and took the new defaults: still nobody's campaign, still planned.
+	var campaign, sessionEvent, scene, objective, terrain, status string
+	if err := db.QueryRow(`SELECT campaign_id, session_event_id, scene_id, objective, terrain, status
+		FROM encounters WHERE id = 'e1'`).
+		Scan(&campaign, &sessionEvent, &scene, &objective, &terrain, &status); err != nil {
+		t.Fatalf("scan new columns: %v", err)
+	}
+	if campaign != "" || sessionEvent != "" || scene != "" || objective != "" || terrain != "{}" || status != "planned" {
+		t.Errorf("new columns not defaulted: campaign=%q session_event=%q scene=%q objective=%q terrain=%q status=%q",
+			campaign, sessionEvent, scene, objective, terrain, status)
+	}
+}
+
 // TestUpRefusesBadMigration proves a failing migration surfaces as an error
 // rather than a partially applied schema. The boot path treats this as fatal,
 // which is the whole point of running Up before serving.

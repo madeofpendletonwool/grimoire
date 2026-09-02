@@ -30,6 +30,11 @@ type designRequest struct {
 	Feedback   string              `json:"feedback"` // revision instruction
 	Current    []encounter.Monster `json:"current"`  // roster the revision applies to
 	Notes      string              `json:"notes"`    // the design being revised
+	// CampaignID is optional (MAD-378): with one, an unstated party comes
+	// from the campaign's declared party block instead of the default table,
+	// and the caller must hold that campaign's DM perspective. Without one
+	// this is exactly the request MAD-299 shipped.
+	CampaignID string `json:"campaign_id"`
 }
 
 // maxFeedbackLen and maxIdeaLen bound the free text a request may carry, so a
@@ -84,12 +89,11 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	party := req.Party
-	assumedParty := false
-	if len(party) == 0 {
-		party = append([]int(nil), encounter.DefaultParty...)
-		assumedParty = true
+	party, partySource, partyLine, ok := s.resolveDesignParty(w, r, req.CampaignID, req.Party)
+	if !ok {
+		return
 	}
+	assumedParty := partySource == "default"
 	budget := encounter.Plan(party, req.Difficulty)
 	hints := encounter.ReadIdea(req.Idea + " " + req.Feedback)
 	pool := encounter.BuildPool(s.catalog, budget, hints, nil)
@@ -107,6 +111,9 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 		"candidates":    pool.Len(),
 		"bestiary":      s.catalog.Count(),
 		"assumed_party": assumedParty,
+		"party":         party,
+		"party_source":  partySource,
+		"party_label":   partyLine,
 	})
 
 	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
@@ -288,6 +295,7 @@ func (s *Server) handleEncounterBudget(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Party      []int  `json:"party"`
 		Difficulty string `json:"difficulty"`
+		CampaignID string `json:"campaign_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
@@ -297,8 +305,57 @@ func (s *Server) handleEncounterBudget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	// A campaign_id with no party is what prefills the builder's party boxes;
+	// encounter.Plan itself is unchanged and still answers for a bare party,
+	// which is what the non-campaign surface sends.
+	party := req.Party
+	source := ""
+	line := ""
+	if strings.TrimSpace(req.CampaignID) != "" {
+		table := s.campaignParty(w, r, req.CampaignID)
+		if table == nil {
+			return
+		}
+		if len(party) == 0 {
+			party = table.Levels()
+			if len(party) > 0 {
+				source, line = "campaign", partyLabel(party)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"budget":   encounter.Plan(req.Party, req.Difficulty),
-		"bestiary": s.catalog.Count(),
+		"budget":       encounter.Plan(party, req.Difficulty),
+		"bestiary":     s.catalog.Count(),
+		"party":        party,
+		"party_source": source,
+		"party_label":  line,
 	})
+}
+
+// resolveDesignParty settles which party a design request is built against:
+// the one it sent, the campaign's declared party block when it named a
+// campaign and sent none, or the DMG default table when it has neither. It
+// writes the HTTP error itself and reports false when the caller should not
+// proceed — which is why it runs before the SSE stream opens, since a 403
+// after the first event would arrive as a stream the browser has already
+// accepted.
+//
+// The returned source is "request", "campaign" or "default"; the line is the
+// "from your campaign — …" note, empty unless the party came from one.
+func (s *Server) resolveDesignParty(w http.ResponseWriter, r *http.Request, campaignID string, sent []int) (party []int, source, line string, ok bool) {
+	if strings.TrimSpace(campaignID) != "" {
+		table := s.campaignParty(w, r, campaignID)
+		if table == nil {
+			return nil, "", "", false
+		}
+		if len(sent) == 0 {
+			if levels := table.Levels(); len(levels) > 0 {
+				return levels, "campaign", partyLabel(levels), true
+			}
+		}
+	}
+	if len(sent) > 0 {
+		return sent, "request", "", true
+	}
+	return append([]int(nil), encounter.DefaultParty...), "default", "", true
 }

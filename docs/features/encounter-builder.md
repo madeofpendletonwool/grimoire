@@ -16,6 +16,12 @@ Three inputs, all with usable defaults:
 
 Press **Build the encounter** and the design streams onto the page.
 
+### From a campaign
+
+If you run a campaign, the disclosure under the party boxes lists the ones you keep. Picking one prefills the boxes from the campaign's declared [party block](../campaign/encounters.md) — every pc that carries a level, in name order — with a *from your campaign — 4 characters, level 5* line above them. The line's **edit** button (or your first edit of the numbers) takes the table back: the campaign is a prefill, never a requirement. A campaign that declares no levels leaves the boxes alone.
+
+Saving with a campaign picked stores the encounter against that campaign — the one record a planned fight has, so the continuity engine can check it: an encounter whose roster names a monster with no bestiary entry raises `stat_block_unresolved` in `canon check` whether it arrived as session prep or as a saved record. Without a campaign, everything works exactly as it always did.
+
 ## What the server decides, and what the model decides
 
 The split matters, because it is why the result lands on the difficulty you asked for instead of near it.
@@ -50,7 +56,7 @@ The mirror is refreshed if it is missing or more than a month old, in the backgr
 
 ## Saving and taking it away
 
-Name it and **Save**; the roster, the party and the whole write-up are stored per account. The saved-encounter picker at the top of the surface loads them back with the verdict recomputed. **Copy** puts the entire encounter on the clipboard as plain text, because prep tends to end up in someone's own notes app. **Ask the sage about this** drops the encounter into the chat as a question, grounded in the indexed DMG.
+Name it and **Save**; the roster, the party and the whole write-up are stored with your account (and, when a campaign is picked, scoped to that campaign — see [From a campaign](#from-a-campaign)). The saved-encounter picker at the top of the surface loads them back with the verdict recomputed. **Copy** puts the entire encounter on the clipboard as plain text, because prep tends to end up in someone's own notes app. **Ask the sage about this** drops the encounter into the chat as a question, grounded in the indexed DMG.
 
 ## Requirements
 

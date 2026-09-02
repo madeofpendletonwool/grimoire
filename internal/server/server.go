@@ -276,6 +276,12 @@ func (s *Server) Handler() http.Handler {
 	// the dressing pass. Creating, editing and mapping need no model —
 	// the layout is pure arithmetic; dressing is the model pass, placing
 	// stages a proposal batch behind the review gate. DM-only.
+	// Campaign-scoped encounters and the party block (MAD-378). DM only:
+	// a roster and a party sheet are both DM material by definition.
+	mux.HandleFunc("GET /api/campaigns/{id}/party", s.handleCampaignParty)
+	mux.HandleFunc("GET /api/campaigns/{id}/encounters", s.handleCampaignEncounters)
+	mux.HandleFunc("POST /api/campaigns/{id}/encounters", s.handleCampaignEncounters)
+
 	mux.HandleFunc("GET /api/campaigns/{id}/dungeons", s.handleCampaignDungeons)
 	mux.HandleFunc("POST /api/campaigns/{id}/dungeons", s.handleCreateCampaignDungeon)
 	mux.HandleFunc("GET /api/campaigns/{id}/dungeons/{did}", s.handleCampaignDungeon)

@@ -190,23 +190,34 @@
 					     nothing at all. Party and difficulty carry usable defaults, the
 					     idea is optional, and the seeds turn "no idea" into one click. -->
 					<div class="enc-col enc-col-brief">
-						<div class="enc-panel">
-							<h3 class="enc-heading">The table</h3>
-							<div class="enc-quick">
-								<label class="enc-quick-field">
-									<span>Players</span>
-									<input id="enc-party-count" class="enc-field enc-num" type="number" min="1" max="12" value="4"
-										aria-label="Number of characters">
-								</label>
-								<label class="enc-quick-field">
-									<span>Level</span>
-									<input id="enc-party-level" class="enc-field enc-num" type="number" min="1" max="20" value="3"
-										aria-label="Character level">
-								</label>
-								<span class="enc-party-sum" id="enc-party-sum"></span>
-							</div>
-							<details class="enc-more">
-								<summary>Mixed levels</summary>
+					<div class="enc-panel">
+						<h3 class="enc-heading">The table</h3>
+						<div class="enc-quick">
+							<label class="enc-quick-field">
+								<span>Players</span>
+								<input id="enc-party-count" class="enc-field enc-num" type="number" min="1" max="12" value="4"
+									aria-label="Number of characters">
+							</label>
+							<label class="enc-quick-field">
+								<span>Level</span>
+								<input id="enc-party-level" class="enc-field enc-num" type="number" min="1" max="20" value="3"
+									aria-label="Character level">
+							</label>
+							<span class="enc-party-sum" id="enc-party-sum"></span>
+						</div>
+						<!-- The campaign line: shown only while the boxes still hold the
+						     campaign's declared party. Editing the party takes it back. -->
+						<p class="enc-party-from" id="enc-party-from" hidden></p>
+						<details class="enc-more enc-campaign-more">
+							<summary>From a campaign</summary>
+							<label class="enc-campaign-field" for="enc-campaign">
+								<select id="enc-campaign" aria-label="Design against a campaign">
+									<option value="">No campaign — my own table</option>
+								</select>
+							</label>
+						</details>
+						<details class="enc-more">
+							<summary>Mixed levels</summary>
 								<div class="enc-party" id="enc-party"></div>
 								<form class="enc-add-party" id="enc-add-party" autocomplete="off">
 									<label class="enc-level-label" for="enc-level">Level</label>

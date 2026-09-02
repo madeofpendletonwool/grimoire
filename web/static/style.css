@@ -1377,6 +1377,47 @@ kbd {
 }
 .enc-num { width: 4.5rem; text-align: center; }
 .enc-party-sum { font-size: var(--fs-xs); opacity: 0.55; padding-bottom: 0.4rem; }
+
+/* The campaign prefill line (MAD-378): where the party boxes' numbers came
+   from, and the quiet button that takes the table back. */
+.enc-party-from {
+	margin: var(--sp-2) 0 0;
+	font-size: var(--fs-xs);
+	font-style: italic;
+	opacity: 0.75;
+	display: flex;
+	align-items: baseline;
+	gap: 0.35rem;
+	flex-wrap: wrap;
+}
+.enc-party-from-warn { opacity: 0.8; cursor: help; }
+.enc-party-from-edit {
+	background: none;
+	border: none;
+	padding: 0;
+	color: var(--gold);
+	font-size: var(--fs-xs);
+	font-style: italic;
+	text-decoration: underline;
+	cursor: pointer;
+}
+.enc-party-from-edit:hover, .enc-party-from-edit:focus { color: var(--gold-bright); outline: none; }
+
+/* The campaign picker: an underline select, same convention as the saved
+   picker in the header. */
+.enc-campaign-field { display: block; }
+.enc-campaign-field select {
+	width: 100%;
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+	color: var(--parchment);
+	font-size: var(--fs-sm);
+	padding: 0.15rem 0.1rem;
+	cursor: pointer;
+}
+.enc-campaign-field select:focus { outline: none; border-bottom-color: var(--gold); }
+
 .enc-more { margin-top: var(--sp-3); }
 .enc-more > summary,
 .enc-manual > summary {
