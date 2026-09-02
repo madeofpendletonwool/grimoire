@@ -585,6 +585,52 @@
 						<button type="submit" class="enc-btn">Simulate</button>
 						<div class="camp-simulate-result" id="camp-simulate-result" hidden></div>
 					</form>
+					<!-- The road (MAD-375): a journey planned at a
+					     density — the seeded day table, one card per
+					     day with its weather and its incident,
+					     resolved days inked and unresolved ghosted,
+					     the same visual grammar as the quest board's
+					     taken and untaken branches. Nothing lands
+					     until the journey resolves through the
+					     review gate. -->
+					<form class="camp-road-form" id="camp-road-form" autocomplete="off" hidden>
+						<h4 class="camp-sheet-heading">Take the road</h4>
+						<div class="camp-pair">
+							<label class="camp-field"><span>From</span>
+								<select id="camp-road-from" class="enc-field" aria-label="Travel from"></select>
+							</label>
+							<label class="camp-field"><span>To</span>
+								<select id="camp-road-to" class="enc-field" aria-label="Travel to"></select>
+							</label>
+						</div>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Density</span>
+								<select id="camp-road-density" class="enc-field" aria-label="Encounter density">
+									<option value="none">none — just the days</option>
+									<option value="light">light — one incident per 5-6 days</option>
+									<option value="standard" selected>standard — one per 3-4 days</option>
+									<option value="dense">dense — one per 2-3 days</option>
+								</select>
+							</label>
+							<label class="camp-field"><span>Pace</span>
+								<select id="camp-road-pace" class="enc-field" aria-label="Pace">
+									<option value="fast">fast</option>
+									<option value="normal" selected>normal</option>
+									<option value="slow">slow</option>
+								</select>
+							</label>
+						</div>
+						<div class="camp-pair">
+							<label class="camp-field"><span>Days (when no road)</span>
+								<input id="camp-road-days" class="enc-field" type="number" placeholder="the map decides" aria-label="Day override">
+							</label>
+							<label class="camp-field"><span>Seed (optional)</span>
+								<input id="camp-road-seed" class="enc-field" type="number" aria-label="Seed">
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Plan the journey</button>
+					</form>
+					<div class="camp-journeys" id="camp-journeys" aria-label="Journeys"></div>
 				</div>
 				<div class="camp-panel camp-graph-panel">
 						<h3 class="enc-heading">The map</h3>

@@ -237,6 +237,24 @@ func (s *Store) WithDowntimeFinalizer(f DowntimeFinalizer) *Store {
 	return s
 }
 
+// JourneyFinalizer completes a decided journey batch (MAD-375): the one
+// write a journey batch cannot carry itself — moving the campaign clock by
+// exactly the journey's days, reason 'travel', once — plus the journey
+// row's status flip and the fact-less rumour holdings the road handed
+// out. Implemented by internal/journey's store and wired with
+// WithJourneyFinalizer; the same idempotency contract as the tick and
+// downtime finalizers.
+type JourneyFinalizer interface {
+	FinalizeJourneyBatch(ctx context.Context, batch *Batch) error
+}
+
+// WithJourneyFinalizer wires the journey completion. Without it journey
+// batches are still decidable, but their clock moves go unrecorded.
+func (s *Store) WithJourneyFinalizer(f JourneyFinalizer) *Store {
+	s.journeyFinalizer = f
+	return s
+}
+
 /* ---------- building the queue ---------- */
 
 // BuildQueue creates queue items for every finding the three upstream passes

@@ -31,6 +31,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
+	"github.com/madeofpendletonwool/grimoire/internal/journey"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
@@ -96,6 +97,10 @@ type Server struct {
 	// Wired with WithDowntime (needs everything the tick needs); nil
 	// disables the downtime endpoints.
 	downtime *downtime.Store
+	// Journeys (MAD-375): the road between two places at the DM's asked
+	// density. Wired with WithJourneys (needs the campaign, canon and
+	// knowledge stores); nil disables the journeys endpoints.
+	journeys *journey.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -317,6 +322,17 @@ func (s *Server) Handler() http.Handler {
 	// to reveal.
 	mux.HandleFunc("POST /api/campaigns/{id}/downtime", s.handleCampaignDowntime)
 	mux.HandleFunc("POST /api/campaigns/{id}/downtime/{did}/stage", s.handleCampaignDowntimeStage)
+	// Journeys (MAD-375): the road between two places at the density the
+	// DM asked for. Plan computes the seeded day table and writes only
+	// the journey's own rows; resolve stages the outcomes as one batch,
+	// and accepting it moves the clock by exactly the journey's days,
+	// reason 'travel'. DM-only.
+	mux.HandleFunc("GET /api/campaigns/{id}/journeys", s.handleCampaignJourneys)
+	mux.HandleFunc("POST /api/campaigns/{id}/journeys", s.handleCampaignJourneys)
+	mux.HandleFunc("GET /api/campaigns/{id}/journeys/{jid}", s.handleCampaignJourney)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/journeys/{jid}", s.handleCampaignJourneyPatch)
+	mux.HandleFunc("POST /api/campaigns/{id}/journeys/{jid}/days/{n}/resolve", s.handleCampaignJourneyDayResolve)
+	mux.HandleFunc("POST /api/campaigns/{id}/journeys/{jid}/resolve", s.handleCampaignJourneyResolve)
 	mux.HandleFunc("GET /api/campaigns/{id}/graph", s.handleCampaignGraph)
 	mux.HandleFunc("GET /api/campaigns/{id}/search", s.handleCampaignSearch)
 	// The campaign chat (MAD-311): the DM Grimoire and the Player Grimoire.
