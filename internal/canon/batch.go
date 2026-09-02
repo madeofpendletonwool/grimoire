@@ -79,6 +79,7 @@ const (
 	BatchSourceQuest       = "quest"
 	BatchSourceLocation    = "location"
 	BatchSourceDungeon     = "dungeon"
+	BatchSourceRumor       = "rumor"
 )
 
 // batchSources is the validated source vocabulary.
@@ -86,7 +87,7 @@ var batchSources = map[string]bool{
 	BatchSourceSkeleton: true, BatchSourceStoryPlan: true, BatchSourceScene: true,
 	BatchSourceNLCommand: true, BatchSourceSessionPrep: true, BatchSourceTick: true,
 	BatchSourceDowntime: true, BatchSourceQuest: true, BatchSourceLocation: true,
-	BatchSourceDungeon: true,
+	BatchSourceDungeon: true, BatchSourceRumor: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -180,6 +181,8 @@ func reviewKindForBatchItem(kind string) (string, bool) {
 		return ReviewProposedQuest, true
 	case KindPlanTransition, ReviewProposedPlanTransition:
 		return ReviewProposedPlanTransition, true
+	case "rumor", ReviewProposedRumor:
+		return ReviewProposedRumor, true
 	}
 	return "", false
 }
@@ -966,6 +969,8 @@ func (s *Store) applyBatchItem(ctx context.Context, rev *Review, p map[string]an
 		return s.applyGeneratedPlanTransition(ctx, rev, p, decidedBy, res)
 	case ReviewProposedQuest:
 		return s.applyGeneratedQuest(ctx, rev, p, decidedBy, res)
+	case ReviewProposedRumor:
+		return s.applyGeneratedRumor(ctx, rev, p, decidedBy)
 	default:
 		return "", fmt.Errorf("%w: batch item kind %s cannot be accepted here", ErrInvalid, rev.Kind)
 	}
@@ -1357,4 +1362,50 @@ func (s *Store) applyGeneratedDiscovery(ctx context.Context, rev *Review, p map[
 		return "", fmt.Errorf("accept discovery: %w", err)
 	}
 	return d.ID, nil
+}
+
+// applyGeneratedRumor writes the accepted rumour into the mill: the row
+// itself plus its holders, through the same knowledge store the DM-facing
+// API uses. The truth value rode in the review queue's DM-only surface and
+// lands in the DM-only column; a player scope never sees either. Holder
+// variants are part of the payload — the drifted wording is the charm, and
+// the generator computed the distribution as a join before any prompt.
+func (s *Store) applyGeneratedRumor(ctx context.Context, rev *Review, p map[string]any, decidedBy string) (string, error) {
+	statement := str(p, "statement")
+	if statement == "" {
+		return "", fmt.Errorf("%w: rumor payload has no statement", ErrInvalid)
+	}
+	truth := str(p, "truth")
+	if truth != campaign.RumorTruthTrue && truth != campaign.RumorTruthFalse && truth != campaign.RumorTruthDistorted {
+		return "", fmt.Errorf("%w: rumor payload truth %q", ErrInvalid, truth)
+	}
+	in := knowledge.RumorInput{
+		Statement: statement, Truth: truth,
+		AboutEntity: str(p, "about_entity"), FactID: str(p, "fact_id"),
+		Origin: str(p, "origin"), Spread: str(p, "spread"),
+		Status: campaign.RumorStatusCirculating, CreatedBy: decidedBy,
+	}
+	if in.Spread == "" {
+		in.Spread = campaign.RumorSpreadLocal
+	}
+	r, err := s.knowledge.CreateRumor(ctx, rev.CampaignID, in)
+	if err != nil {
+		return "", fmt.Errorf("accept rumor: %w", err)
+	}
+	if holders, ok := p["holders"].([]any); ok {
+		for _, h := range holders {
+			m, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			entity := str(m, "entity")
+			if entity == "" {
+				continue
+			}
+			if _, err := s.knowledge.SetRumorHolder(ctx, rev.CampaignID, r.ID, entity, str(m, "variant"), ""); err != nil {
+				return "", fmt.Errorf("accept rumor holder: %w", err)
+			}
+		}
+	}
+	return r.ID, nil
 }

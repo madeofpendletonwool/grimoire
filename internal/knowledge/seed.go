@@ -35,7 +35,8 @@ type KnowledgeFixture struct {
 // The resulting state, in one breath: the party knows the Duke owns the
 // Eastern Mines because Mira read the holding charter; Mira additionally
 // read the deed herself; Thalia suspects the Duke's ledger visit is real;
-// the party believes the "Duke never travels" account is false; the party
+// the party is confidently wrong about the Duke never traveling — the
+// account is true, their disbelief in it is the error; the party
 // walked past the Silver Key's crypt without asking what it opens; Elara
 // knows the mine ownership like any chancellor would; and something in the
 // pipeline has proposed that the Duke is a vampire, which nobody may read.
@@ -76,8 +77,12 @@ func Seed(ctx context.Context, db *sql.DB, fx *campaign.Fixture, owner string) (
 		return nil, fmt.Errorf("seed thalia suspicion: %w", err)
 	}
 
-	// The housekeeper says the Duke never travels. The party, having seen
-	// the charter trail, believes that account is false.
+	// The housekeeper says the Duke never travels — and the housekeeper is
+	// right. A believes_false row means the knower is wrong about this fact
+	// (the Summarize reading, settled in MAD-374): the fact is true, and
+	// what is false is the party's disbelief in it. Having seen the charter
+	// trail, the party confidently believes the account is false. The wrong
+	// content lives in the belief, not in the fact.
 	if _, err := s.SetAwareness(ctx, cid, campaign.PartyKnower, fx.FactDukeNever,
 		StanceBelievesFalse, 0.8, "", ""); err != nil {
 		return nil, fmt.Errorf("seed party wrong belief: %w", err)

@@ -697,6 +697,62 @@
 					<div class="camp-dungeons" id="camp-dungeons" aria-label="Dungeons"></div>
 					<div class="camp-dungeon-detail" id="camp-dungeon-detail" aria-live="polite"></div>
 				</div>
+				<!-- The rumour mill (MAD-374): statements in circulation and
+				     who repeats them. The truth column is the DM's and the
+				     server never sends it below the DM; players see what is
+				     being said and by whom. The DM writes rumours by hand or
+				     generates a batch — truth mix, secret-fact draw and the
+				     holder distribution are computed server-side; the model
+				     only words them — and everything lands behind the review
+				     gate. -->
+				<div class="camp-panel camp-rumors-panel">
+					<h3 class="enc-heading">The rumour mill</h3>
+					<form class="camp-invite-form" id="camp-rumor-form" autocomplete="off" hidden>
+						<label class="camp-field"><span>A rumour, in the words it travels in</span>
+							<textarea id="camp-rumor-statement" class="enc-idea-input" rows="2" required placeholder="They say the silver key opens something under the monastery" aria-label="Rumour statement"></textarea>
+						</label>
+						<div class="camp-field-row">
+							<label class="camp-field"><span>Truth (DM only)</span>
+								<select id="camp-rumor-truth" class="enc-field" aria-label="Truth">
+									<option value="true">true</option>
+									<option value="false">false</option>
+									<option value="distorted">distorted</option>
+								</select>
+							</label>
+							<label class="camp-field"><span>About</span>
+								<select id="camp-rumor-about" class="enc-field" aria-label="About entity">
+									<option value="">nothing in particular</option>
+								</select>
+							</label>
+							<label class="camp-field"><span>Spread</span>
+								<select id="camp-rumor-spread" class="enc-field" aria-label="Spread">
+									<option value="local">local</option>
+									<option value="regional">regional</option>
+									<option value="widespread">widespread</option>
+								</select>
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Set it circulating</button>
+					</form>
+					<form class="camp-invite-form" id="camp-rumor-generate-form" autocomplete="off" hidden>
+						<label class="camp-field"><span>What are they talking about?</span>
+							<select id="camp-rumor-gen-about" class="enc-field" aria-label="Generate about"></select>
+						</label>
+						<div class="camp-field-row">
+							<label class="camp-field"><span>True</span>
+								<input id="camp-rumor-gen-true" class="enc-field" type="number" min="0" max="12" placeholder="1" aria-label="True rumours">
+							</label>
+							<label class="camp-field"><span>False</span>
+								<input id="camp-rumor-gen-false" class="enc-field" type="number" min="0" max="12" placeholder="1" aria-label="False rumours">
+							</label>
+							<label class="camp-field"><span>Distorted</span>
+								<input id="camp-rumor-gen-distorted" class="enc-field" type="number" min="0" max="12" placeholder="0" aria-label="Distorted rumours">
+							</label>
+						</div>
+						<button type="submit" class="enc-btn">Generate a batch</button>
+					</form>
+					<div class="camp-rumors" id="camp-rumors" aria-label="Rumours"></div>
+				</div>
 					<details class="camp-panel camp-members" id="camp-members-panel" hidden>
 						<summary class="enc-heading">The table</summary>
 						<div class="camp-members-body" id="camp-members-body"></div>

@@ -25,6 +25,7 @@ let editingScheduleID = null; // the entry whose inline editor is open
 let quests = []; // the board: DM machines or player journal entries
 let selectedQuestID = null; // the quest whose detail chart is open (DM)
 let dungeons = []; // the workshop listing (DM)
+let rumors = []; // the mill: whatever the server sent at the caller's scope
 let selectedDungeonID = null; // the dungeon whose map is open (DM)
 let dungeonDetail = null; // the open dungeon's full view
 
@@ -87,6 +88,13 @@ function wire() {
 	$("camp-dungeon-detail").addEventListener("click", onDungeonDetailClick);
 	$("camp-dungeon-detail").addEventListener("submit", onDungeonDetailSubmit);
 	$("camp-dungeon-detail").addEventListener("pointerdown", onRoomPointerDown);
+	// The rumour mill (MAD-374): hand-authored rumours, generated batches
+	// (review-gated like every generator), and the board's delegated
+	// actions — heard, hold, debunk, confirm, forget.
+	$("camp-rumor-form").addEventListener("submit", onRumorSubmit);
+	$("camp-rumor-generate-form").addEventListener("submit", onRumorGenerate);
+	$("camp-rumors").addEventListener("click", onRumorBoardClick);
+	$("camp-rumors").addEventListener("change", onRumorBoardChange);
 	for (const radio of document.querySelectorAll('input[name="camp-object"]')) {
 		radio.addEventListener("change", () => syncObjectKind());
 	}
@@ -183,6 +191,8 @@ async function selectCampaign(id) {
 	$("camp-quest-design-form").hidden = !isDM();
 	$("camp-place-design-form").hidden = !isDM();
 	$("camp-dungeon-form").hidden = !isDM();
+	$("camp-rumor-form").hidden = !isDM();
+	$("camp-rumor-generate-form").hidden = !isDM();
 	if (!isDM()) $("camp-cmd-result").hidden = true;
 	kindFilter = "";
 	renderKindChips();
@@ -192,6 +202,7 @@ async function selectCampaign(id) {
 	loadClock();
 	loadSchedule();
 	loadQuests();
+	loadRumors();
 	if (isDM()) loadDungeons(); else clearDungeons();
 	if (isDM()) {
 		loadMembers();
@@ -521,6 +532,17 @@ function renderSheet() {
 		mount.append(el("p", { class: "camp-status", text: "Opening the dossier…" }));
 		body.append(mount);
 		loadLocationDossier(selected.id);
+	}
+
+	// What are people saying about them? (MAD-374): the NPC sheet's
+	// rumour section — the statements in circulation about this one,
+	// loaded at the caller's scope and rendered as quotes.
+	if (selected.kind === "npc" || selected.kind === "pc" || selected.kind === "faction") {
+		const mount = el("div", { class: "camp-sheet-section", attrs: { "data-rumors-for": selected.id } });
+		mount.append(el("h4", { class: "camp-sheet-heading", text: "What people are saying" }));
+		mount.append(el("p", { class: "camp-status", text: "Listening…" }));
+		body.append(mount);
+		loadSheetRumors(selected.id);
 	}
 
 	if (isDM()) {
@@ -2180,6 +2202,226 @@ async function onFactionPlanStatusChange(e) {
 	}
 }
 
+/* ---------- the rumour mill (MAD-374) ---------- */
+
+// The mill renders whatever the server sent at the caller's scope: the
+// statement, the spread, and who repeats it. The truth column never
+// arrives below the DM — the server does not send it — so the DM's "true /
+// false / distorted" chip is rendered only when the field came back.
+async function loadRumors(params) {
+	const board = $("camp-rumors");
+	if (!current) return;
+	populateRumorSubjects();
+	let data;
+	try {
+		data = await api.campaignRumors(current.id, params);
+	} catch (err) {
+		clear(board).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	rumors = data.rumors || [];
+	renderRumors();
+}
+
+// populateRumorSubjects fills the about selects from the loaded entity
+// list — the same list the fact form draws from.
+function populateRumorSubjects() {
+	const options = entities.map((e) => ({ value: e.id, text: `${e.name} (${e.kind})` }));
+	for (const id of ["camp-rumor-about", "camp-rumor-gen-about"]) {
+		const select = $(id);
+		const prev = select.value;
+		clear(select);
+		if (id === "camp-rumor-about") select.append(el("option", { text: "nothing in particular", attrs: { value: "" } }));
+		for (const o of options) select.append(el("option", { text: o.text, attrs: { value: o.value } }));
+		if ([...select.options].some((op) => op.value === prev)) select.value = prev;
+	}
+}
+
+function renderRumors() {
+	const board = clear($("camp-rumors"));
+	if (rumors.length === 0) {
+		board.append(el("p", { class: "camp-status", text: "Nothing is circulating yet." }));
+		return;
+	}
+	const nameOf = (id) => entities.find((e) => e.id === id)?.name || id.slice(0, 8);
+	for (const r of rumors) {
+		const row = el("div", { class: "camp-fact", attrs: { "data-rid": r.id } });
+		row.append(el("p", { class: "camp-fact-statement prose", text: `“${r.statement}”` }));
+		const chips = el("div", { class: "camp-fact-chips" });
+		if (r.truth) {
+			// DM eyes only: the server never sends truth below the DM.
+			const truthChip = el("span", { class: "enc-chip" + (r.truth === "true" ? " is-on" : ""), text: `truth: ${r.truth}` });
+			chips.append(truthChip);
+		}
+		chips.append(el("span", { class: "enc-chip", text: r.spread || "local" }));
+		if (r.status && r.status !== "circulating") chips.append(el("span", { class: "enc-chip", text: r.status }));
+		if (r.about && r.about.name) {
+			chips.append(el("button", {
+				class: "enc-chip", text: `about ${r.about.name}`,
+				attrs: { type: "button", "data-open-eid": r.about.id },
+			}));
+		}
+		row.append(chips);
+		// Who is repeating it, in their own words.
+		if ((r.holders || []).length) {
+			const holds = el("p", { class: "camp-aliases" });
+			holds.textContent = "Said by " + r.holders.map((h) => h.entity === "party" ? "the party" : (nameOf(h.entity) + (h.variant ? ` — “${h.variant}”` : ""))).join("; ");
+			row.append(holds);
+		}
+		if (isDM()) {
+			const actions = el("div", { class: "camp-fact-chips" });
+			actions.append(el("button", { class: "enc-chip", text: "the party heard it", attrs: { type: "button", "data-heard": r.id, title: "Write the stance the rumour earns for the party" } }));
+			actions.append(el("button", { class: "enc-chip", text: "give it a voice", attrs: { type: "button", "data-hold": r.id, title: "Record an NPC repeating it" } }));
+			if (r.status !== "debunked") actions.append(el("button", { class: "enc-chip", text: "debunk", attrs: { type: "button", "data-status": r.id, "data-to": "debunked" } }));
+			if (r.status !== "confirmed") actions.append(el("button", { class: "enc-chip", text: "confirm", attrs: { type: "button", "data-status": r.id, "data-to": "confirmed" } }));
+			actions.append(el("button", { class: "enc-chip", text: "forget", attrs: { type: "button", "data-forget": r.id } }));
+			row.append(actions);
+		}
+		board.append(row);
+	}
+}
+
+async function onRumorSubmit(e) {
+	if (e.target.id !== "camp-rumor-form") return;
+	e.preventDefault();
+	if (!current || !isDM()) return;
+	const statement = $("camp-rumor-statement").value.trim();
+	if (!statement) return;
+	const body = {
+		statement,
+		truth: $("camp-rumor-truth").value,
+		about: $("camp-rumor-about").value,
+		spread: $("camp-rumor-spread").value,
+	};
+	renderMeta("Setting it circulating…");
+	try {
+		await api.campaignRumorCreate(current.id, body);
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	$("camp-rumor-statement").value = "";
+	renderMeta("The rumour is in the mill.");
+	await loadRumors();
+}
+
+async function onRumorGenerate(e) {
+	if (e.target.id !== "camp-rumor-generate-form") return;
+	e.preventDefault();
+	if (!current || !isDM()) return;
+	const about = $("camp-rumor-gen-about").value;
+	if (!about) return;
+	const n = (id) => parseInt($(id).value, 10) || 0;
+	renderMeta("Drawing the rumours — the truth mix and the holders are computed; the model words them…");
+	try {
+		await api.campaignRumorGenerate(current.id, {
+			about,
+			true: n("camp-rumor-gen-true"),
+			false: n("camp-rumor-gen-false"),
+			distorted: n("camp-rumor-gen-distorted"),
+		});
+	} catch (err) {
+		renderMeta(err.message, true);
+		return;
+	}
+	renderMeta("The rumours are staged — decide the batch on the review queue.");
+	await reviewFor(current.id);
+}
+
+async function onRumorBoardClick(e) {
+	if (!current || !isDM()) return;
+	const rid = e.target.closest("[data-rid]")?.dataset.rid;
+	if (!rid) return;
+	if (e.target.closest("[data-heard]")) {
+		renderMeta("The party hears the rumour…");
+		try {
+			const res = await api.campaignRumorHeard(current.id, rid, "party");
+			renderMeta(res.heard.outcome === "granted"
+				? `Recorded: the party now ${res.heard.stance === "suspects" ? "suspects" : "is wrong about"} the fact behind it.`
+				: res.heard.outcome === "knows_already" ? "The party already knows the fact — gossip changes nothing."
+				: res.heard.outcome === "carried" ? "The party carries the rumour — nothing in the graph for it to touch yet."
+				: "The party already held exactly that.");
+		} catch (err) {
+			renderMeta(err.message, true);
+			return;
+		}
+		await loadRumors();
+		return;
+	}
+	if (e.target.closest("[data-hold]")) {
+		const voice = prompt("Who repeats it? Type an NPC's name:", "");
+		if (!voice) return;
+		const match = entities.find((x) => x.name.toLowerCase() === voice.trim().toLowerCase());
+		if (!match) { renderMeta(`Nobody called ${voice} in the campaign.`, true); return; }
+		const variant = prompt(`What exactly does ${match.name} say?`, "") || "";
+		try {
+			await api.campaignRumorHolderSet(current.id, rid, { entity: match.id, variant });
+		} catch (err) {
+			renderMeta(err.message, true);
+			return;
+		}
+		await loadRumors();
+		return;
+	}
+	const statusBtn = e.target.closest("[data-status]");
+	if (statusBtn) {
+		try {
+			await api.campaignRumorUpdate(current.id, statusBtn.dataset.status, { status: statusBtn.dataset.to });
+		} catch (err) {
+			renderMeta(err.message, true);
+			return;
+		}
+		await loadRumors();
+		return;
+	}
+	if (e.target.closest("[data-forget]")) {
+		if (!confirm("Take this rumour out of the mill?")) return;
+		try {
+			await api.campaignRumorDelete(current.id, rid);
+		} catch (err) {
+			renderMeta(err.message, true);
+			return;
+		}
+		await loadRumors();
+	}
+}
+
+async function onRumorBoardChange(e) {
+	// Reserved for per-row selects; nothing yet.
+	void e;
+}
+
+// loadSheetRumors fills the sheet's "what people are saying" section for
+// one entity — the statements circulating about them, at the caller's
+// scope. The server sends quotes only; the mill panel carries the rest.
+async function loadSheetRumors(eid) {
+	let data;
+	try {
+		data = await api.campaignRumors(current.id, { about: eid, status: "circulating" });
+	} catch (err) {
+		const box = document.querySelector(`[data-rumors-for="${eid}"]`);
+		if (box) clear(box).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	const box = document.querySelector(`[data-rumors-for="${eid}"]`);
+	if (!box || !selected || selected.id !== eid) return; // the sheet moved on
+	clear(box);
+	const list = el("div", { class: "camp-facts" });
+	for (const r of data.rumors || []) {
+		const row = el("div", { class: "camp-fact" });
+		row.append(el("p", { class: "camp-fact-statement prose", text: `“${r.statement}”` }));
+		if ((r.holders || []).length) {
+			const said = el("p", { class: "camp-aliases" });
+			said.textContent = "Said by " + r.holders.map((h) => h.entity === "party" ? "the party" : (h.name || h.entity)).join(", ");
+			row.append(said);
+		}
+		list.append(row);
+	}
+	box.append(list.children.length
+		? list
+		: el("p", { class: "camp-status", text: "Nothing yet — the mill is quiet about them." }));
+}
+
 /* ---------- the location page (MAD-370) ---------- */
 
 // The dossier is a read, not a write: present NPCs, children, items,
@@ -2302,8 +2544,18 @@ function renderLocationDossier(mount) {
 		wrap.append(section("History", eventList(d.events)));
 	}
 
-	// Rumours circulate once MAD-374 lands; the shape ships now.
-	wrap.append(section("Rumours", el("p", { class: "camp-status", text: "None circulating yet." })));
+	// What are people saying about this? The statements circulating here
+	// — the server loads only what the caller's scope may read; the full
+	// mill with holders and (for the DM) truth values lives in the panel.
+	if ((d.rumours || []).length) {
+		const list = el("ul", { class: "camp-events" });
+		for (const statement of d.rumours) {
+			list.append(el("li", { class: "camp-event", text: `“${statement}”` }));
+		}
+		wrap.append(section("Rumours", list));
+	} else {
+		wrap.append(section("Rumours", el("p", { class: "camp-status", text: "Nobody is saying anything yet." })));
+	}
 
 	// The flesh-out path (MAD-372): a name and one line becomes a place —
 	// the missing block, people and secrets proposed around what is

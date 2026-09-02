@@ -79,7 +79,7 @@ type locationDossierView struct {
 	Secrets  []factView      `json:"secrets"` // DM reads only, by construction
 	Events   []eventView     `json:"events"`
 	Quests   []questChipView `json:"quests"`
-	Rumours  []string        `json:"rumours"` // empty until MAD-374 lands
+	Rumours  []string        `json:"rumours"` // what's being said here; the mill panel carries the detail
 }
 
 /* ---------- the listing ---------- */
@@ -239,7 +239,10 @@ func (s *Server) handleCampaignLocation(w http.ResponseWriter, r *http.Request) 
 		Present:            toEntityChips(d.Present),
 		Children:           toEntityChips(d.Children),
 		Items:              toEntityChips(d.Items),
-		Rumours:            []string{},
+		Rumours:            d.Rumours,
+	}
+	if view.Rumours == nil {
+		view.Rumours = []string{}
 	}
 	for _, route := range d.Routes {
 		view.Routes = append(view.Routes, routeChipView{To: route.To, Days: route.Days, Terrain: route.Terrain})

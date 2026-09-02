@@ -90,8 +90,31 @@ func (s *Store) placeSnapshot(ctx context.Context, scope Scope, campaignID, loca
 	}
 	if !scope.IsDM() {
 		s.graftPublicPlace(ctx, campaignID, locationID, snap.Entities)
+		s.loadSafeRumors(ctx, campaignID, snap)
 	}
 	return snap, s.loadPublicQuests(ctx, campaignID, snap)
+}
+
+// loadSafeRumors fills the snapshot's rumour mill with the player-safe
+// rows: DM-only rumours excluded outright, truth and fact_id selected as
+// empty strings so the columns never load (the same rule Rumors enforces
+// on its own reads). The forbidden material is absent because it was never
+// loaded, not because a field was blanked here.
+func (s *Store) loadSafeRumors(ctx context.Context, campaignID string, snap *campaign.Snapshot) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+rumorColsPlayer+` FROM rumors WHERE campaign_id = ? AND dm_only = 0
+		 ORDER BY created_at, id`, campaignID)
+	if err != nil {
+		return // an unreadable mill renders as an empty one; the dossier degrades gracefully
+	}
+	defer rows.Close()
+	for rows.Next() {
+		r, err := scanRumor(rows)
+		if err != nil {
+			return
+		}
+		snap.Rumors = append(snap.Rumors, *r)
+	}
 }
 
 // graftPublicPlace re-attaches the public half of one location's place
