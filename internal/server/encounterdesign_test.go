@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -295,5 +296,212 @@ func TestEncounterMonsterSearchPrefersTheMirror(t *testing.T) {
 	}
 	if resp.Source != "local" || len(resp.Monsters) == 0 || resp.Monsters[0].Name != "Owlbear" {
 		t.Fatalf("search = %+v (source %q), want the mirrored Owlbear", resp.Monsters, resp.Source)
+	}
+}
+
+/* ---------- objectives, terrain and waves (MAD-380) ---------- */
+
+// capturingStub records the request the server sent the model, then streams
+// answer as the reply.
+func capturingStub(answer string, captured *string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		*captured = string(b)
+		sseStub(answer)(w, r)
+	}
+}
+
+// surviveDesignFixture is a well-formed survive design written in the wave
+// format the prompt asks for.
+const surviveDesignFixture = `# Hold the Crossing
+
+## The pitch
+The far bank is safety, and the bridge is not ours.
+
+## Roster
+Wave 1: 4 × Goblin
+Wave 2: 1 × Goblin Boss
+
+## Terrain
+The span groans under anyone who crosses.
+
+## Tactics
+The boss arrives with the second wave.
+`
+
+// An objective is a declared kind: anything outside the vocabulary is
+// rejected at the API boundary — a 400, never a default to defeat.
+func TestEncounterDesignRejectsUnknownObjective(t *testing.T) {
+	s := newDesignServer(t, nil)
+	admin := adminSession(t, s)
+	for _, target := range []string{"/api/encounter/design", "/api/encounter/budget"} {
+		if rec := call(s, http.MethodPost, target, `{"objective":{"kind":"escort"}}`, admin); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: unknown objective = %d, want 400", target, rec.Code)
+		}
+	}
+	if rec := call(s, http.MethodPost, "/api/encounters", `{"name":"X","objective":{"kind":"escort"}}`, admin); rec.Code != http.StatusBadRequest {
+		t.Errorf("create: unknown objective = %d, want 400", rec.Code)
+	}
+}
+
+// A survive design comes back priced across its waves, with the objective,
+// its rendered ending and the generated terrain riding the done frame —
+// all of it server-owned.
+func TestEncounterDesignSurvive(t *testing.T) {
+	var prompt string
+	s := newDesignServer(t, capturingStub(surviveDesignFixture, &prompt))
+	admin := adminSession(t, s)
+
+	rec := call(s, http.MethodPost, "/api/encounter/design",
+		`{"idea":"hold the bridge","party":[3,3,3,3],"objective":{"kind":"survive"}}`, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("design: %d %s", rec.Code, rec.Body)
+	}
+
+	// The model was handed the objective, its XP rules, the terrain with its
+	// mechanical effects intact, and the wave roster format.
+	for _, want := range []string{
+		"OBJECTIVE: Survive", "Failure:", "one wave per line",
+		"Difficult ground", "every foot of movement",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt is missing %q:\n%s", want, prompt)
+		}
+	}
+
+	var done struct {
+		Monsters  []encounter.Monster   `json:"monsters"`
+		Waves     [][]encounter.Monster `json:"waves"`
+		Verdict   encounter.Verdict     `json:"verdict"`
+		Objective encounter.Objective   `json:"objective"`
+		Ending    encounter.Ending      `json:"ending"`
+		Terrain   encounter.Terrain     `json:"terrain"`
+	}
+	if err := json.Unmarshal([]byte(sseDataFor(t, rec.Body.String(), "done")), &done); err != nil {
+		t.Fatalf("decode done: %v", err)
+	}
+	if done.Objective.Kind != encounter.Survive || done.Objective.Rounds != 6 {
+		t.Errorf("objective = %+v, want survive normalised to 6 rounds", done.Objective)
+	}
+	if done.Ending.Success == "" || done.Ending.Clock == "" {
+		t.Errorf("ending incomplete: %+v", done.Ending)
+	}
+	// Survive's ground is features only — the waves are the hazard.
+	if len(done.Terrain.Features) < 3 || len(done.Terrain.Hazards) != 0 {
+		t.Errorf("terrain = %+v, want the holding ground's features and no hazard", done.Terrain)
+	}
+	for _, f := range done.Terrain.Features {
+		if f.Effect == "" || f.Area == "" {
+			t.Errorf("feature without its mechanics: %+v", f)
+		}
+	}
+	if len(done.Waves) != 2 {
+		t.Fatalf("waves = %+v, want the two parsed waves", done.Waves)
+	}
+	if len(done.Monsters) != 2 {
+		t.Fatalf("roster = %+v, want every wave flattened", done.Monsters)
+	}
+	// The verdict is the wave arithmetic: 4 goblins ×2 = 400, 1 boss ×1 = 200.
+	if len(done.Verdict.Waves) != 2 || done.Verdict.AdjustedXP != 600 {
+		t.Fatalf("verdict = %+v, want two waves totalling 600 adjusted", done.Verdict)
+	}
+	if done.Verdict.Waves[0].AdjustedXP != 400 || done.Verdict.Waves[1].AdjustedXP != 200 {
+		t.Errorf("per-wave = %d + %d, want 400 + 200", done.Verdict.Waves[0].AdjustedXP, done.Verdict.Waves[1].AdjustedXP)
+	}
+}
+
+// A hazardous objective hands the model the hazard with every number it
+// prices at — the DMG's tier tables for this party — and none of those
+// numbers are the model's to change.
+func TestEncounterDesignPromptCarriesTheHazard(t *testing.T) {
+	var prompt string
+	s := newDesignServer(t, capturingStub(designFixture, &prompt))
+	admin := adminSession(t, s)
+
+	rec := call(s, http.MethodPost, "/api/encounter/design",
+		`{"party":[3,3,3,3],"objective":{"kind":"reach"}}`, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("design: %d %s", rec.Code, rec.Body)
+	}
+	for _, want := range []string{
+		"OBJECTIVE: Reach", "HAZARD Rockfall", "DC 15", "2d10 bludgeoning",
+		"every foot of movement", "one creature wide",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt is missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// A defeat design's stream carries none of the objective layer — the byte
+// the MAD-299 surface shipped is the byte it still ships.
+func TestEncounterDesignDefeatStaysUntouched(t *testing.T) {
+	var prompt string
+	s := newDesignServer(t, capturingStub(designFixture, &prompt))
+	admin := adminSession(t, s)
+
+	rec := call(s, http.MethodPost, "/api/encounter/design",
+		`{"party":[3,3,3,3],"objective":{"kind":"defeat"}}`, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("design: %d %s", rec.Code, rec.Body)
+	}
+	done := sseDataFor(t, rec.Body.String(), "done")
+	for _, absent := range []string{`"objective"`, `"ending"`, `"terrain"`, `"waves"`} {
+		if strings.Contains(done, absent) {
+			t.Errorf("defeat done frame carries %q:\n%s", absent, done)
+		}
+	}
+	if strings.Contains(prompt, "OBJECTIVE:") || strings.Contains(prompt, "TERRAIN the server generated") {
+		t.Error("a defeat prompt grew objective blocks")
+	}
+}
+
+// The budget endpoint answers for an objective too: the aim is the
+// objective-aware one, the waves are in the readout, and the rendered
+// ending lets the builder show "how this ends" before anything is designed.
+func TestEncounterBudgetWithObjective(t *testing.T) {
+	s := newDesignServer(t, nil)
+	admin := adminSession(t, s)
+
+	rec := call(s, http.MethodPost, "/api/encounter/budget",
+		`{"party":[3,3,3,3],"difficulty":"medium","objective":{"kind":"survive"}}`, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("budget: %d %s", rec.Code, rec.Body)
+	}
+	var resp struct {
+		Budget  encounter.Budget   `json:"budget"`
+		Ending  *encounter.Ending  `json:"ending"`
+		Terrain *encounter.Terrain `json:"terrain"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Budget.Waves != 2 {
+		t.Errorf("waves = %d, want 2", resp.Budget.Waves)
+	}
+	if len(resp.Budget.Adjustments) == 0 || resp.Budget.Adjustments[0].Rule != "waves" {
+		t.Errorf("adjustments = %+v, want the wave rule and its reason", resp.Budget.Adjustments)
+	}
+	if resp.Ending == nil || resp.Ending.Success == "" {
+		t.Errorf("ending missing: %+v", resp.Ending)
+	}
+	if resp.Terrain == nil || len(resp.Terrain.Features) == 0 {
+		t.Errorf("terrain missing: %+v", resp.Terrain)
+	}
+
+	// Defeat answers without any of it.
+	rec = call(s, http.MethodPost, "/api/encounter/budget", `{"party":[3,3,3,3]}`, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("defeat budget: %d", rec.Code)
+	}
+	var plain struct {
+		Budget encounter.Budget  `json:"budget"`
+		Ending *encounter.Ending `json:"ending"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &plain); err != nil {
+		t.Fatal(err)
+	}
+	if plain.Budget.Waves != 0 || plain.Budget.Objective != nil || plain.Ending != nil {
+		t.Errorf("defeat budget grew objective fields: %+v", plain.Budget)
 	}
 }

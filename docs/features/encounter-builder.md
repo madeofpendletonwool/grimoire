@@ -16,6 +16,30 @@ Three inputs, all with usable defaults:
 
 Press **Build the encounter** and the design streams onto the page.
 
+### The objective
+
+Beside the difficulty chips is a second row: what the fight is *about*. **Defeat** — kill the things — is selected by default, so a DM who wants today's behaviour changes nothing. The rest are different fights that happen to contain monsters:
+
+| Objective | The fight | Its parameter |
+|---|---|---|
+| **Defeat** | The last monster drops, or the party does | — |
+| **Survive** | Hold N rounds against reinforcing waves | Rounds (6) |
+| **Reach** | Cross the board; the monsters are the obstacle | Rounds before the pursuit closes (5) |
+| **Protect** | Something specific must still be standing at the end | What, and how long it can take a hit (5) |
+| **Stop** | A clock the enemy is advancing; break it in time | Rounds until it completes (4) |
+| **Retrieve** | Take the thing and get out with it | What, and the rounds to get clear (5) |
+| **Escape** | Get out; standing to fight is the failure state | Rounds before the way closes (5) |
+
+The objective is not a label — it changes the arithmetic, and says so. Under the budget readout, every adjustment it applied appears with its reason: survive arrives in waves and each wave is priced at its own multiplier (the DMG's table assumes every monster is on the board at once, and the verdict checks the total across all of them); reach concentrates the budget into fewer, faster monsters; protect buys a bigger board because the monsters split their fire; escape is priced above the party deliberately rather than by accident. The same objective, party and band always produce the same numbers.
+
+Picking a non-defeat objective reveals its one or two parameters and grows the encounter a short **"How this ends"** block: success, failure, and the clock if there is one — the round budget the combat tracker (MAD-318) reads. The block is server text, not the model's.
+
+### Terrain and hazards
+
+A `reach` objective on a flat empty room is a footrace, so the battlefield is generated *with* the objective, not decorated on afterwards. The server picks from a declared vocabulary — cover, elevation, difficult ground, chokepoints, concealment, water, darkness — and each feature declares what it does mechanically (`difficult_ground` costs 2 feet of movement per foot; `chokepoint` is one creature wide), so it is a structured value the app can reason over, never prose to re-read.
+
+Where the story calls for one, the fight carries a **hazard**: a save DC, a damage expression, a trigger and an area, priced the way the DMG prices traps — the DC and damage come straight from the book's tier tables for the party's level and the requested band, and a hazard moves the aim a step up so the roster doesn't also carry the band. The model's job is naming and describing what it was handed; every number on the battlefield is the server's.
+
 ### From a campaign
 
 If you run a campaign, the disclosure under the party boxes lists the ones you keep. Picking one prefills the boxes from the campaign's declared [party block](../campaign/encounters.md) — every pc that carries a level, in name order — with a *from your campaign — 4 characters, level 5* line above them. The line's **edit** button (or your first edit of the numbers) takes the table back: the campaign is a prefill, never a requirement. A campaign that declares no levels leaves the boxes alone.
@@ -56,7 +80,7 @@ The mirror is refreshed if it is missing or more than a month old, in the backgr
 
 ## Saving and taking it away
 
-Name it and **Save**; the roster, the party and the whole write-up are stored with your account (and, when a campaign is picked, scoped to that campaign — see [From a campaign](#from-a-campaign)). The saved-encounter picker at the top of the surface loads them back with the verdict recomputed. **Copy** puts the entire encounter on the clipboard as plain text, because prep tends to end up in someone's own notes app. **Ask the sage about this** drops the encounter into the chat as a question, grounded in the indexed DMG.
+Name it and **Save**; the roster, the party, the objective and its terrain, and the whole write-up are stored with your account (and, when a campaign is picked, scoped to that campaign — see [From a campaign](#from-a-campaign)). The saved-encounter picker at the top of the surface loads them back with the verdict recomputed and the "How this ends" block intact. **Copy** puts the entire encounter on the clipboard as plain text, because prep tends to end up in someone's own notes app. **Ask the sage about this** drops the encounter into the chat as a question, grounded in the indexed DMG.
 
 ## Requirements
 

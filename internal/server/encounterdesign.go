@@ -22,14 +22,17 @@ import (
 
 // designRequest is the body for /api/encounter/design. Everything is
 // optional: an empty request still produces an encounter, because "I have no
-// idea" is the case the designer exists for.
+// idea" is the case the designer exists for. An objective kind outside the
+// declared vocabulary is a 400, never a default — an objective is a declared
+// kind, not a sentence.
 type designRequest struct {
-	Idea       string              `json:"idea"`
-	Party      []int               `json:"party"`
-	Difficulty string              `json:"difficulty"`
-	Feedback   string              `json:"feedback"` // revision instruction
-	Current    []encounter.Monster `json:"current"`  // roster the revision applies to
-	Notes      string              `json:"notes"`    // the design being revised
+	Idea       string               `json:"idea"`
+	Party      []int                `json:"party"`
+	Difficulty string               `json:"difficulty"`
+	Feedback   string               `json:"feedback"` // revision instruction
+	Current    []encounter.Monster  `json:"current"`  // roster the revision applies to
+	Notes      string               `json:"notes"`    // the design being revised
+	Objective  *encounter.Objective `json:"objective"`
 	// CampaignID is optional (MAD-378): with one, an unstated party comes
 	// from the campaign's declared party block instead of the default table,
 	// and the caller must hold that campaign's DM perspective. Without one
@@ -68,6 +71,10 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := validateObjective(req.Objective); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	if _, err := normalizeMonsters(req.Current); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -94,7 +101,11 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	assumedParty := partySource == "default"
-	budget := encounter.Plan(party, req.Difficulty)
+	obj := encounter.Objective{}
+	if req.Objective != nil {
+		obj = *req.Objective
+	}
+	budget := encounter.Plan(party, req.Difficulty, obj)
 	hints := encounter.ReadIdea(req.Idea + " " + req.Feedback)
 	pool := encounter.BuildPool(s.catalog, budget, hints, nil)
 	if pool.Len() == 0 {
@@ -119,7 +130,7 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
 	defer cancel()
 	answer, streamErr := s.llm.StreamPrompt(ctx, encounterDesignSystemPrompt,
-		designUserPrompt(req, budget, hints, pool),
+		designUserPrompt(req, budget, hints, pool, obj),
 		func(text string) error {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -132,7 +143,12 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	design := encounter.ParseDesign(s.catalog, answer)
+	// A survive roster priced across its waves, not as one board; every
+	// other fight is priced the way it always was.
 	verdict := encounter.Evaluate(party, design.Monsters)
+	if obj.Normalized().Kind == encounter.Survive && len(design.Waves) >= 2 {
+		verdict = encounter.EvaluateWaves(party, design.Waves)
+	}
 	payload := map[string]any{
 		"name":       design.Name,
 		"monsters":   design.Monsters,
@@ -141,6 +157,19 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 		"verdict":    verdict,
 		"budget":     budget,
 		"party":      party,
+	}
+	if obj.Normalized().Kind != encounter.Defeat {
+		// The fight is about something: the structured objective for the
+		// chips and the save, its rendered ending for the "how this ends"
+		// block, and the terrain generated with it. All server-owned —
+		// the model described them, it did not set them.
+		ending := obj.Normalized().Ending()
+		payload["objective"] = obj.Normalized()
+		payload["ending"] = ending
+		if budget.Terrain != nil {
+			payload["terrain"] = *budget.Terrain
+		}
+		payload["waves"] = design.Waves
 	}
 	if streamErr != nil {
 		// Partial text is already on screen; report the cut alongside
@@ -187,13 +216,18 @@ One line for a tougher table and one line for a weaker one, adjusting counts or 
 Write like an experienced DM handing a colleague a prepped encounter: concrete, specific, no filler, no preamble, no closing summary.`
 
 // designUserPrompt lays out one design exchange: the brief, the budget as
-// fact, and the shortlist tiered by the slot each creature can fill.
-func designUserPrompt(req designRequest, b encounter.Budget, h encounter.Hints, pool encounter.Pool) string {
+// fact, and the shortlist tiered by the slot each creature can fill. A
+// non-defeat objective adds its own blocks — what the fight is about, the
+// terrain generated with it, and the roster format a survive fight needs —
+// and a defeat objective adds nothing at all.
+func designUserPrompt(req designRequest, b encounter.Budget, h encounter.Hints, pool encounter.Pool, obj encounter.Objective) string {
 	var sb strings.Builder
 
 	fmt.Fprintf(&sb, "PARTY: %d characters, levels %s (average %.1f)\n",
 		b.PartySize, levelList(b.Party), b.AvgLevel)
 	fmt.Fprintf(&sb, "TARGET DIFFICULTY: %s\n\n", b.Band)
+
+	writeObjectiveBlock(&sb, obj, b)
 
 	sb.WriteString("BUDGET (2014 DMG, computed by the server — treat as fact):\n")
 	for _, band := range encounter.Bands {
@@ -208,10 +242,17 @@ func designUserPrompt(req designRequest, b encounter.Budget, h encounter.Hints, 
 
 	sb.WriteString("SHAPES this budget can take (the multiplier is the DMG's, applied for this party size):\n")
 	for _, s := range b.Shapes {
+		if s.Waves > 1 {
+			fmt.Fprintf(&sb, "- %s: %d monsters per wave, %d waves, ×%g per wave, %d raw XP across all waves (~%d per wave, about CR %s each)\n",
+				s.Label, s.Count, s.Waves, s.Multiplier, s.RawXP, s.WaveXP, s.EachCR)
+			continue
+		}
 		fmt.Fprintf(&sb, "- %s: %d monsters, ×%g multiplier, %d raw XP to spend (~%d each, about CR %s)\n",
 			s.Label, s.Count, s.Multiplier, s.RawXP, s.EachXP, s.EachCR)
 	}
 	sb.WriteString("\n")
+
+	writeTerrainBlock(&sb, b)
 
 	if req.Idea != "" {
 		fmt.Fprintf(&sb, "THE DM'S IDEA: %s\n", req.Idea)
@@ -243,6 +284,52 @@ func designUserPrompt(req designRequest, b encounter.Budget, h encounter.Hints, 
 
 	sb.WriteString("\nDesign the encounter now, in the exact format given.")
 	return sb.String()
+}
+
+// writeObjectiveBlock tells the model what the fight is about and which of
+// its numbers are already decided. Defeat writes nothing: the default fight's
+// prompt is exactly what it has always been.
+func writeObjectiveBlock(sb *strings.Builder, obj encounter.Objective, b encounter.Budget) {
+	obj = obj.Normalized()
+	if obj.Kind == encounter.Defeat {
+		return
+	}
+	e := obj.Ending()
+	fmt.Fprintf(sb, "OBJECTIVE: %s (computed by the server — treat as fact)\n", e.Label)
+	fmt.Fprintf(sb, "This fight is about something other than killing everything. Its success and failure are fixed:\n")
+	fmt.Fprintf(sb, "- Success: %s\n", e.Success)
+	fmt.Fprintf(sb, "- Failure: %s\n", e.Failure)
+	if e.Clock != "" {
+		fmt.Fprintf(sb, "- Clock: %s\n", e.Clock)
+	}
+	if len(b.Adjustments) > 0 {
+		sb.WriteString("The server has already applied this objective's XP rules, and the budget below includes them:\n")
+		for _, a := range b.Adjustments {
+			fmt.Fprintf(sb, "- %s\n", a.Detail)
+		}
+	}
+	sb.WriteString("The pitch and tactics must make the objective the reason the fight plays differently — not a footnote on a plain fight.\n\n")
+}
+
+// writeTerrainBlock hands the model the terrain generated with the
+// objective. The mechanics are server-owned and must survive verbatim; the
+// model's job is naming and describing what it was handed.
+func writeTerrainBlock(sb *strings.Builder, b encounter.Budget) {
+	if b.Terrain == nil || (len(b.Terrain.Features) == 0 && len(b.Terrain.Hazards) == 0) {
+		return
+	}
+	sb.WriteString("TERRAIN the server generated (fact — keep every mechanical effect exactly as given, and name each feature concretely in your Terrain section):\n")
+	for _, f := range b.Terrain.Features {
+		fmt.Fprintf(sb, "- %s (%s): %s Where: %s.\n", encounter.FeatureLabel(f.Kind), f.Kind, f.Effect, f.Area)
+	}
+	for _, h := range b.Terrain.Hazards {
+		fmt.Fprintf(sb, "- HAZARD %s (%s): %s save DC %d; %s %s damage on a failure. Trigger: %s. Area: %s.\n",
+			h.Name, h.Kind, strings.ToUpper(h.SaveAbility), h.DC, h.Damage, h.DamageType, h.Trigger, h.Area)
+	}
+	if b.Waves > 1 {
+		fmt.Fprintf(sb, "ROSTER FORMAT for this objective: the roster is the WHOLE fight across %d waves, one wave per line, exactly \"Wave 1: N × Creature Name\" — this overrides the general roster rule above. Wave 1 is what the party meets first; later waves reinforce it. Spend the full raw XP across every wave: the verdict checks the total against the party, not the first wave alone.\n", b.Waves)
+	}
+	sb.WriteString("\n")
 }
 
 // writeTier prints one slot of the shortlist, or nothing when it is empty.
@@ -293,9 +380,10 @@ func (s *Server) handleEncounterBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Party      []int  `json:"party"`
-		Difficulty string `json:"difficulty"`
-		CampaignID string `json:"campaign_id"`
+		Party      []int                `json:"party"`
+		Difficulty string               `json:"difficulty"`
+		CampaignID string               `json:"campaign_id"`
+		Objective  *encounter.Objective `json:"objective"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
@@ -304,6 +392,14 @@ func (s *Server) handleEncounterBudget(w http.ResponseWriter, r *http.Request) {
 	if err := validateParty(req.Party); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
+	}
+	if err := validateObjective(req.Objective); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	obj := encounter.Objective{}
+	if req.Objective != nil {
+		obj = *req.Objective
 	}
 	// A campaign_id with no party is what prefills the builder's party boxes;
 	// encounter.Plan itself is unchanged and still answers for a bare party,
@@ -323,13 +419,24 @@ func (s *Server) handleEncounterBudget(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"budget":       encounter.Plan(party, req.Difficulty),
+	budget := encounter.Plan(party, req.Difficulty, obj)
+	resp := map[string]any{
+		"budget":       budget,
 		"bestiary":     s.catalog.Count(),
 		"party":        party,
 		"party_source": source,
 		"party_label":  line,
-	})
+	}
+	// The rendered ending rides along so the builder can show "how this
+	// ends" before anything is designed — the server writes it, never the
+	// client.
+	if obj.Normalized().Kind != encounter.Defeat {
+		resp["ending"] = obj.Normalized().Ending()
+		if budget.Terrain != nil {
+			resp["terrain"] = *budget.Terrain
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // resolveDesignParty settles which party a design request is built against:

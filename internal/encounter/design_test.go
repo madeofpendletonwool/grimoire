@@ -10,7 +10,7 @@ import (
 // is the worked example the threshold table was pinned against, so the budget
 // has to reproduce it exactly.
 func TestPlanMatchesDMGSampleParty(t *testing.T) {
-	b := Plan([]int{3, 3, 3, 2}, BandMedium)
+	b := Plan([]int{3, 3, 3, 2}, BandMedium, Objective{})
 
 	want := map[string]int{
 		BandEasy:   75*3 + 50,
@@ -35,7 +35,7 @@ func TestPlanMatchesDMGSampleParty(t *testing.T) {
 // A missing party and a missing band both have to produce a real budget:
 // "just give me an encounter" is the request the designer exists for.
 func TestPlanFillsDefaults(t *testing.T) {
-	b := Plan(nil, "")
+	b := Plan(nil, "", Objective{})
 	if b.Band != BandMedium {
 		t.Errorf("band = %q, want Medium", b.Band)
 	}
@@ -45,7 +45,7 @@ func TestPlanFillsDefaults(t *testing.T) {
 	if b.TargetXP <= 0 || len(b.Shapes) == 0 {
 		t.Fatalf("default plan produced nothing usable: %+v", b)
 	}
-	if got := Plan(nil, "nonsense band").Band; got != BandMedium {
+	if got := Plan(nil, "nonsense band", Objective{}).Band; got != BandMedium {
 		t.Errorf("unknown band = %q, want Medium", got)
 	}
 }
@@ -53,7 +53,7 @@ func TestPlanFillsDefaults(t *testing.T) {
 // Deadly has no band above it in the table, so its ceiling is derived rather
 // than looked up — and it must still sit above its own threshold.
 func TestPlanDeadlyCeiling(t *testing.T) {
-	b := Plan([]int{5, 5, 5, 5}, "deadly")
+	b := Plan([]int{5, 5, 5, 5}, "deadly", Objective{})
 	if b.CeilingXP <= b.TargetXP {
 		t.Fatalf("deadly ceiling %d must exceed the threshold %d", b.CeilingXP, b.TargetXP)
 	}
@@ -63,7 +63,7 @@ func TestPlanDeadlyCeiling(t *testing.T) {
 // multiplier lands back on the target, which is the whole reason the model is
 // handed shapes rather than a single number.
 func TestShapesSpendTheSameAdjustedBudget(t *testing.T) {
-	b := Plan([]int{5, 5, 5, 5}, BandHard)
+	b := Plan([]int{5, 5, 5, 5}, BandHard, Objective{})
 	if len(b.Shapes) < 3 {
 		t.Fatalf("expected several shapes, got %+v", b.Shapes)
 	}
@@ -82,7 +82,7 @@ func TestShapesSpendTheSameAdjustedBudget(t *testing.T) {
 // A 1st-level party cannot pay for nine monsters; that shape must drop out
 // rather than suggest a horde of things below CR 0.
 func TestShapesDropUnaffordableGroups(t *testing.T) {
-	b := Plan([]int{1}, BandEasy)
+	b := Plan([]int{1}, BandEasy, Objective{})
 	for _, s := range b.Shapes {
 		if s.EachXP < 10 {
 			t.Fatalf("shape %q is unaffordable but was offered: %+v", s.Key, s)
@@ -231,6 +231,58 @@ func TestParseDesignIgnoresProseInTheRoster(t *testing.T) {
 		if strings.Contains(u, "whole fight") {
 			t.Errorf("prose reported as an unverified monster: %v", d.Unverified)
 		}
+	}
+}
+
+// A survive roster arrives in waves: each wave parses on its own, the
+// flattened roster is every wave, and a single-wave roster degrades to a
+// plain one rather than pretending there is structure.
+func TestParseDesignWaves(t *testing.T) {
+	cat := testCatalog(t)
+	md := strings.Join([]string{
+		"# Hold the Bridge",
+		"## Roster",
+		"Wave 1: 4 × Goblin",
+		"**Wave 2** — 1 × Goblin Boss, 2 × Goblin",
+		"- Wave 3: 1 × Owlbear",
+		"",
+		"## Tactics",
+		"4 × Goblin would be prose if it were not a wave line.",
+	}, "\n")
+
+	d := ParseDesign(cat, md)
+	if len(d.Waves) != 3 {
+		t.Fatalf("waves = %d, want 3: %+v", len(d.Waves), d.Waves)
+	}
+	if len(d.Waves[0]) != 1 || d.Waves[0][0].Count != 4 {
+		t.Errorf("wave 1 = %+v, want 4 goblins", d.Waves[0])
+	}
+	if len(d.Waves[1]) != 2 {
+		t.Errorf("wave 2 = %+v, want the boss and two goblins", d.Waves[1])
+	}
+	if d.Waves[2][0].Name != "Owlbear" {
+		t.Errorf("wave 3 = %+v, want the owlbear", d.Waves[2])
+	}
+	// The flattened roster is the whole fight, in wave order — what the
+	// roster display and a plain save carry.
+	if len(d.Monsters) != 4 {
+		t.Fatalf("roster = %+v, want every wave flattened", d.Monsters)
+	}
+	if d.Monsters[0].Name != "Goblin" || d.Monsters[0].Count != 4 {
+		t.Errorf("first roster entry = %+v, want wave 1's goblins", d.Monsters[0])
+	}
+}
+
+// One wave marker is defeat wearing a survive label: the design keeps the
+// roster but no wave structure, so the verdict prices it the ordinary way.
+func TestParseDesignSingleWaveIsNoWaves(t *testing.T) {
+	cat := testCatalog(t)
+	d := ParseDesign(cat, "# Not really waves\n## Roster\nWave 1: 4 × Goblin\n")
+	if d.Waves != nil {
+		t.Errorf("waves = %+v, want none for a single-wave roster", d.Waves)
+	}
+	if len(d.Monsters) != 1 || d.Monsters[0].Count != 4 {
+		t.Fatalf("roster = %+v, want the wave's monsters as a plain roster", d.Monsters)
 	}
 }
 

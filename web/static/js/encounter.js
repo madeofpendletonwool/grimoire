@@ -23,6 +23,8 @@ let party = [3, 3, 3, 3]; // character levels
 let roster = []; // [{ name, cr, xp, count }]
 let notes = ""; // the design write-up, Markdown
 let band = "Medium"; // target difficulty
+let objective = { kind: "defeat", rounds: 0, focus: "" }; // what the fight is about
+let terrain = null; // the battlefield generated with the objective, { features, hazards }
 let title = ""; // the encounter's name from the designer
 let currentID = null; // saved encounter id, null while unsaved
 let campaignID = ""; // the campaign the builder is designing against, "" for none
@@ -35,6 +37,19 @@ let budgetAbort = null;
 const statblocks = new Map(); // name -> creature, cached per session
 
 const BANDS = ["Easy", "Medium", "Hard", "Deadly"];
+
+// The objective kinds, in chip order. Defeat is first and default: a DM who
+// wants today's behaviour changes nothing. The rounds value is each kind's
+// default round budget, revealed as a parameter when its chip is picked.
+const OBJECTIVES = [
+	{ kind: "defeat", label: "Defeat" },
+	{ kind: "survive", label: "Survive", rounds: 6, roundsLabel: "Hold for how many rounds?" },
+	{ kind: "reach", label: "Reach", rounds: 5, roundsLabel: "Rounds before the pursuit closes" },
+	{ kind: "protect", label: "Protect", rounds: 5, roundsLabel: "Rounds the ward can take", focus: "What must still be standing?" },
+	{ kind: "stop", label: "Stop", rounds: 4, roundsLabel: "Rounds until the clock completes", focus: "What are they stopping?" },
+	{ kind: "retrieve", label: "Retrieve", rounds: 5, roundsLabel: "Rounds to get clear once taken", focus: "What is being taken?" },
+	{ kind: "escape", label: "Escape", rounds: 5, roundsLabel: "Rounds before the way closes" },
+];
 
 // Starters for the DM who genuinely has nothing. They are deliberately vague
 // — the point of the designer is that a mood is enough.
@@ -52,11 +67,27 @@ const SEEDS = [
 function wire() {
 
 	renderBands();
+	renderObjectives();
 	renderSeeds();
 	syncPartyInputs();
 
 	$("enc-party-count").addEventListener("input", onQuickParty);
 	$("enc-party-level").addEventListener("input", onQuickParty);
+
+	$("enc-objectives").addEventListener("click", (e) => {
+		const pick = e.target.closest("[data-objective]");
+		if (!pick) return;
+		pickObjective(pick.dataset.objective);
+	});
+	$("enc-obj-rounds").addEventListener("input", () => {
+		if (objective.kind === "defeat") return;
+		objective.rounds = clampInt($("enc-obj-rounds").value, 1, 20, OBJECTIVES.find((o) => o.kind === objective.kind)?.rounds || 5);
+		refreshBudget();
+	});
+	$("enc-obj-focus").addEventListener("input", () => {
+		objective.focus = $("enc-obj-focus").value.trim();
+		refreshBudget();
+	});
 
 	$("enc-campaign").addEventListener("change", onPickCampaign);
 	$("enc-party-from").addEventListener("click", (e) => {
@@ -169,6 +200,62 @@ function renderSeeds() {
 			text: s,
 		}));
 	}
+}
+
+/* ---------- The objective ---------- */
+
+// The chip row beside the difficulty chips. Defeat stays selected by default,
+// so a DM who wants today's behaviour changes nothing; picking another kind
+// reveals its one or two parameters and re-aims the budget readout.
+function renderObjectives() {
+	const wrap = clear($("enc-objectives"));
+	for (const o of OBJECTIVES) {
+		const on = o.kind === (objective.kind || "defeat");
+		wrap.append(el("button", {
+			class: "enc-chip enc-band-chip" + (on ? " is-on" : ""),
+			attrs: { type: "button", "data-objective": o.kind, "aria-pressed": on },
+			text: o.label,
+		}));
+	}
+	syncObjectiveParams();
+}
+
+function pickObjective(kind) {
+	if (objective.kind === kind) return;
+	const meta = OBJECTIVES.find((o) => o.kind === kind) || OBJECTIVES[0];
+	objective = { kind: meta.kind, rounds: meta.rounds || 0, focus: "" };
+	terrain = null;
+	renderObjectives();
+	refreshBudget();
+}
+
+// The one or two parameters a kind carries — rounds, and what the fight is
+// over. Defeat has none, so the row stays hidden.
+function syncObjectiveParams() {
+	const meta = OBJECTIVES.find((o) => o.kind === (objective.kind || "defeat")) || OBJECTIVES[0];
+	const params = $("enc-objective-params");
+	params.hidden = meta.kind === "defeat";
+	if (meta.kind === "defeat") return;
+	$("enc-obj-rounds-label").textContent = meta.roundsLabel || "Rounds";
+	$("enc-obj-rounds").value = String(objective.rounds || meta.rounds || 5);
+	const focusRow = $("enc-obj-focus-row");
+	focusRow.hidden = !meta.focus;
+	if (meta.focus) {
+		$("enc-obj-focus-label").textContent = meta.focus;
+		$("enc-obj-focus").value = objective.focus || "";
+	}
+}
+
+// What the client sends: the declared kind, its clock when it has one, and
+// the thing the fight is over when the kind wants one. The server fills
+// every default it does not receive.
+function objectivePayload() {
+	if (!objective.kind || objective.kind === "defeat") return { kind: "defeat" };
+	const meta = OBJECTIVES.find((o) => o.kind === objective.kind) || OBJECTIVES[0];
+	const out = { kind: objective.kind };
+	if (meta.rounds) out.rounds = objective.rounds || meta.rounds;
+	if (meta.focus) out.focus = objective.focus || "";
+	return out;
 }
 
 // The two number boxes are the fast path: they describe a party of identical
@@ -324,14 +411,16 @@ function takeBackParty() {
 /* ---------- The budget readout ---------- */
 
 // "What fits" is worth showing before anything is built: it turns the
-// difficulty chips from an abstract label into a number of monsters.
+// difficulty chips from an abstract label into a number of monsters. The
+// objective rides along, so the readout is the objective-aware aim and the
+// "how this ends" block is real before a single monster is placed.
 const refreshBudget = debounce(async () => {
 	if (budgetAbort) budgetAbort.abort();
 	const controller = new AbortController();
 	budgetAbort = controller;
 	const line = $("enc-budget");
 	try {
-		const data = await api.encounterBudget(party, band, campaignID, controller.signal);
+		const data = await api.encounterBudget(party, band, campaignID, objectivePayload(), controller.signal);
 		if (controller.signal.aborted) return;
 		const b = data.budget || {};
 		const shapes = (b.shapes || []).filter((s) => s.count > 1).slice(0, 3)
@@ -340,6 +429,7 @@ const refreshBudget = debounce(async () => {
 		if (b.max_solo_cr) parts.push(`one monster up to CR ${b.max_solo_cr}`);
 		if (shapes.length) parts.push(`or ${shapes.join(", or ")}`);
 		line.textContent = parts.join(" · ");
+		renderEnding(data.ending, data.terrain || null);
 	} catch (err) {
 		if (err.name !== "AbortError") line.textContent = "";
 	}
@@ -382,6 +472,7 @@ async function runDesign(revising) {
 			idea,
 			party,
 			difficulty: band,
+			objective: objectivePayload(),
 			feedback,
 			current: revising ? roster : [],
 			notes: revising ? notes : "",
@@ -404,8 +495,14 @@ async function runDesign(revising) {
 				roster = payload.monsters || [];
 				notes = payload.notes || streamed;
 				if (Array.isArray(payload.party) && payload.party.length) party = payload.party;
+				// The objective comes back normalised: the server filled the
+				// defaults and its terrain with it.
+				objective = payload.objective || { kind: "defeat" };
+				terrain = payload.terrain || null;
 				syncPartyInputs();
+				renderObjectives();
 				renderSheet();
+				renderEnding(payload.ending, terrain);
 				renderVerdict(payload.verdict || {});
 				renderUnverified(payload.unverified || []);
 				if (title && !$("enc-name").value.trim()) $("enc-name").value = title;
@@ -478,6 +575,50 @@ function renderUnverified(names) {
 	}
 	flag.hidden = false;
 	flag.textContent = `Not in the SRD, so left out: ${names.join(", ")}.`;
+}
+
+// "How this ends": success, failure, and the clock if there is one, plus the
+// terrain the fight is generated with. Every word of it is server arithmetic
+// or a server-declared effect — the block is a readout, not the model's.
+function renderEnding(ending, terr) {
+	const node = $("enc-ending");
+	if (!ending || ending.kind === "defeat") {
+		node.hidden = true;
+		return;
+	}
+	clear(node);
+	node.append(el("h4", { class: "enc-ending-title", text: `How this ends — ${ending.label}` }));
+	const line = (label, text) => node.append(el("p", { class: "enc-ending-line" },
+		el("strong", { text: `${label} ` }), document.createTextNode(text)));
+	if (ending.clock) line("Clock:", ending.clock);
+	line("Success:", ending.success);
+	line("Failure:", ending.failure);
+	if (terr && (terr.features?.length || terr.hazards?.length)) {
+		const list = el("ul", { class: "enc-ending-terrain" });
+		for (const f of terr.features || []) {
+			list.append(el("li", {},
+				el("strong", { text: featureLabel(f.kind) }),
+				document.createTextNode(` — ${f.effect}${f.area ? ` (${f.area})` : ""}`)));
+		}
+		for (const h of terr.hazards || []) {
+			list.append(el("li", {},
+				el("strong", { text: `Hazard: ${h.name}` }),
+				document.createTextNode(
+					` — DC ${h.dc} ${h.save_ability.toUpperCase()} save, ${h.damage} ${h.damage_type} on a failure` +
+					`${h.trigger ? `; ${h.trigger}` : ""}${h.area ? ` (${h.area})` : ""}`)));
+		}
+		node.append(list);
+	}
+	node.hidden = false;
+}
+
+// The server's vocabulary, spelled for people.
+function featureLabel(kind) {
+	const labels = {
+		cover: "Cover", elevation: "Elevation", difficult_ground: "Difficult ground",
+		chokepoint: "Chokepoint", concealment: "Concealment", water: "Water", darkness: "Darkness",
+	};
+	return labels[kind] || kind;
 }
 
 function renderRoster() {
@@ -694,7 +835,15 @@ function renderVerdict(v) {
 
 	const xp = $("enc-xp");
 	if (v.adjusted_xp != null && roster.length > 0) {
-		xp.textContent = `${v.adjusted_xp.toLocaleString()} adjusted XP (${v.total_xp.toLocaleString()} × ${v.multiplier})`;
+		// A survive encounter shows the wave arithmetic: the total across
+		// waves is what the party has to survive, and each wave was priced
+		// at its own multiplier.
+		if (v.waves && v.waves.length > 1) {
+			const per = v.waves.map((w) => `${w.total_xp.toLocaleString()} × ${w.multiplier}`).join(" + ");
+			xp.textContent = `${v.adjusted_xp.toLocaleString()} adjusted XP across ${v.waves.length} waves (${per})`;
+		} else {
+			xp.textContent = `${v.adjusted_xp.toLocaleString()} adjusted XP (${v.total_xp.toLocaleString()} × ${v.multiplier})`;
+		}
 	} else {
 		xp.textContent = "";
 	}
@@ -770,6 +919,8 @@ async function onPickSaved() {
 		roster = enc.monsters || [];
 		notes = enc.notes || "";
 		title = enc.name || "";
+		objective = enc.objective || { kind: "defeat" };
+		terrain = enc.terrain || null;
 		statblocks.clear();
 		// A loaded encounter knows the campaign it belongs to; the picker
 		// follows it when that campaign is one of the DM's own.
@@ -784,7 +935,9 @@ async function onPickSaved() {
 		$("enc-name").value = enc.name || "";
 		$("enc-delete").hidden = false;
 		syncPartyInputs();
+		renderObjectives();
 		renderSheet();
+		renderEnding(enc.ending, terrain);
 		renderUnverified([]);
 		setStatus("");
 		renderVerdict(enc.verdict || {});
@@ -799,6 +952,8 @@ function resetBuilder() {
 	notes = "";
 	title = "";
 	currentID = null;
+	objective = { kind: "defeat", rounds: 0, focus: "" };
+	terrain = null;
 	statblocks.clear();
 	$("enc-name").value = "";
 	$("enc-idea").value = "";
@@ -809,7 +964,9 @@ function resetBuilder() {
 	$("encounter-meta").textContent = "";
 	renderUnverified([]);
 	setStatus("");
+	renderObjectives();
 	renderSheet();
+	renderEnding(null, null);
 	refresh();
 }
 
@@ -827,12 +984,14 @@ async function onSave(e) {
 	try {
 		// An update keeps whatever scope the encounter already has; a new
 		// save with a campaign picked is the campaign's — the one record a
-		// planned fight has, visible to the continuity engine.
+		// planned fight has, visible to the continuity engine. The objective
+		// and its terrain travel with the roster: they are what the fight is
+		// about, and the round tracker reads them.
 		const data = currentID
-			? await api.saveEncounter(currentID, name, party, roster, notes)
+			? await api.saveEncounter(currentID, name, party, roster, notes, objectivePayload(), terrain)
 			: campaignID
-				? await api.saveCampaignEncounter(campaignID, name, party, roster, notes)
-				: await api.saveEncounter(null, name, party, roster, notes);
+				? await api.saveCampaignEncounter(campaignID, name, party, roster, notes, objectivePayload(), terrain)
+				: await api.saveEncounter(null, name, party, roster, notes, objectivePayload(), terrain);
 		const enc = data.encounter;
 		currentID = enc.id;
 		$("enc-name").value = enc.name;
@@ -858,6 +1017,16 @@ async function onCopy() {
 	if (roster.length) {
 		lines.push("## Roster");
 		for (const m of roster) lines.push(`${m.count} × ${m.name} (CR ${m.cr}, ${m.xp} XP each)`);
+		lines.push("");
+	}
+	if (objective.kind && objective.kind !== "defeat") {
+		const meta = OBJECTIVES.find((o) => o.kind === objective.kind);
+		lines.push(`## How this ends — ${meta ? meta.label : objective.kind}`);
+		if (objective.rounds) lines.push(`Clock: ${objective.rounds} rounds`);
+		if (terrain) {
+			for (const f of terrain.features || []) lines.push(`${featureLabel(f.kind)}: ${f.effect}`);
+			for (const h of terrain.hazards || []) lines.push(`Hazard — ${h.name}: DC ${h.dc} ${h.save_ability.toUpperCase()}, ${h.damage} ${h.damage_type}`);
+		}
 		lines.push("");
 	}
 	if (notes) lines.push(stripRosterSection(notes));

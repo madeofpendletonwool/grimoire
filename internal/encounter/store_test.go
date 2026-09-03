@@ -147,7 +147,7 @@ func TestStoreCampaignScope(t *testing.T) {
 	if scoped.CampaignID != "camp-1" || scoped.Status != StatusPlanned {
 		t.Fatalf("scoped encounter: %+v", scoped)
 	}
-	if scoped.SessionEventID != "" || scoped.SceneID != "" || scoped.Objective != "" || scoped.Terrain != nil {
+	if scoped.SessionEventID != "" || scoped.SceneID != "" || scoped.Objective != nil || scoped.Terrain != nil {
 		t.Fatalf("reserved columns must stay empty: %+v", scoped)
 	}
 
@@ -202,6 +202,85 @@ func TestStoreRejectsBadScope(t *testing.T) {
 	}
 	if _, err := s.CreateIn(ctx, "alice", Scope{SceneID: "scene-1"}, "X", nil, nil, ""); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a scene without a campaign = %v, want ErrInvalid", err)
+	}
+}
+
+// The objective and terrain options (MAD-380) round-trip through the
+// objective and terrain columns migration 0026 reserved — and anything
+// outside the declared vocabularies is refused before a write happens.
+func TestStoreObjectiveAndTerrain(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	created, err := s.Create(ctx, "alice", "Hold the Bridge", []int{3, 3, 3, 3}, []Monster{
+		{Name: "Goblin", CR: "1/4", XP: 50, Count: 4},
+	}, "", WithObjective(Objective{Kind: Survive, Rounds: 6}), WithTerrain(Terrain{
+		Features: []Feature{{Kind: "chokepoint", Effect: featureEffects["chokepoint"], Area: "the bridge"}},
+		Hazards: []Hazard{{Kind: "rockfall", Name: "Rockfall", SaveAbility: "dex", DC: 15,
+			Damage: "2d10", DamageType: "bludgeoning", Trigger: "a creature starts its turn under the span", Area: "the span"}},
+	}))
+	if err != nil {
+		t.Fatalf("create with objective: %v", err)
+	}
+	got, err := s.Get(ctx, "alice", created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Objective == nil || got.Objective.Kind != Survive || got.Objective.Rounds != 6 {
+		t.Fatalf("objective did not round-trip: %+v", got.Objective)
+	}
+	if got.Terrain == nil || len(got.Terrain.Features) != 1 || len(got.Terrain.Hazards) != 1 {
+		t.Fatalf("terrain did not round-trip: %+v", got.Terrain)
+	}
+	if got.Terrain.Hazards[0].DC != 15 || got.Terrain.Hazards[0].Damage != "2d10" {
+		t.Errorf("hazard details lost: %+v", got.Terrain.Hazards[0])
+	}
+
+	// An update without the options leaves both alone.
+	if _, err := s.Update(ctx, "alice", created.ID, nil, nil, nil, nil, false, false); err != nil {
+		t.Fatalf("rename without options: %v", err)
+	}
+	if got, _ := s.Get(ctx, "alice", created.ID); got.Objective == nil || got.Terrain == nil {
+		t.Fatal("a plain update dropped the objective or terrain")
+	}
+
+	// WithTerrain(Terrain{}) clears the battlefield; the objective stays.
+	if _, err := s.Update(ctx, "alice", created.ID, nil, nil, nil, nil, false, false,
+		WithTerrain(Terrain{})); err != nil {
+		t.Fatalf("clear terrain: %v", err)
+	}
+	got, _ = s.Get(ctx, "alice", created.ID)
+	if got.Terrain != nil {
+		t.Errorf("terrain not cleared: %+v", got.Terrain)
+	}
+	if got.Objective == nil {
+		t.Error("the objective was lost with the terrain")
+	}
+
+	for _, tc := range []struct {
+		name string
+		opts []Option
+	}{
+		{"unknown objective kind", []Option{WithObjective(Objective{Kind: "escort"})}},
+		{"rounds out of range", []Option{WithObjective(Objective{Kind: Survive, Rounds: 99})}},
+		{"unknown feature kind", []Option{WithTerrain(Terrain{Features: []Feature{{Kind: "lava"}}})}},
+		{"hazard outside the grammar", []Option{WithTerrain(Terrain{Hazards: []Hazard{{Kind: "rockfall", SaveAbility: "dex", DC: 15, Damage: "lots", DamageType: "bludgeoning", Trigger: "t", Area: "a"}}})}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := s.Create(ctx, "alice", tc.name, nil, nil, "", tc.opts...); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("create = %v, want ErrInvalid", err)
+			}
+		})
+	}
+
+	// An explicit defeat objective stores as declared: it is a kind the DM
+	// picked, not absence.
+	defeated, err := s.Create(ctx, "alice", "Plain", nil, nil, "", WithObjective(Objective{Kind: Defeat}))
+	if err != nil {
+		t.Fatalf("explicit defeat: %v", err)
+	}
+	if got, _ := s.Get(ctx, "alice", defeated.ID); got.Objective == nil || got.Objective.Kind != Defeat {
+		t.Errorf("explicit defeat lost: %+v", got.Objective)
 	}
 }
 
