@@ -31,6 +31,7 @@ let campaignID = ""; // the campaign the builder is designing against, "" for no
 let partyFromCampaign = false; // the boxes still hold the campaign's declared party
 let designing = false;
 let evalAbort = null;
+let tacticsAbort = null;
 let searchAbort = null;
 let designAbort = null;
 let budgetAbort = null;
@@ -503,6 +504,7 @@ async function runDesign(revising) {
 				renderObjectives();
 				renderSheet();
 				renderEnding(payload.ending, terrain);
+				renderTactics(payload.tactics || null);
 				renderVerdict(payload.verdict || {});
 				renderUnverified(payload.unverified || []);
 				if (title && !$("enc-name").value.trim()) $("enc-name").value = title;
@@ -619,6 +621,140 @@ function featureLabel(kind) {
 		chokepoint: "Chokepoint", concealment: "Concealment", water: "Water", darkness: "Darkness",
 	};
 	return labels[kind] || kind;
+}
+
+/* ---------- The tactical read ---------- */
+
+// What these monsters will do, and to whom — the server's arithmetic, in
+// the same spirit as the difficulty gauge: every figure on screen carries
+// its derivation, shown on click. The model's tactics prose rides under the
+// block only when the gate let it through; a rejected prose is labelled
+// with the figures that did not trace.
+function renderTactics(block) {
+	const node = clear($("enc-tactics"));
+	if (!block || !(block.threat || []).length) {
+		node.hidden = true;
+		return;
+	}
+	node.hidden = false;
+	node.append(el("h4", { class: "enc-ending-title", text: "What they will do" }));
+
+	for (const c of block.caveats || []) {
+		node.append(el("p", { class: "enc-tactics-caveat", text: c }));
+	}
+
+	const focus = (block.focus || []).filter((f) => f.target || f.reason);
+	if (focus.length) {
+		node.append(section("Who they want", focus.map((f) => {
+			const line = el("p", { class: "enc-tactics-line" },
+				el("strong", { text: f.monster }));
+			if (f.target) {
+				line.append(document.createTextNode(` → ${f.target}`));
+				if (f.chance) line.append(figureNode(f.chance, f.mode === "save" ? " fail" : " hit"));
+				if (f.per_round) line.append(figureNode(f.per_round, " /rd"));
+				if (f.reason) line.append(el("span", { class: "enc-tactics-why", text: ` — ${f.reason}` }));
+			} else if (f.reason) {
+				line.append(el("span", { class: "enc-tactics-why", text: ` — ${f.reason}` }));
+			}
+			for (const h of f.holdouts || []) {
+				line.append(el("span", { class: "enc-tactics-why", text: ` (${h})` }));
+			}
+			return line;
+		})));
+	}
+
+	const at = block.attrition || {};
+	const drops = [...(at.party || []).map((d) => ({ pc: d.pc, rounds: d.rounds, aimed: d.aimed_at })),
+		...(at.monsters || []).map((d) => ({ pc: d.monster, rounds: d.rounds, aimed: d.answer, monster: d.monster, hopeless: d.hopeless }))];
+	if (drops.length) {
+		node.append(section("Rounds to drop", drops.map((d) => {
+			const line = el("p", { class: "enc-tactics-line" },
+				d.monster ? el("strong", { text: d.monster }) : document.createTextNode(d.pc));
+			line.append(document.createTextNode(": "));
+			if (d.rounds) {
+				line.append(figureNode(d.rounds, " rounds"));
+				if (d.aimed) line.append(document.createTextNode(" under "));
+				if (d.aimed) line.append(figureNode(d.aimed, " /rd"));
+			} else {
+				line.append(el("span", { class: "enc-tactics-warn", text: "nothing the party brings touches it" }));
+			}
+			return line;
+		})));
+	}
+
+	if ((block.counterplay || []).length) {
+		node.append(section("Counterplay", block.counterplay.map((c) => el("p", { class: "enc-tactics-line" },
+			el("strong", { text: [c.monster, c.pc].filter(Boolean).join(" × ") }),
+			document.createTextNode(` — ${c.detail}`)))));
+	}
+
+	if ((block.spotlight || []).length) {
+		node.append(section("The spotlight check", block.spotlight.map((s) => {
+			const line = el("p", { class: "enc-tactics-line" }, el("strong", { text: s.pc }));
+			line.append(document.createTextNode(": "));
+			if (s.threat_share) {
+				line.append(document.createTextNode("faces "));
+				line.append(figureNode(s.threat_share, " of the threat"));
+			}
+			if (s.answer_share) {
+				if (s.threat_share) line.append(document.createTextNode(", "));
+				line.append(document.createTextNode("supplies "));
+				line.append(figureNode(s.answer_share, " of the answer"));
+			}
+			if (s.benched) {
+				line.append(el("span", { class: "enc-tactics-warn", text: ` benched — ${s.reason}` }));
+			}
+			return line;
+		})));
+	}
+
+	const mv = block.movement;
+	if (mv) {
+		const line = el("p", { class: "enc-tactics-line" }, el("strong", { text: `Movement matters: ${mv.label}` }));
+		line.append(document.createTextNode(" "));
+		line.append(figureNode(mv.score, " /100"));
+		if ((mv.drivers || []).length) {
+			line.append(el("span", { class: "enc-tactics-why", text: ` — ${mv.drivers.join(", ")}` }));
+		}
+		node.append(section("The ground", [line]));
+	}
+
+	const prose = block.prose;
+	if (prose && prose.prose) {
+		if (prose.prose_status === "rejected") {
+			const names = (prose.violations || []).map((v) => v.token).join(", ");
+			node.append(el("p", {
+				class: "enc-tactics-warn",
+				text: `The model's tactics prose was rejected: ${names || "a figure"} traces to no server arithmetic. The read above is the derived one.`,
+			}));
+		} else {
+			node.append(el("p", { class: "enc-tactics-prose", text: prose.prose }));
+		}
+	}
+
+	function section(title, lines) {
+		const sec = el("div", { class: "enc-tactics-sec" });
+		sec.append(el("h5", { class: "enc-tactics-h", text: title }));
+		for (const line of lines) sec.append(line);
+		return sec;
+	}
+}
+
+// figureNode is one number plus its trace: click to show the arithmetic
+// that produced it, the way the difficulty gauge shows its multiplier.
+function figureNode(f, suffix) {
+	const wrap = el("span", { class: "enc-fig", attrs: { role: "button", tabindex: "0", title: "Show the arithmetic" } },
+		el("strong", { text: fmtFig(f.Value) }),
+		suffix || f.Unit ? el("span", { class: "enc-fig-unit", text: suffix || (f.Unit ? ` ${f.Unit}` : "") }) : null);
+	const how = el("span", { class: "enc-fig-how", text: f.How });
+	wrap.append(how);
+	wrap.addEventListener("click", () => wrap.classList.toggle("is-open"));
+	return wrap;
+}
+
+function fmtFig(v) {
+	const n = Math.round(v * 10) / 10;
+	return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
 function renderRoster() {
@@ -800,10 +936,36 @@ function refresh() {
 	renderRoster();
 	$("enc-refine-btn").disabled = designing || roster.length === 0;
 	scheduleEvaluate();
+	scheduleTactics();
 	refreshBudget();
 }
 
 const scheduleEvaluate = debounce(evaluate, 250);
+const scheduleTactics = debounce(fetchTactics, 350);
+
+// The tactical read (MAD-381) follows the roster the way the verdict does:
+// recomputed by the server on every edit, so what is on screen is the
+// current arithmetic, never a stale promise from the last design. With a
+// campaign picked, its party block fills the read in.
+async function fetchTactics() {
+	if (roster.length === 0) {
+		renderTactics(null);
+		return;
+	}
+	if (tacticsAbort) tacticsAbort.abort();
+	const controller = new AbortController();
+	tacticsAbort = controller;
+	try {
+		const data = await api.encounterTactics(party, roster, campaignID, objectivePayload(), terrain, controller.signal);
+		if (controller.signal.aborted) return;
+		renderTactics(data.tactics || null);
+	} catch (err) {
+		if (err.name !== "AbortError") {
+			// A failed read keeps the last analysis on screen; the block
+			// stays honest rather than flashing empty.
+		}
+	}
+}
 
 async function evaluate() {
 	if (evalAbort) evalAbort.abort();
@@ -941,7 +1103,7 @@ async function onPickSaved() {
 		renderUnverified([]);
 		setStatus("");
 		renderVerdict(enc.verdict || {});
-		refresh();
+		refresh(); // re-derives the tactics read for the loaded roster
 	} catch (err) {
 		$("encounter-meta").textContent = `Could not load: ${err.message}`;
 	}
@@ -967,6 +1129,7 @@ function resetBuilder() {
 	renderObjectives();
 	renderSheet();
 	renderEnding(null, null);
+	renderTactics(null);
 	refresh();
 }
 

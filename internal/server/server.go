@@ -194,6 +194,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/encounter/budget", s.handleEncounterBudget)
 	mux.HandleFunc("POST /api/encounter/design", s.handleEncounterDesign)
 	mux.HandleFunc("POST /api/encounters/evaluate", s.handleEvaluate)
+	mux.HandleFunc("POST /api/encounters/tactics", s.handleTactics)
 	mux.HandleFunc("POST /api/deck/propose", s.handleDeckPropose)
 	mux.HandleFunc("POST /api/deck/build", s.handleDeckBuild)
 	mux.HandleFunc("POST /api/deck/analyze", s.handleDeckAnalyze)

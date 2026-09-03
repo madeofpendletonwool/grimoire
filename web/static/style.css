@@ -1485,6 +1485,84 @@ kbd {
 .enc-ending-line strong { font-family: var(--font-pixel); letter-spacing: 0.04em; font-size: var(--fs-xs); }
 .enc-ending-terrain { margin: var(--sp-2) 0 0; padding-left: 1.2rem; font-size: var(--fs-xs); line-height: 1.5; opacity: 0.85; }
 
+/* The tactical read (MAD-381): the server's arithmetic about what the
+   roster will do and to whom. Figures carry their derivation and show it
+   on click — the difficulty gauge's trace, applied to every number. */
+.enc-tactics {
+	margin: var(--sp-3) 0;
+	padding: var(--sp-3);
+	border: 1px solid color-mix(in srgb, var(--gold-bright) 35%, transparent);
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--gold-bright) 6%, transparent);
+}
+.enc-tactics-sec { margin: 0 0 var(--sp-2); }
+.enc-tactics-sec:last-child { margin-bottom: 0; }
+.enc-tactics-h {
+	margin: var(--sp-2) 0 var(--sp-1);
+	font-size: var(--fs-xs);
+	font-family: var(--font-pixel);
+	letter-spacing: 0.04em;
+	opacity: 0.7;
+}
+.enc-tactics-line { margin: 0 0 var(--sp-1); font-size: var(--fs-xs); line-height: 1.5; }
+.enc-tactics-line strong { font-family: var(--font-pixel); font-size: var(--fs-xs); letter-spacing: 0.03em; }
+.enc-tactics-why { opacity: 0.7; font-style: italic; }
+.enc-tactics-caveat {
+	margin: 0 0 var(--sp-1);
+	font-size: var(--fs-xs);
+	line-height: 1.5;
+	font-style: italic;
+	opacity: 0.65;
+}
+.enc-tactics-warn { color: var(--gold-bright); font-style: italic; }
+.enc-tactics-prose {
+	margin: var(--sp-2) 0 0;
+	padding-top: var(--sp-2);
+	border-top: 1px dashed color-mix(in srgb, var(--parchment) 20%, transparent);
+	font-size: var(--fs-xs);
+	line-height: 1.55;
+	opacity: 0.85;
+}
+
+/* A figure: the number, then its arithmetic on click. */
+.enc-fig {
+	display: inline-block;
+	position: relative;
+	padding: 0 0.25rem;
+	margin: 0 0.1rem;
+	border: 1px solid color-mix(in srgb, var(--gold-bright) 40%, transparent);
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--gold-bright) 10%, transparent);
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	cursor: help;
+	white-space: nowrap;
+}
+.enc-fig strong { font-weight: bold; }
+.enc-fig-unit { opacity: 0.7; }
+.enc-fig-how {
+	display: none;
+	position: absolute;
+	left: 0;
+	top: calc(100% + 4px);
+	z-index: 5;
+	width: max-content;
+	max-width: 18rem;
+	padding: 0.35rem 0.5rem;
+	border: 1px solid color-mix(in srgb, var(--gold-bright) 45%, transparent);
+	border-radius: 4px;
+	background: color-mix(in srgb, #1a1208 92%, transparent);
+	color: var(--parchment);
+	font-family: var(--font-prose);
+	font-size: var(--fs-xs);
+	font-style: normal;
+	line-height: 1.45;
+	white-space: normal;
+	box-shadow: 0 4px 14px rgb(0 0 0 / 45%);
+}
+.enc-fig.is-open .enc-fig-how { display: block; }
+.enc-fig:hover { border-color: var(--gold-bright); }
+
 .enc-budget {
 	margin: 0 0 var(--sp-3);
 	font-size: var(--fs-xs);

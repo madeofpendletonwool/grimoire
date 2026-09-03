@@ -56,6 +56,20 @@ The split matters, because it is why the result lands on the difficulty you aske
 
 The verdict panel then recomputes the difficulty from the party and the finished roster, so the number under the encounter is the server's arithmetic, not the model's claim.
 
+The model's Tactics section is held to the same rule, one step stricter: **it may not assert a number at all.** The server checks every figure in that prose against its own arithmetic, and one that traces to no derivation rejects the prose — shown labelled above the readout, never rendered as derived. The model's job in the tactics block is the story; the numbers were never its to tell.
+
+## The tactical read
+
+Under the roster, beside the difficulty gauge, the builder answers the question a DM actually asks at 6pm: not *what these monsters are* but *what they will do, and to whom*. The read is pure arithmetic over the chosen statblocks, the party block and the terrain — recomputed on the server every time the roster changes, the way the verdict is.
+
+- **Who they want** — the pack's predicted focus, and the d20 maths behind it: four goblins put their output on your wizard, who fails nothing here — the chance each attack lands, and the expected damage per round that follows from it. When a monster cannot reach anyone, the read says so instead of picking a fictional target.
+- **Rounds to drop** — both clocks: how long the focused fire takes to put each pc at zero, and how long the party's answer takes to put each monster kind there. The asymmetry between the two is the encounter's real difficulty in a way adjusted XP never shows. A monster nothing touches reads *hopeless*, with the reason.
+- **Counterplay** — the immunity that blanks a pc's damage, the flyer the melee never touches, the save the soft pc fails most of the time, with what happens on a failure.
+- **The spotlight check** — per pc, the share of the encounter's threat aimed at them and the share of the party's answer they supply. *Tests the wizard without making the fighter useless* is a check, not a vibe: a pc low on both axes is flagged **benched**, with the specific reason — every monster on the board is immune to their damage, or no monster's best line ever aims at them.
+- **Movement matters** — a 0–100 score from the terrain, the ranged/melee mix, speeds and reach, each driver listed with its points. This is the *encounter where movement matters* request made checkable.
+
+Every number in the block is a figure with its derivation attached — click it and the arithmetic shows, the same trace-on-click spirit as the gauge's multiplier. What the party block does not declare, the read does not invent: a table with no campaign (or one whose pcs declare nothing) degrades the read to the monsters' side of the arithmetic and says so in the block's first line.
+
 ## Revising
 
 The **Revise** box argues with the result: *fewer goblins and one nastier thing*, *move it underwater*, *make it hard*. The whole encounter is rewritten with the instruction applied, still inside the budget, still from verified statblocks. Your original idea stays in force — a revision adjusts the encounter, it does not replace the brief.
