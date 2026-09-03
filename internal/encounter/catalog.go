@@ -23,12 +23,15 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
+	"github.com/madeofpendletonwool/grimoire/internal/statblock"
 )
 
 const (
@@ -43,18 +46,41 @@ const (
 	catalogTTL = 30 * 24 * time.Hour
 	// catalogSyncTimeout caps a whole mirror pass.
 	catalogSyncTimeout = 3 * time.Minute
+	// catalogSchemaVersion is the version of the mirrored creature JSON
+	// shape. It rises whenever Creature grows fields an older mirror would
+	// be missing; a mirror written under a lower version reports stale, so
+	// the next EnsureFresh re-syncs once and fills the new fields rather
+	// than serving statblocks with empty halves.
+	catalogSchemaVersion = 2
 )
 
 // NamedText is a statblock trait or action: what it is called and what it
-// does, verbatim from the SRD.
+// does, verbatim from the SRD. Usage and Cost are the structured limits the
+// API carries for the action — "recharge 5-6", "3/day", a legendary action
+// cost — empty/zero when it has none.
 type NamedText struct {
+	Name  string `json:"name"`
+	Desc  string `json:"desc"`
+	Kind  string `json:"kind,omitempty"` // ACTION, BONUS_ACTION, REACTION, LEGENDARY_ACTION
+	Usage string `json:"usage,omitempty"`
+	Cost  int    `json:"cost,omitempty"`
+}
+
+// UnparsedAction is an action the deterministic attack parser could not read
+// into a structured statblock.Attack, kept with its prose intact. The mirror
+// guarantees every action lands in exactly one bucket — Attacks when the
+// parse is complete, Unparsed when it is not — so nothing is ever
+// half-parsed, and a CR computed over unread actions reports low confidence
+// instead of pretending.
+type UnparsedAction struct {
 	Name string `json:"name"`
 	Desc string `json:"desc"`
-	Kind string `json:"kind,omitempty"` // ACTION, BONUS_ACTION, REACTION, LEGENDARY_ACTION
 }
 
 // Creature is one SRD statblock, flattened to what an encounter builder needs
-// and tagged with how it fights.
+// and tagged with how it fights. The fields the CR arithmetic needs — ability
+// scores, saves, skills, the parsed attacks — arrived with the statblock
+// engine; older mirrors re-sync to fill them (catalogSchemaVersion).
 type Creature struct {
 	Slug       string         `json:"slug"`
 	Name       string         `json:"name"`
@@ -78,6 +104,16 @@ type Creature struct {
 	Traits     []NamedText    `json:"traits,omitempty"`
 	Actions    []NamedText    `json:"actions,omitempty"`
 	Tags       []string       `json:"tags,omitempty"`
+
+	// The statblock engine's half.
+	Abilities    *statblock.Abilities `json:"abilities,omitempty"`
+	Saves        map[string]int       `json:"saves,omitempty"`  // "str"..."cha" -> total bonus
+	Skills       map[string]int       `json:"skills,omitempty"` // squashed skill -> total bonus
+	ProfBonus    int                  `json:"prof_bonus,omitempty"`
+	LairAction   bool                 `json:"lair_action,omitempty"`
+	Spellcasting bool                 `json:"spellcasting,omitempty"`
+	Attacks      []statblock.Attack   `json:"attacks,omitempty"`
+	Unparsed     []UnparsedAction     `json:"unparsed,omitempty"`
 }
 
 // Line renders the creature as one compact prompt/UI line: everything a
@@ -107,10 +143,11 @@ type Catalog struct {
 	baseURL string
 	http    *http.Client
 
-	mu       sync.RWMutex
-	list     []Creature
-	byKey    map[string]int // squashed name -> index into list
-	syncedAt time.Time
+	mu            sync.RWMutex
+	list          []Creature
+	byKey         map[string]int // squashed name -> index into list
+	syncedAt      time.Time
+	schemaVersion int
 
 	syncing sync.Mutex
 }
@@ -146,6 +183,10 @@ CREATE TABLE IF NOT EXISTS bestiary (
 	synced_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS bestiary_cr ON bestiary(cr_num);
+CREATE TABLE IF NOT EXISTS bestiary_meta (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 `
 
 // Count reports how many creatures the catalog currently holds.
@@ -170,8 +211,14 @@ func (c *Catalog) SyncedAt() time.Time {
 
 // Load reads the mirrored bestiary out of the database into memory. An empty
 // table is not an error — the catalog simply reports zero creatures until a
-// sync fills it.
+// sync fills it. A mirror written before the current schema version loads
+// too, but reports stale, so EnsureFresh re-syncs it once and the new fields
+// arrive with the next refresh instead of being served empty.
 func (c *Catalog) Load() error {
+	version, err := c.readSchemaVersion()
+	if err != nil {
+		return err
+	}
 	rows, err := c.db.Query(`SELECT data, synced_at FROM bestiary ORDER BY name`)
 	if err != nil {
 		return fmt.Errorf("load bestiary: %w", err)
@@ -198,8 +245,29 @@ func (c *Catalog) Load() error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	c.schemaVersion = version
+	c.mu.Unlock()
 	c.replace(list, time.UnixMilli(newest).UTC())
 	return nil
+}
+
+// readSchemaVersion reports the schema version the stored mirror was written
+// under, 0 when nothing is stored (an empty database needs a sync regardless).
+func (c *Catalog) readSchemaVersion() (int, error) {
+	var value string
+	err := c.db.QueryRow(`SELECT value FROM bestiary_meta WHERE key = 'schema_version'`).Scan(&value)
+	switch {
+	case err == sql.ErrNoRows:
+		return 0, nil
+	case err != nil:
+		return 0, fmt.Errorf("bestiary schema version: %w", err)
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || v < 0 {
+		return 0, nil // an unreadable version is the oldest version
+	}
+	return v, nil
 }
 
 // replace swaps in a freshly loaded shelf under the write lock.
@@ -213,14 +281,17 @@ func (c *Catalog) replace(list []Creature, syncedAt time.Time) {
 	c.mu.Unlock()
 }
 
-// Stale reports whether the mirror is missing or old enough to re-fetch.
+// Stale reports whether the mirror is missing, old enough to re-fetch, or
+// written under an older schema — a pre-statblock mirror would serve
+// statblocks with empty ability scores and no parsed attacks, so it counts
+// as stale and re-syncs once.
 func (c *Catalog) Stale() bool {
 	if c == nil {
 		return false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.list) == 0 || time.Since(c.syncedAt) > catalogTTL
+	return len(c.list) == 0 || c.schemaVersion < catalogSchemaVersion || time.Since(c.syncedAt) > catalogTTL
 }
 
 // EnsureFresh syncs when the mirror is missing or stale, and is a no-op
@@ -279,9 +350,21 @@ func (c *Catalog) Sync(ctx context.Context) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("bestiary sync: %w", err)
 	}
+	// The schema version lands right after the mirror commit. A crash
+	// between the two leaves v2 rows stamped v1 — which only costs one
+	// extra re-sync, the same safety valve an unknown version rides.
+	if _, err := c.db.Exec(`
+		INSERT INTO bestiary_meta (key, value) VALUES ('schema_version', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		strconv.Itoa(catalogSchemaVersion)); err != nil {
+		return fmt.Errorf("bestiary sync: %w", err)
+	}
 
 	sort.Slice(fetched, func(i, j int) bool { return fetched[i].Name < fetched[j].Name })
 	c.replace(fetched, now)
+	c.mu.Lock()
+	c.schemaVersion = catalogSchemaVersion
+	c.mu.Unlock()
 	return nil
 }
 
@@ -370,18 +453,22 @@ type creatureRecordPage struct {
 }
 
 type creatureRecord struct {
-	Key             string         `json:"key"`
-	Name            string         `json:"name"`
-	Document        docRef         `json:"document"`
-	Type            *namedThing    `json:"type"`
-	Size            *namedThing    `json:"size"`
-	ChallengeRating *float64       `json:"challenge_rating"`
-	Alignment       string         `json:"alignment"`
-	ArmorClass      int            `json:"armor_class"`
-	HitPoints       int            `json:"hit_points"`
-	HitDice         string         `json:"hit_dice"`
-	SpeedAll        map[string]any `json:"speed_all"`
-	Languages       struct {
+	Key              string         `json:"key"`
+	Name             string         `json:"name"`
+	Document         docRef         `json:"document"`
+	Type             *namedThing    `json:"type"`
+	Size             *namedThing    `json:"size"`
+	ChallengeRating  *float64       `json:"challenge_rating"`
+	Alignment        string         `json:"alignment"`
+	ArmorClass       int            `json:"armor_class"`
+	HitPoints        int            `json:"hit_points"`
+	HitDice          string         `json:"hit_dice"`
+	SpeedAll         map[string]any `json:"speed_all"`
+	AbilityScores    map[string]int `json:"ability_scores"`
+	SavingThrowsAll  map[string]int `json:"saving_throws_all"`
+	SkillBonuses     map[string]int `json:"skill_bonuses"`
+	ProficiencyBonus *int           `json:"proficiency_bonus"`
+	Languages        struct {
 		AsString string `json:"as_string"`
 	} `json:"languages"`
 	PassivePerception int      `json:"passive_perception"`
@@ -396,9 +483,11 @@ type creatureRecord struct {
 		ConditionImmunities   string `json:"condition_immunities_display"`
 	} `json:"resistances_and_immunities"`
 	Actions []struct {
-		Name       string `json:"name"`
-		Desc       string `json:"desc"`
-		ActionType string `json:"action_type"`
+		Name                string       `json:"name"`
+		Desc                string       `json:"desc"`
+		ActionType          string       `json:"action_type"`
+		UsageLimits         *usageLimits `json:"usage_limits"`
+		LegendaryActionCost int          `json:"legendary_action_cost"`
 	} `json:"actions"`
 	Traits []struct {
 		Name string `json:"name"`
@@ -434,6 +523,32 @@ func (rec creatureRecord) toCreature() (Creature, bool) {
 	if rec.Size != nil {
 		c.Size = rec.Size.Name
 	}
+	if len(rec.AbilityScores) > 0 {
+		ab := statblock.Abilities{
+			Str: rec.AbilityScores["strength"], Dex: rec.AbilityScores["dexterity"],
+			Con: rec.AbilityScores["constitution"], Int: rec.AbilityScores["intelligence"],
+			Wis: rec.AbilityScores["wisdom"], Cha: rec.AbilityScores["charisma"],
+		}
+		c.Abilities = &ab
+	}
+	if len(rec.SavingThrowsAll) > 0 {
+		c.Saves = map[string]int{}
+		for key, target := range map[string]string{
+			"strength": "str", "dexterity": "dex", "constitution": "con",
+			"intelligence": "int", "wisdom": "wis", "charisma": "cha",
+		} {
+			if v, ok := rec.SavingThrowsAll[key]; ok {
+				c.Saves[target] = v
+			}
+		}
+	}
+	if len(rec.SkillBonuses) > 0 {
+		c.Skills = map[string]int{}
+		for k, v := range rec.SkillBonuses {
+			c.Skills[squash(k)] = v
+		}
+	}
+	c.ProfBonus = rec.proficiency(*rec.ChallengeRating)
 	c.Speeds = flattenSpeeds(rec.SpeedAll)
 	c.Senses = describeSenses(rec)
 	for _, t := range rec.Traits {
@@ -441,16 +556,93 @@ func (rec creatureRecord) toCreature() (Creature, bool) {
 			continue
 		}
 		c.Traits = append(c.Traits, NamedText{Name: t.Name, Desc: strings.TrimSpace(t.Desc)})
+		if strings.Contains(strings.ToLower(t.Name), "spellcasting") {
+			c.Spellcasting = true
+		}
+		if strings.Contains(strings.ToLower(t.Name), "lair action") {
+			c.LairAction = true
+		}
 	}
 	for _, a := range rec.Actions {
 		if strings.TrimSpace(a.Name) == "" {
 			continue
 		}
-		c.Actions = append(c.Actions, NamedText{Name: a.Name, Desc: strings.TrimSpace(a.Desc), Kind: a.ActionType})
+		desc := strings.TrimSpace(a.Desc)
+		nt := NamedText{
+			Name: a.Name, Desc: desc, Kind: a.ActionType,
+			Usage: usageOf(a.Name, a.UsageLimits), Cost: a.LegendaryActionCost,
+		}
+		c.Actions = append(c.Actions, nt)
+		if strings.Contains(strings.ToLower(a.Name), "spellcasting") {
+			c.Spellcasting = true
+		}
+		// The deterministic parse: each action lands in exactly one bucket —
+		// a structured Attack, or Unparsed with its prose intact.
+		if atk, ok := statblock.ParseAttack(a.Name, desc); ok {
+			c.Attacks = append(c.Attacks, atk)
+		} else {
+			c.Unparsed = append(c.Unparsed, UnparsedAction{Name: a.Name, Desc: desc})
+		}
 	}
 	c.Tags = deriveTags(c)
 	return c, true
 }
+
+// usageOf renders the structured usage limits the API carries into the short
+// form the statblock engine reads. When the limits are absent — some 2014
+// records carry the recharge only in the action name — the printed
+// "(Recharge 5–6)" / "(3/Day)" forms are read instead.
+type usageLimits = struct {
+	Type  string `json:"type"`
+	Param *int   `json:"param"`
+}
+
+func usageOf(name string, limits *usageLimits) string {
+	if limits != nil {
+		switch limits.Type {
+		case "RECHARGE_ON_ROLL":
+			n := 6
+			if limits.Param != nil && *limits.Param > 0 {
+				n = *limits.Param
+			}
+			return "recharge " + strconv.Itoa(n) + "-6"
+		case "RECHARGE_AFTER_REST":
+			return "recharge after rest"
+		case "PER_DAY":
+			n := 1
+			if limits.Param != nil && *limits.Param > 0 {
+				n = *limits.Param
+			}
+			return strconv.Itoa(n) + "/day"
+		case "AT_WILL":
+			return "at will"
+		}
+	}
+	low := strings.ToLower(name)
+	if m := reRechargeName.FindStringSubmatch(low); m != nil {
+		return "recharge " + m[1] + "-6"
+	}
+	if m := rePerDayName.FindStringSubmatch(low); m != nil {
+		return strings.TrimSpace(m[1]) + "/day"
+	}
+	return ""
+}
+
+// proficiency derives the proficiency bonus the DMG's Monster Statistics
+// table assigns to a challenge rating. Open5e leaves the field null on the
+// 2014 SRD, so the table value is derived from the printed CR when the API
+// does not carry it.
+func (rec creatureRecord) proficiency(cr float64) int {
+	if rec.ProficiencyBonus != nil && *rec.ProficiencyBonus > 0 {
+		return *rec.ProficiencyBonus
+	}
+	return statblock.ProficiencyFor(cr)
+}
+
+var (
+	reRechargeName = regexp.MustCompile(`\(recharge ?(\d+)(?:-\d+)?\)`)
+	rePerDayName   = regexp.MustCompile(`\((\d+) ?/ ?day\)`)
+)
 
 // flattenSpeeds keeps the numeric movement modes, dropping the unit key, the
 // hover flag, and the crawl speed — the API derives crawl from walk, and a

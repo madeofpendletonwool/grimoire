@@ -1,0 +1,159 @@
+# Statblocks and the CR calculator
+
+`internal/statblock` turns a monster statblock into a challenge rating the
+way the 2014 Dungeon Master's Guide prescribes (chapter 9, "Creating a
+Monster Stat Block", p. 273–274) — and, just as importantly, says how much
+the answer can be trusted. It is the engine MAD-317's split assumed: the
+monster designer is *"validated by the existing rules engine for CR
+sanity"*, and until this package existed there was no such engine —
+`internal/encounter` could price an encounter from a printed CR but could
+never derive a CR from a statblock.
+
+The package is pure. No database, no network, no clock — an import test
+fails the build the moment that drifts (`internal/statblock/imports_test.go`),
+the same rule `internal/dungeon` and `internal/clock` carry. Everything it
+needs arrives in a `statblock.Statblock`; everything it produces leaves in a
+`statblock.Rating`.
+
+## The procedure
+
+`ComputeCR(s Statblock) Rating` follows the DMG in two halves and averages
+them.
+
+**Defense.** Effective hit points start from the printed HP total (or the
+hit-dice average when the total is missing) and shift for the defensive
+capabilities the DMG prices:
+
+| Adjustment | Effect |
+| --- | --- |
+| Resistance to nonmagical b/p/s | ×1.5 at CR 0–4, ×2 at CR 5+ |
+| Immunity to nonmagical b/p/s | ×2 (see below: the DMG is silent) |
+| Vulnerability to nonmagical b/p/s | ×0.5 |
+| Regeneration | +3 rounds' worth of HP |
+
+Effective HP reads a defensive CR off the DMG table; the monster's actual AC
+then shifts it one step per 2 points away from the table's assumed AC.
+
+**Offense.** Damage per round is the average over the first three rounds:
+the standard round (a resolved multiattack, else the strongest at-will
+action), with area effects counted against two targets, limited-use actions
+(recharges, per-day powers) added to round 1 only, and legendary actions
+priced at three points of the strongest options per round. DPR reads an
+offensive CR off the DMG table; the attack bonus of the priced action (or
+its save DC, against the table's DC column) shifts it one step per 2 points.
+
+**The printed rating** is the average of the two halves, snapped to the
+nearest CR the Monster Manual prints.
+
+Every adjustment is reported in `Rating.Adjustments` with its reason, and
+when one half is stronger than the other the rating says so in plain words —
+"your CR 7 boss computes to CR 4" is only useful if it names the half that
+is short.
+
+## The parser
+
+`statblock.ParseAttack` reads action prose into a structured `Attack` —
+the 2014 forms (`Melee Weapon Attack: +4 to hit, reach 5 ft., one target.
+Hit: 5 (1d6+2) slashing damage.`), the 2024 forms (`Melee Attack Roll: +14,
+reach 10 ft. 13 (1d10 + 8) Slashing damage plus 5 (2d4) Fire damage.`,
+`Dexterity Saving Throw: DC 21, each creature in a 60-foot Cone. Failure: 59
+(17d6) Fire damage.`), and both editions' multiattack prose, including the
+2024 choice form (`using Bladed Arm or Fiery Bolt in any combination`).
+
+It is deterministic — no model, no network, no state — and it is allowed to
+fail: an action it cannot read is recorded as **unparsed** with its prose
+intact, never half-parsed. Every action in a statblock lands in exactly one
+bucket (`Action.Parsed` with an `Attack`, or `Action.Unparse` with a reason),
+and the mirror stores the same split (`Creature.Attacks` /
+`Creature.Unparsed`).
+
+Confidence follows from that contract:
+
+- **High** — every action parsed, numbers present.
+- **Medium** — complete parse, but a known blind spot applies (the statblock
+  casts spells whose damage is not priced, legendary actions priced by
+  assumption).
+- **Low** — the parse was incomplete (any unparsed action), or the statblock
+  lacks the numbers the arithmetic needs. A partial parse **never** rates
+  high; that is asserted across the whole bestiary by the corpus harness.
+
+## The mirror
+
+`internal/encounter`'s bestiary mirror carries the fields the maths needs:
+ability scores, saving throws, skill bonuses, proficiency bonus (derived
+from the DMG's table when Open5e's null), spellcasting and lair-action
+flags, and the parsed attacks. The wire record mirrors Open5e v2; the
+structured `attacks` array the API also ships is deliberately **not**
+trusted for damage types — its values are sometimes wrong against the
+statblock's own prose (an Aboleth's tail is bludgeoning in prose, "thunder"
+in the structured field) — so the parser reads the prose, which is what the
+books print.
+
+The mirror carries a schema version (`catalogSchemaVersion`). When it rises,
+an existing mirror reports stale and `EnsureFresh` re-syncs it once, filling
+the new fields; saved encounters that reference the creatures are untouched
+(tested: `TestCatalogResyncMigratesMirror`).
+
+## Proving it against the SRD
+
+`internal/encounter/cr_harness_test.go` runs the parser and the calculator
+over a committed snapshot of the Open5e SRD bestiary
+(`testdata/srd_corpus.json`, 371 creatures, regenerated by
+`testdata/fetch_corpus.py` when Open5e changes under us — never by a test at
+runtime). The corpus contains *printed* CRs, so accuracy is measurable:
+
+- **Parse round-trip.** Every action parses or is explicitly unparsed; the
+  golden file records the unparsed rate and the test fails when it rises.
+- **Golden distribution.** The distribution of computed − printed CR is
+  committed in `testdata/cr_golden.json`. A change to the maths shows up as
+  a diff in the whole distribution rather than one creature quietly
+  drifting. Regenerate deliberately:
+  `go test ./internal/encounter -run TestCorpusCRDistribution -update-golden`
+  — and say why in the commit.
+- **Accuracy floor, asserted.** Currently 84% of creatures compute within
+  one printed step of their CR and 95% within two (the test holds the
+  floors: 0.60 / 0.90). 44% land exactly.
+- **Determinism and totality.** The whole bestiary computes twice,
+  byte-identical, and no creature — including ones with no actions — panics.
+- **Hard cases, pinned individually.** The known disagreements are asserted
+  one creature at a time with the reason attached (below).
+
+## Where it disagrees with the printed SRD, and why
+
+The DMG's own procedure does not reproduce every printed CR. That is a
+property of the source — the books lean on tactics, spells and horror that
+a damage-and-HP procedure cannot see — and the golden file is where that is
+admitted honestly instead of tuned away. The standing disagreements:
+
+- **Mundane low-CR humanoids compute high.** The Goblin's +4 to hit against
+  the assumed +3 lifts it a half-step; the procedure says CR 1/2, the book
+  prints 1/4.
+- **The Ghost computes low.** Its printed CR 4 rests on Horrifying Visage
+  and incapacitation, which damage-only offense cannot price.
+- **The Troll computes one low.** Three rounds of regeneration is not the
+  whole of the printed rating's resilience story.
+- **The Iron Golem computes one high.** The adamantine exception in its
+  immunity is invisible to the b/p/s clause test, so the full ×2 lands.
+- **Casters compute low unless their weapon attacks carry them.** Spell
+  damage is not parsed (a deterministic parser cannot price a spellbook),
+  so a Lich rates from its at-will burst — and honestly reports low
+  confidence for it. Closing that gap is the homebrew linter's job, not a
+  reason to guess here.
+- **Judgement calls the DMG leaves open**, applied and documented rather
+  than hidden: immunity to nonmagical b/p/s is priced ×2 (the DMG's table
+  has no immunity column; ×2 is what reproduces the SRD's own immune
+  monsters — the Werewolf computes to its printed CR 3 exactly); recharges
+  are not assumed to return within the three-round horizon; legendary
+  actions are priced at three points of the strongest options per round;
+  half-step AC/attack-bonus shifts round away from the monster.
+
+The snapshot mirrors Open5e's SRD documents; the SRD is Wizards of the
+Coast's work, licensed CC-BY-4.0. The corpus file carries the same licence
+as the data it mirrors.
+
+## Out of scope here
+
+PC-side maths. The 2024 rules (the encounter surface is 2014 DMG and stays
+consistent with itself — the corpus preferring the 2024 SRD documents only
+changes prose shapes, not maths). And the homebrew linter: that is its own
+issue, and it consumes this engine rather than duplicating it.

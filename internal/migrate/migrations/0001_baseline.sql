@@ -221,6 +221,10 @@ CREATE TABLE IF NOT EXISTS bestiary (
 	synced_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS bestiary_cr ON bestiary(cr_num);
+CREATE TABLE IF NOT EXISTS bestiary_meta (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 
 -- ------------------------------------------------------------ deck builder --
 -- cards_build / cards_fts_build are the staging twins carddb.New() creates

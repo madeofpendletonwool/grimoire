@@ -105,6 +105,7 @@ nav:
   - Development:
       - Getting Started: development/index.md
       - Architecture: development/architecture.md
+      - Statblocks & CR: development/statblock.md
       - Design System: DESIGN.md
       - Decisions: decisions.md
   - Campaign OS:

@@ -1,0 +1,37 @@
+{
+  "creatures": 371,
+  "parse": {
+    "creatures": 371,
+    "actions": 1075,
+    "parsed": 830,
+    "unparsed": 245,
+    "unparsed_rate": 0.22790697674418606,
+    "fully_parsed_creatures": 220,
+    "spellcasters": 55
+  },
+  "accuracy": {
+    "within_1": 0.8409703504043127,
+    "within_2": 0.9487870619946092,
+    "exact": 0.4366576819407008,
+    "mean_delta": -0.09164420485175202,
+    "delta": {
+      "-1": 72,
+      "-2": 19,
+      "-3": 5,
+      "-4": 5,
+      "-5": 1,
+      "-6": 1,
+      "-7": 2,
+      "0": 162,
+      "1": 78,
+      "2": 21,
+      "3": 4,
+      "4": 1
+    },
+    "confidence": {
+      "high": 213,
+      "low": 154,
+      "medium": 4
+    }
+  }
+}
