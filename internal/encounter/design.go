@@ -31,20 +31,25 @@ const DefaultBand = BandMedium
 
 // Shape is one way to spend an encounter budget: how many monsters are on the
 // board, what the DMG multiplier does to their XP at that count, and how much
-// raw XP therefore fits.
+// raw XP therefore fits. For a survive objective the roster is the whole
+// fight: RawXP covers every wave, and WaveXP is the slice each wave spends.
 type Shape struct {
 	Key        string  `json:"key"`
 	Label      string  `json:"label"`
 	Count      int     `json:"count"`
 	Multiplier float64 `json:"multiplier"`
-	RawXP      int     `json:"raw_xp"`  // total unadjusted XP this shape can spend
-	EachXP     int     `json:"each_xp"` // raw XP per monster if they are all alike
-	EachCR     string  `json:"each_cr"` // the CR that lands nearest EachXP
+	RawXP      int     `json:"raw_xp"`            // total unadjusted XP this shape can spend
+	EachXP     int     `json:"each_xp"`           // raw XP per monster if they are all alike
+	EachCR     string  `json:"each_cr"`           // the CR that lands nearest EachXP
+	Waves      int     `json:"waves,omitempty"`   // survive only: waves the roster arrives in
+	WaveXP     int     `json:"wave_xp,omitempty"` // survive only: raw XP per wave
 }
 
 // Budget is everything the builder knows about what fits, computed from the
-// party and the target band alone. It is handed to the model as fact and to
-// the UI as the "you have this much room" readout.
+// party, the target band and the objective. It is handed to the model as fact
+// and to the UI as the "you have this much room" readout. The objective
+// fields are nil on a defeat objective, so the default fight serialises to
+// exactly the object the builder has always received.
 type Budget struct {
 	Band       string         `json:"band"`
 	Party      []int          `json:"party"`
@@ -58,12 +63,20 @@ type Budget struct {
 	CeilingXP int     `json:"ceiling_xp"`
 	MaxSoloCR string  `json:"max_solo_cr"`
 	Shapes    []Shape `json:"shapes"`
+	// The objective-aware layer (objective.go): what the fight is about, the
+	// deterministic adjustments it makes to the aim, the terrain it generates,
+	// and the wave count for a survive roster. All absent on defeat.
+	Objective   *Objective   `json:"objective,omitempty"`
+	Adjustments []Adjustment `json:"adjustments,omitempty"`
+	Terrain     *Terrain     `json:"terrain,omitempty"`
+	Waves       int          `json:"waves,omitempty"`
 }
 
-// Plan works out the budget for a party and a target band. An empty or
-// unknown band falls back to Medium; an empty party falls back to the default
-// table, so a DM who typed nothing still gets a real answer.
-func Plan(party []int, band string) Budget {
+// Plan works out the budget for a party, a target band and an objective. An
+// empty or unknown band falls back to Medium; an empty party falls back to
+// the default table; an empty objective is Defeat — the fight the builder has
+// always produced, byte for byte.
+func Plan(party []int, band string, obj Objective) Budget {
 	if len(party) == 0 {
 		party = append([]int(nil), DefaultParty...)
 	}
@@ -84,16 +97,25 @@ func Plan(party []int, band string) Budget {
 		b.AvgLevel = float64(total) / float64(len(party))
 	}
 
-	b.TargetXP = b.Thresholds[band]
-	b.CeilingXP = ceilingFor(b.Thresholds, band)
+	// The objective-aware adjustment layer (objective.go): where the aim
+	// sits, how far the multiplier rung shifts, how many waves the roster
+	// arrives in, and the terrain generated with the objective — every rule
+	// with its reasoning in b.Adjustments.
+	l := planObjective(obj, band, b.Thresholds, b.AvgLevel)
+	b.TargetXP = l.aim
+	b.CeilingXP = l.ceiling
+	b.Objective = l.objective
+	b.Adjustments = l.adjustments
+	b.Terrain = l.terrain
+	b.Waves = l.waves
 
 	// The biggest single monster that still fits: one monster gets the ×1
 	// rung (×1.5 for a duo of characters, ×0.5 for six or more), so its raw
 	// XP allowance is the ceiling divided by that multiplier.
-	soloMult := multiplierFor(1, b.PartySize)
+	soloMult := shiftedMultiplier(1, b.PartySize, l.rungShift)
 	b.MaxSoloCR, _ = nearestCR(int(float64(b.CeilingXP) / soloMult))
 
-	b.Shapes = shapesFor(b.TargetXP, b.PartySize)
+	b.Shapes = shapesFor(b.TargetXP, b.PartySize, l.rungShift, l.waves)
 	return b
 }
 
@@ -132,20 +154,38 @@ var shapeCounts = []struct {
 // target adjusted total. Shapes whose per-monster budget falls below the
 // smallest statblock in the game are dropped: a horde of nine is not a shape
 // a 1st-level party can afford.
-func shapesFor(targetXP, partySize int) []Shape {
+//
+// rungShift moves every shape one rung up or down the DMG's multiplier
+// ladder — the objective layer's lever for concentrating or spreading the
+// budget. waves splits the adjusted aim across the fight's waves: each wave
+// is priced at its own multiplier, and the shape's RawXP is the raw XP of
+// the whole roster across every wave.
+func shapesFor(targetXP, partySize, rungShift, waves int) []Shape {
 	var out []Shape
 	for _, sc := range shapeCounts {
-		mult := multiplierFor(sc.count, partySize)
-		raw := int(math.Round(float64(targetXP) / mult))
+		mult := shiftedMultiplier(sc.count, partySize, rungShift)
+		spend := targetXP
+		if waves > 1 {
+			spend = targetXP / waves // the adjusted aim each wave must land
+		}
+		raw := int(math.Round(float64(spend) / mult))
+		if waves > 1 {
+			raw *= waves // the roster is the whole fight, every wave of it
+		}
 		each := raw / sc.count
 		if each < 10 {
 			continue // below CR 0; the group is too big for this budget
 		}
 		cr, _ := nearestCR(each)
-		out = append(out, Shape{
+		s := Shape{
 			Key: sc.key, Label: sc.label, Count: sc.count,
 			Multiplier: mult, RawXP: raw, EachXP: each, EachCR: cr,
-		})
+		}
+		if waves > 1 {
+			s.Waves = waves
+			s.WaveXP = raw / waves
+		}
+		out = append(out, s)
 	}
 	return out
 }
@@ -389,25 +429,41 @@ var trailingCountRE = regexp.MustCompile(`^(.+?)\s*[x×*]\s*(\d{1,3})$`)
 var headingRE = regexp.MustCompile(`^#{1,6}\s+(.*)$`)
 
 // Design is a parsed encounter proposal: the title and roster pulled out for
-// the machinery, the whole reply kept for the reader.
+// the machinery, the whole reply kept for the reader. A survive objective's
+// roster arrives in waves; Waves carries each wave's monsters in order and
+// is nil for a single-board fight.
 type Design struct {
-	Name       string    `json:"name"`
-	Monsters   []Monster `json:"monsters"`
-	Unverified []string  `json:"unverified,omitempty"`
-	Prose      string    `json:"prose"`
+	Name       string      `json:"name"`
+	Monsters   []Monster   `json:"monsters"`
+	Waves      [][]Monster `json:"waves,omitempty"`
+	Unverified []string    `json:"unverified,omitempty"`
+	Prose      string      `json:"prose"`
 }
+
+// waveLineRE matches the roster block's wave markers for a survive
+// objective: "Wave 1:", "**Wave 2** —", "- wave 3:" all parse, and the rest
+// of the line is that wave's first roster entry.
+var waveLineRE = regexp.MustCompile(`(?i)^\s*(?:[-*+]\s*)?\**\s*wave\s*(\d{1,2})\s*\**\s*[:\-–—]?\s*(.*)$`)
 
 // ParseDesign reads the model's Markdown reply: the first heading is the
 // encounter's name, the "Roster" section is the machine-parsed part, and
 // every name in it is resolved against the catalog. Names the catalog does
 // not carry are reported as unverified rather than silently kept — the same
-// discipline the deck builder applies to fabricated cards.
+// discipline the deck builder applies to fabricated cards. Lines that open
+// with a wave marker group the roster into waves for a survive objective.
 func ParseDesign(cat *Catalog, md string) Design {
 	d := Design{Prose: md}
 	lines := strings.Split(md, "\n")
 
 	inRoster := false
+	type waveLines struct {
+		num   int
+		lines []string
+	}
+	var waves []waveLines
 	var rosterLines []string
+	current := -1 // index into waves; -1 before any wave marker
+
 	for _, raw := range lines {
 		line := strings.TrimRight(raw, " \t\r")
 		if m := headingRE.FindStringSubmatch(line); m != nil {
@@ -418,14 +474,69 @@ func ParseDesign(cat *Catalog, md string) Design {
 			inRoster = strings.EqualFold(strings.Trim(heading, "*_ :"), "roster")
 			continue
 		}
-		if inRoster && strings.TrimSpace(line) != "" {
+		if !inRoster || strings.TrimSpace(line) == "" {
+			continue
+		}
+		if m := waveLineRE.FindStringSubmatch(line); m != nil {
+			n := clampWaveNum(m[1])
+			current = -1
+			for i := range waves {
+				if waves[i].num == n {
+					current = i
+					break
+				}
+			}
+			if current < 0 {
+				waves = append(waves, waveLines{num: n})
+				current = len(waves) - 1
+			}
+			// The remainder of the line is that wave's first entry — or
+			// several, for a model that packs them in.
+			for _, part := range splitEntries(strings.TrimSpace(m[2])) {
+				waves[current].lines = append(waves[current].lines, part)
+			}
+			continue
+		}
+		if current >= 0 {
+			waves[current].lines = append(waves[current].lines, line)
+		} else {
 			rosterLines = append(rosterLines, line)
 		}
 	}
 
+	if len(waves) > 0 {
+		// A survive roster: parse each wave on its own, in wave order, and
+		// flatten them for the roster display. Plain lines ahead of the
+		// first marker are the first thing the party meets — wave 1.
+		if len(rosterLines) > 0 {
+			waves = append([]waveLines{{num: 1, lines: rosterLines}}, waves...)
+		}
+		sort.Slice(waves, func(i, j int) bool { return waves[i].num < waves[j].num })
+		for _, w := range waves {
+			wave := parseRosterEntries(cat, w.lines, &d)
+			if len(wave) > 0 {
+				d.Waves = append(d.Waves, wave)
+				d.Monsters = append(d.Monsters, wave...)
+			}
+		}
+		if len(d.Waves) < 2 {
+			// One wave is defeat wearing a survive label; degrade to a plain
+			// roster rather than pretend there is a wave structure.
+			d.Waves = nil
+		}
+		return d
+	}
+	d.Monsters = parseRosterEntries(cat, rosterLines, &d)
+	return d
+}
+
+// parseRosterEntries parses roster lines into verified monsters, appending
+// anything unverified to the design as it goes. Names repeat across waves,
+// so entries are merged within the lines given, never across them.
+func parseRosterEntries(cat *Catalog, lines []string, d *Design) []Monster {
 	counts := map[string]int{}
 	var order []string
-	for _, line := range rosterLines {
+	for _, line := range lines {
 		name, count := parseRosterLine(line)
 		if name == "" {
 			continue
@@ -441,7 +552,7 @@ func ParseDesign(cat *Catalog, md string) Design {
 	}
 
 	names := map[string]string{}
-	for _, line := range rosterLines {
+	for _, line := range lines {
 		if n, _ := parseRosterLine(line); n != "" {
 			if _, ok := names[squash(n)]; !ok {
 				names[squash(n)] = n
@@ -449,6 +560,7 @@ func ParseDesign(cat *Catalog, md string) Design {
 		}
 	}
 
+	var out []Monster
 	for _, key := range order {
 		written := names[key]
 		cr, ok := cat.Lookup(written)
@@ -456,11 +568,57 @@ func ParseDesign(cat *Catalog, md string) Design {
 			d.Unverified = append(d.Unverified, written)
 			continue
 		}
-		d.Monsters = append(d.Monsters, Monster{
+		out = append(out, Monster{
 			Name: cr.Name, CR: cr.CR, XP: cr.XP, Count: clampCount(counts[key]),
 		})
 	}
-	return d
+	return out
+}
+
+// entryStartRE matches the "N × Name" (or bare "N Name") a roster entry
+// begins with.
+var entryStartRE = regexp.MustCompile(`^\s*\d{1,3}\s*[*x×]?\s+\S`)
+
+// splitEntries splits a wave line's remainder into roster entries: entries
+// may be separated by semicolons, or by a comma that introduces another
+// count ("1 × Goblin Boss, 2 × Goblin"). A comma inside a name keeps the
+// name whole, because a fragment that does not open with a count is not a
+// new entry.
+func splitEntries(rest string) []string {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return nil
+	}
+	var out []string
+	add := func(s string) {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	for _, semi := range strings.Split(rest, ";") {
+		parts := strings.Split(semi, ", ")
+		for i, p := range parts {
+			if i > 0 && !entryStartRE.MatchString(p) && len(out) > 0 {
+				out[len(out)-1] += ", " + strings.TrimSpace(p)
+				continue
+			}
+			add(p)
+		}
+	}
+	return out
+}
+
+// clampWaveNum converts a wave marker's number, keeping it inside the wave
+// count the budget can even describe.
+func clampWaveNum(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return 1
+	}
+	if n > 10 {
+		return 10
+	}
+	return n
 }
 
 // clampCount keeps a parsed count inside what the store will accept.

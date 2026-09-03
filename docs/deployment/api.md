@@ -26,15 +26,15 @@ Unauthenticated API calls get `401` with a JSON body; an unauthenticated browser
 | `POST` | `/api/chats/{id}/messages` | `{question}`, `?nocache` | SSE: `meta`, `delta`, `done`, `error` |
 | `GET` | `/api/study/queue` | `corpus`, `topic` (optional), `limit` | `{cards:[{key,front,back,…}], stats:{total,new,due,learned}}` |
 | `POST` | `/api/study/grade` | `{key, corpus, grade}` | `{card:{…, reps, interval_days, ease, due_at}}` |
-| `POST` | `/api/encounter/design` | `{idea?, party?, difficulty?, feedback?, current?, notes?}` | SSE: `meta`, `delta`, `done`, `error` — a whole encounter. Every field is optional; `done` carries `{name, monsters, unverified, notes, verdict, budget, party}` |
-| `POST` | `/api/encounter/budget` | `{party, difficulty}` | `{budget:{band,thresholds,target_xp,ceiling_xp,max_solo_cr,shapes:[…]}, bestiary}` — the DMG maths, no model involved |
+| `POST` | `/api/encounter/design` | `{idea?, party?, difficulty?, objective?, feedback?, current?, notes?, campaign_id?}` | SSE: `meta`, `delta`, `done`, `error` — a whole encounter. Every field is optional; an `objective` kind outside the vocabulary is a 400, never a default. `done` carries `{name, monsters, waves?, unverified, notes, verdict, budget, party, objective?, ending?, terrain?}` — the last three only when a non-defeat objective was declared |
+| `POST` | `/api/encounter/budget` | `{party, difficulty, campaign_id?, objective?}` | `{budget:{band,thresholds,target_xp,ceiling_xp,max_solo_cr,shapes:[…],objective?,adjustments?,terrain?,waves?}, bestiary, ending?}` — the DMG maths plus the objective layer, no model involved |
 | `GET` | `/api/encounter/monsters` | `q` | `{monsters:[{name,cr,xp,type}], source?}` — the local mirror first, Open5e as fallback |
 | `GET` | `/api/encounter/statblock` | `name` | `{creature:{…}}` — one full SRD statblock from the local mirror |
 | `POST` | `/api/encounters/evaluate` | `{party, monsters}` | `{verdict:{difficulty,total_xp,adjusted_xp,multiplier,thresholds,margins}}` |
 | `GET` | `/api/encounters` | — | `{encounters:[{id,name,party,monsters,notes,verdict}]}` |
-| `POST` | `/api/encounters` | `{name, party, monsters, notes?}` | `{encounter:{…}}` |
+| `POST` | `/api/encounters` | `{name, party, monsters, notes?, objective?, terrain?}` | `{encounter:{…}}` — an objective kind or terrain feature outside the declared vocabulary is a 400 |
 | `GET` | `/api/encounters/{id}` | — | `{encounter:{…}}` — the verdict is recomputed on every read |
-| `PATCH` | `/api/encounters/{id}` | `{name?, party?, monsters?, notes?}` | `{encounter:{…}}` |
+| `PATCH` | `/api/encounters/{id}` | `{name?, party?, monsters?, notes?, objective?, terrain?}` | `{encounter:{…}}` — an empty `terrain` clears the battlefield |
 | `DELETE` | `/api/encounters/{id}` | — | `204` |
 | `GET` | `/api/reader/guides` | `corpus` | `{guides:[{guide,title,kind,nodes}]}` — the readable books |
 | `GET` | `/api/reader/toc` | `corpus`, `guide` (or bare `number` to resolve) | `{guide, toc:[{number,title,level,has_body}]}` |

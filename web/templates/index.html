@@ -229,6 +229,17 @@
 						<div class="enc-panel">
 							<h3 class="enc-heading">The ask</h3>
 							<div class="enc-bands" id="enc-bands" role="group" aria-label="Target difficulty"></div>
+							<div class="enc-bands enc-objectives" id="enc-objectives" role="group" aria-label="Objective"></div>
+							<div class="enc-objective-params" id="enc-objective-params" hidden>
+								<label class="enc-obj-param" id="enc-obj-rounds-row">
+									<span class="enc-obj-label" id="enc-obj-rounds-label">Rounds</span>
+									<input id="enc-obj-rounds" class="enc-field enc-num" type="number" min="1" max="20" value="6" aria-label="Round budget">
+								</label>
+								<label class="enc-obj-param" id="enc-obj-focus-row" hidden>
+									<span class="enc-obj-label" id="enc-obj-focus-label">What</span>
+									<input id="enc-obj-focus" class="enc-field" type="text" maxlength="200" aria-label="What the objective is about">
+								</label>
+							</div>
 							<p class="enc-budget" id="enc-budget"></p>
 							<form class="enc-idea-form" id="enc-design-form" autocomplete="off">
 								<textarea id="enc-idea" class="enc-idea-input" rows="3"
@@ -280,6 +291,7 @@
 							<h3 class="enc-sheet-title" id="enc-sheet-title" hidden></h3>
 							<div class="enc-roster" id="enc-roster"></div>
 							<p class="enc-flag" id="enc-unverified" hidden></p>
+							<section class="enc-ending" id="enc-ending" hidden></section>
 							<div class="enc-notes prose" id="enc-notes"></div>
 						</article>
 						<div class="enc-panel enc-actions">

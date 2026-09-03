@@ -103,6 +103,70 @@ func TestEncounterMonsterSearchDegradesWhenUnreachable(t *testing.T) {
 	}
 }
 
+// The objective and its terrain survive a save, ride the view with the
+// rendered ending, and can be cleared — but never bypass the vocabulary.
+func TestEncounterSaveRoundTripsObjective(t *testing.T) {
+	s, _ := newEncounterServer(t)
+	admin := adminSession(t, s)
+
+	body := `{"name":"Hold the Bridge","party":[3,3,3,3],"monsters":[{"name":"Goblin","cr":"1/4","count":4}],
+		"objective":{"kind":"survive","rounds":6},
+		"terrain":{"features":[{"kind":"chokepoint","effect":"one creature wide","area":"the bridge"}],
+		"hazards":[{"kind":"rockfall","name":"Rockfall","save_ability":"dex","dc":15,"damage":"2d10","damage_type":"bludgeoning","trigger":"a creature starts its turn under the span","area":"the span"}]}}`
+	rec := call(s, http.MethodPost, "/api/encounters", body, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var created struct {
+		Encounter encounterView `json:"encounter"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	e := created.Encounter
+	if e.Objective == nil || e.Objective.Kind != "survive" || e.Objective.Rounds != 6 {
+		t.Fatalf("objective = %+v, want survive at 6 rounds", e.Objective)
+	}
+	if e.Ending == nil || e.Ending.Success == "" || e.Ending.Clock == "" {
+		t.Fatalf("ending = %+v, want the rendered how-this-ends", e.Ending)
+	}
+	if e.Terrain == nil || len(e.Terrain.Features) != 1 || len(e.Terrain.Hazards) != 1 {
+		t.Fatalf("terrain = %+v", e.Terrain)
+	}
+
+	// A patch without the fields leaves them; an empty terrain clears it.
+	if rec = call(s, http.MethodPatch, "/api/encounters/"+e.ID, `{"name":"Renamed"}`, admin); rec.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", rec.Code, rec.Body)
+	}
+	if rec = call(s, http.MethodPatch, "/api/encounters/"+e.ID, `{"terrain":{}}`, admin); rec.Code != http.StatusOK {
+		t.Fatalf("terrain clear: %d %s", rec.Code, rec.Body)
+	}
+	var cleared struct {
+		Encounter encounterView `json:"encounter"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &cleared); err != nil {
+		t.Fatal(err)
+	}
+	if cleared.Encounter.Terrain != nil {
+		t.Errorf("terrain not cleared: %+v", cleared.Encounter.Terrain)
+	}
+	if cleared.Encounter.Objective == nil || cleared.Encounter.Objective.Kind != "survive" {
+		t.Errorf("objective lost with the terrain: %+v", cleared.Encounter.Objective)
+	}
+
+	// The vocabulary holds at this boundary too.
+	for _, bad := range []string{
+		`{"objective":{"kind":"escort"}}`,
+		`{"objective":{"kind":"survive","rounds":99}}`,
+		`{"terrain":{"features":[{"kind":"lava"}]}}`,
+		`{"terrain":{"hazards":[{"kind":"rockfall","save_ability":"dex","dc":15,"damage":"lots","damage_type":"bludgeoning","trigger":"t","area":"a"}]}}`,
+	} {
+		if rec := call(s, http.MethodPatch, "/api/encounters/"+e.ID, bad, admin); rec.Code != http.StatusBadRequest {
+			t.Errorf("bad content %s: %d, want 400", bad, rec.Code)
+		}
+	}
+}
+
 func TestEncounterCRUDFlow(t *testing.T) {
 	s, _ := newEncounterServer(t)
 	admin := adminSession(t, s)

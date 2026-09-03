@@ -173,11 +173,15 @@ export const api = {
 
 	getEncounter: (id) => fetch(`/api/encounters/${encodeURIComponent(id)}`).then(json),
 
-	saveEncounter: (id, name, party, monsters, notes) =>
+	saveEncounter: (id, name, party, monsters, notes, objective, terrain) =>
 		fetch(id ? `/api/encounters/${encodeURIComponent(id)}` : "/api/encounters", {
 			method: id ? "PATCH" : "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ name, party, monsters, notes: notes || "" }),
+			body: JSON.stringify({
+				name, party, monsters, notes: notes || "",
+				objective: objective || { kind: "defeat" },
+				...(terrain ? { terrain } : {}),
+			}),
 		}).then(json),
 
 	deleteEncounter: (id) =>
@@ -188,15 +192,20 @@ export const api = {
 	encounterStatblock: (name, signal) =>
 		fetch(`/api/encounter/statblock?name=${encodeURIComponent(name)}`, { signal }).then(json),
 
-	// What the party can afford at a target difficulty. The DMG tables stay on
-	// the server, the same as the verdict. A campaign id is optional: with
-	// one and no party, the budget is computed for the campaign's declared
-	// party block — that is what prefills the builder's party boxes.
-	encounterBudget: (party, difficulty, campaignId, signal) =>
+	// What the party can afford at a target difficulty and objective. The
+	// DMG tables stay on the server, the same as the verdict; an objective
+	// makes the aim (and the terrain generated with it) part of the answer.
+	// A campaign id is optional: with one and no party, the budget is
+	// computed for the campaign's declared party block — that is what
+	// prefills the builder's party boxes.
+	encounterBudget: (party, difficulty, campaignId, objective, signal) =>
 		fetch("/api/encounter/budget", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ party, difficulty, campaign_id: campaignId || "" }),
+			body: JSON.stringify({
+				party, difficulty, campaign_id: campaignId || "",
+				objective: objective || { kind: "defeat" },
+			}),
 			signal,
 		}).then(json),
 
@@ -209,11 +218,15 @@ export const api = {
 	// A campaign-scoped encounter: the one record a planned fight has, visible
 	// to the continuity engine. Creating with no party uses the campaign's
 	// declared levels.
-	saveCampaignEncounter: (cid, name, party, monsters, notes) =>
+	saveCampaignEncounter: (cid, name, party, monsters, notes, objective, terrain) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/encounters`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ name, party, monsters, notes: notes || "" }),
+			body: JSON.stringify({
+				name, party, monsters, notes: notes || "",
+				objective: objective || { kind: "defeat" },
+				...(terrain ? { terrain } : {}),
+			}),
 		}).then(json),
 
 	// Deck builder: commander proposals, the streamed draft, list analysis,

@@ -239,7 +239,7 @@ func TestBuildPoolStaysInsideTheBudget(t *testing.T) {
 		t.Fatalf("sync: %v", err)
 	}
 
-	b := Plan([]int{3, 3, 3, 3}, BandMedium)
+	b := Plan([]int{3, 3, 3, 3}, BandMedium, Objective{})
 	pool := BuildPool(cat, b, ReadIdea(""), nil)
 	soloCap := crValue(b.MaxSoloCR)
 	for _, c := range pool.All() {
@@ -266,7 +266,7 @@ func TestBuildPoolKeepsTheFlavourTheDMAskedFor(t *testing.T) {
 	if err := cat.Sync(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	pool := BuildPool(cat, Plan([]int{3, 3, 3, 3}, BandMedium), ReadIdea("a lich in its tomb"), nil)
+	pool := BuildPool(cat, Plan([]int{3, 3, 3, 3}, BandMedium, Objective{}), ReadIdea("a lich in its tomb"), nil)
 	found := false
 	for _, c := range pool.Flavour {
 		if c.Name == "Lich" {

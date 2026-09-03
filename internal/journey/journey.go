@@ -525,7 +525,7 @@ func (w *world) pick(seed int64, day *DayPlan, leg Leg, byID map[string]*campaig
 	// A wandering monster: always available. The budget is the DMG's own
 	// arithmetic over the party's level band — deterministic, published,
 	// and the day's recorded plan.
-	budget := encounter.Plan(party, encounter.DefaultBand)
+	budget := encounter.Plan(party, encounter.DefaultBand, encounter.Objective{})
 	shape := budget.Shapes[seededIndex(seed, "shape:"+dayKey, len(budget.Shapes))]
 	pool = append(pool, option{
 		kind:   EventEncounter,

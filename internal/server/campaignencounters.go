@@ -165,6 +165,14 @@ func (s *Server) handleCampaignEncounters(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := validateObjective(req.Objective); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validateTerrain(req.Terrain); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	party := req.Party
 	if len(party) == 0 {
 		table, err := campaign.PartySnapshot(r.Context(), campaign.ScopeDM, s.campaigns.DB(), a.campaign.ID)
@@ -179,7 +187,8 @@ func (s *Server) handleCampaignEncounters(w http.ResponseWriter, r *http.Request
 		notes = *req.Notes
 	}
 	scope := encounter.Scope{CampaignID: a.campaign.ID, Status: encounter.StatusPlanned}
-	e, err := s.encounters.CreateIn(r.Context(), userID(r), scope, *req.Name, party, monsters, notes)
+	e, err := s.encounters.CreateIn(r.Context(), userID(r), scope, *req.Name, party, monsters, notes,
+		contentOptions(req)...)
 	if err != nil {
 		writeEncounterStoreError(w, err)
 		return

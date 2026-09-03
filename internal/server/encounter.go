@@ -41,41 +41,87 @@ func (s *Server) encountersEnabled(w http.ResponseWriter) bool {
 //
 // The campaign fields (MAD-378) are omitted when empty, so an owner-scoped
 // encounter serialises to exactly the object the builder has always received.
+// The objective and its rendered ending (MAD-380) ride along the same way:
+// absent unless the fight declares one.
 type encounterView struct {
-	ID             string              `json:"id"`
-	Name           string              `json:"name"`
-	Party          []int               `json:"party"`
-	Monsters       []encounter.Monster `json:"monsters"`
-	Notes          string              `json:"notes"`
-	CampaignID     string              `json:"campaign_id,omitempty"`
-	SessionEventID string              `json:"session_event_id,omitempty"`
-	SceneID        string              `json:"scene_id,omitempty"`
-	Objective      string              `json:"objective,omitempty"`
-	Terrain        map[string]any      `json:"terrain,omitempty"`
-	Status         string              `json:"status,omitempty"`
-	CreatedAt      string              `json:"created_at"`
-	UpdatedAt      string              `json:"updated_at"`
-	Verdict        encounter.Verdict   `json:"verdict"`
+	ID             string               `json:"id"`
+	Name           string               `json:"name"`
+	Party          []int                `json:"party"`
+	Monsters       []encounter.Monster  `json:"monsters"`
+	Notes          string               `json:"notes"`
+	CampaignID     string               `json:"campaign_id,omitempty"`
+	SessionEventID string               `json:"session_event_id,omitempty"`
+	SceneID        string               `json:"scene_id,omitempty"`
+	Objective      *encounter.Objective `json:"objective,omitempty"`
+	Ending         *encounter.Ending    `json:"ending,omitempty"`
+	Terrain        *encounter.Terrain   `json:"terrain,omitempty"`
+	Status         string               `json:"status,omitempty"`
+	CreatedAt      string               `json:"created_at"`
+	UpdatedAt      string               `json:"updated_at"`
+	Verdict        encounter.Verdict    `json:"verdict"`
 }
 
 func toEncounterView(e encounter.Encounter) encounterView {
-	return encounterView{
+	v := encounterView{
 		ID: e.ID, Name: e.Name, Party: e.Party, Monsters: e.Monsters, Notes: e.Notes,
 		CampaignID: e.CampaignID, SessionEventID: e.SessionEventID, SceneID: e.SceneID,
 		Objective: e.Objective, Terrain: e.Terrain, Status: e.Status,
 		CreatedAt: e.CreatedAt.Format(http.TimeFormat), UpdatedAt: e.UpdatedAt.Format(http.TimeFormat),
 		Verdict: encounter.Evaluate(e.Party, e.Monsters),
 	}
+	if e.Objective != nil {
+		ending := e.Objective.Ending()
+		v.Ending = &ending
+	}
+	return v
 }
 
 // encounterRequest is the writable half of an encounter. Unknown fields —
 // including any attempt to post a difficulty or XP verdict — are ignored;
-// XP is always re-derived from each monster's challenge rating.
+// XP is always re-derived from each monster's challenge rating. The objective
+// and terrain pointers distinguish "not sent" from "sent": a PATCH without
+// them leaves them alone, one with them validates against the declared
+// vocabularies first — an unknown objective kind is a 400, never a default.
 type encounterRequest struct {
-	Name     *string             `json:"name"`
-	Party    []int               `json:"party"`
-	Monsters []encounter.Monster `json:"monsters"`
-	Notes    *string             `json:"notes"`
+	Name      *string              `json:"name"`
+	Party     []int                `json:"party"`
+	Monsters  []encounter.Monster  `json:"monsters"`
+	Notes     *string              `json:"notes"`
+	Objective *encounter.Objective `json:"objective"`
+	Terrain   *encounter.Terrain   `json:"terrain"`
+}
+
+// validateObjective checks an optional objective at the API boundary. A nil
+// pointer is "not sent"; an empty kind is "no objective"; anything else
+// outside the vocabulary is refused.
+func validateObjective(o *encounter.Objective) error {
+	if o == nil {
+		return nil
+	}
+	return o.Validate()
+}
+
+// validateTerrain checks an optional terrain block at the API boundary: a
+// nil pointer is "not sent", anything sent must speak the declared
+// vocabulary.
+func validateTerrain(t *encounter.Terrain) error {
+	if t == nil {
+		return nil
+	}
+	return t.Validate()
+}
+
+// contentOptions turns the request's objective and terrain into store
+// options. It assumes validateObjective and terrain validation already ran.
+func contentOptions(req encounterRequest) []encounter.Option {
+	var opts []encounter.Option
+	if req.Objective != nil {
+		opts = append(opts, encounter.WithObjective(*req.Objective))
+	}
+	if req.Terrain != nil {
+		opts = append(opts, encounter.WithTerrain(*req.Terrain))
+	}
+	return opts
 }
 
 // maxEncounterSize bounds a stored encounter: enough for any sane table,
@@ -233,11 +279,20 @@ func (s *Server) handleCreateEncounter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := validateObjective(req.Objective); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validateTerrain(req.Terrain); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	notes := ""
 	if req.Notes != nil {
 		notes = *req.Notes
 	}
-	e, err := s.encounters.Create(r.Context(), userID(r), *req.Name, req.Party, monsters, notes)
+	e, err := s.encounters.Create(r.Context(), userID(r), *req.Name, req.Party, monsters, notes,
+		contentOptions(req)...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -284,7 +339,16 @@ func (s *Server) handleUpdateEncounter(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Monsters = normalized
 	}
-	e, err := s.encounters.Update(r.Context(), userID(r), r.PathValue("id"), req.Name, req.Party, req.Monsters, req.Notes, req.Party != nil, req.Monsters != nil)
+	if err := validateObjective(req.Objective); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validateTerrain(req.Terrain); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.encounters.Update(r.Context(), userID(r), r.PathValue("id"), req.Name, req.Party, req.Monsters, req.Notes, req.Party != nil, req.Monsters != nil,
+		contentOptions(req)...)
 	if err != nil {
 		if errors.Is(err, encounter.ErrNotFound) {
 			writeError(w, http.StatusNotFound, err)

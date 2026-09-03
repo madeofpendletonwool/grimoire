@@ -134,6 +134,31 @@ func multiplierFor(monsters, partySize int) float64 {
 	return multiplierLadder[rung]
 }
 
+// shiftedMultiplier is multiplierFor with the objective layer's lever
+// applied: rungShift moves the result one rung up or down the DMG's ladder
+// after the party-size adjustment, clamped at the ladder's ends. A zero
+// shift is exactly multiplierFor.
+func shiftedMultiplier(monsters, partySize, rungShift int) float64 {
+	base := multiplierFor(monsters, partySize)
+	if rungShift == 0 {
+		return base
+	}
+	for i, m := range multiplierLadder {
+		if m != base {
+			continue
+		}
+		rung := i + rungShift
+		if rung < 0 {
+			rung = 0
+		}
+		if rung >= len(multiplierLadder) {
+			rung = len(multiplierLadder) - 1
+		}
+		return multiplierLadder[rung]
+	}
+	return base
+}
+
 // Monster is one entry in an encounter: a statblock name, its challenge
 // rating label ("1/4", "2"), the XP a single monster of that rating is worth,
 // and how many of them the encounter includes. XP is always derived from CR
@@ -145,10 +170,23 @@ type Monster struct {
 	Count int    `json:"count"`
 }
 
+// WaveVerdict prices one wave of a survive encounter: the monsters on the
+// board for that wave, at that wave's own multiplier. The DMG's multiplier
+// table assumes every monster is on the board at once, so waves are never
+// priced as if they were.
+type WaveVerdict struct {
+	Monsters   int     `json:"monsters"`
+	TotalXP    int     `json:"total_xp"`
+	AdjustedXP int     `json:"adjusted_xp"`
+	Multiplier float64 `json:"multiplier"`
+}
+
 // Verdict is the server-computed difficulty assessment for an encounter.
 // Margins carries, per band, how much adjusted XP separates the encounter
 // from that band's threshold: negative means the encounter sits above it.
 // A Verdict for an empty party keeps zero thresholds and no difficulty.
+// Waves is present only for a survive encounter; then AdjustedXP is the sum
+// across waves — the whole fight, checked against the party.
 type Verdict struct {
 	TotalXP      int            `json:"total_xp"`
 	AdjustedXP   int            `json:"adjusted_xp"`
@@ -158,6 +196,7 @@ type Verdict struct {
 	Difficulty   string         `json:"difficulty,omitempty"`
 	Thresholds   map[string]int `json:"thresholds"`
 	Margins      map[string]int `json:"margins"`
+	Waves        []WaveVerdict  `json:"waves,omitempty"`
 }
 
 // Evaluate computes an encounter's difficulty per the DMG's five-step method:
@@ -175,7 +214,43 @@ func Evaluate(party []int, monsters []Monster) Verdict {
 	v.PartySize = len(party)
 	v.Multiplier = multiplierFor(v.MonsterCount, v.PartySize)
 	v.AdjustedXP = int(math.Round(float64(v.TotalXP) * v.Multiplier))
+	v.read(party)
+	return v
+}
 
+// EvaluateWaves computes a survive encounter's difficulty: each wave at its
+// own multiplier, and the encounter's adjusted XP is the sum across all of
+// them — the total the party actually has to survive, not the first wave
+// alone.
+func EvaluateWaves(party []int, waves [][]Monster) Verdict {
+	v := Verdict{Thresholds: map[string]int{}, Margins: map[string]int{}}
+	for _, wave := range waves {
+		raw, count := 0, 0
+		for _, m := range wave {
+			raw += m.XP * m.Count
+			count += m.Count
+		}
+		mult := multiplierFor(count, len(party))
+		adjusted := int(math.Round(float64(raw) * mult))
+		v.Waves = append(v.Waves, WaveVerdict{
+			Monsters: count, TotalXP: raw, AdjustedXP: adjusted, Multiplier: mult,
+		})
+		v.TotalXP += raw
+		v.MonsterCount += count
+		v.AdjustedXP += adjusted
+	}
+	v.PartySize = len(party)
+	if v.TotalXP > 0 {
+		v.Multiplier = math.Round(float64(v.AdjustedXP)/float64(v.TotalXP)*100) / 100
+	}
+	v.read(party)
+	return v
+}
+
+// read fills the thresholds, margins and difficulty from the adjusted XP
+// already computed. "The closest threshold that is lower than the adjusted
+// XP value of the monsters determines the encounter's difficulty."
+func (v *Verdict) read(party []int) {
 	for _, level := range party {
 		if level < 1 || level > 20 {
 			continue
@@ -185,11 +260,8 @@ func Evaluate(party []int, monsters []Monster) Verdict {
 		}
 	}
 	if v.PartySize == 0 {
-		return v
+		return
 	}
-
-	// "The closest threshold that is lower than the adjusted XP value of the
-	// monsters determines the encounter's difficulty."
 	v.Difficulty = BandTrivial
 	for _, band := range Bands {
 		v.Margins[band] = v.Thresholds[band] - v.AdjustedXP
@@ -197,7 +269,6 @@ func Evaluate(party []int, monsters []Monster) Verdict {
 			v.Difficulty = band
 		}
 	}
-	return v
 }
 
 // ParseCR normalizes a challenge rating to its canonical table label. It

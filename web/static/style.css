@@ -1461,6 +1461,30 @@ kbd {
 	opacity: 0.6;
 }
 .enc-band-chip.is-on { opacity: 1; color: var(--gold-bright); }
+
+/* Objectives sit beside the difficulty chips — same chips, second row — and
+   reveal their one or two parameters when a kind other than Defeat is lit. */
+.enc-objectives { margin-bottom: var(--sp-2); }
+.enc-objective-params { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.enc-obj-param { display: flex; align-items: center; gap: var(--sp-2); }
+.enc-obj-param .enc-num { width: 4.5rem; }
+.enc-obj-param .enc-field { min-width: 14rem; }
+.enc-obj-label { font-size: var(--fs-xs); opacity: 0.6; }
+
+/* "How this ends": the objective's success, failure and clock, plus the
+   terrain the fight is generated with. Server words, not the model's. */
+.enc-ending {
+	margin: var(--sp-3) 0;
+	padding: var(--sp-3);
+	border: 1px solid color-mix(in srgb, var(--gold-bright) 35%, transparent);
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--gold-bright) 6%, transparent);
+}
+.enc-ending-title { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--gold-bright); }
+.enc-ending-line { margin: 0 0 var(--sp-1); font-size: var(--fs-xs); line-height: 1.5; }
+.enc-ending-line strong { font-family: var(--font-pixel); letter-spacing: 0.04em; font-size: var(--fs-xs); }
+.enc-ending-terrain { margin: var(--sp-2) 0 0; padding-left: 1.2rem; font-size: var(--fs-xs); line-height: 1.5; opacity: 0.85; }
+
 .enc-budget {
 	margin: 0 0 var(--sp-3);
 	font-size: var(--fs-xs);

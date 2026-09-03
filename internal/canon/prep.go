@@ -645,7 +645,7 @@ func (st *prepState) estimate(d *PrepDirection) int {
 		}
 	}
 	monsters := defaultMonstersPerEnc
-	if b := encounter.Plan(st.snap.Party, ""); len(b.Shapes) > 0 {
+	if b := encounter.Plan(st.snap.Party, "", encounter.Objective{}); len(b.Shapes) > 0 {
 		for _, sh := range b.Shapes {
 			if sh.Key == "pack" {
 				monsters = sh.Count
@@ -1109,7 +1109,7 @@ func (s *Store) buildOfflineScenes(ctx context.Context, st *prepState, stories *
 // planned-encounter session event, the payload contract the canon engine's
 // encounter checks read.
 func (s *Store) buildPrepEncounter(ctx context.Context, sessions *gamesession.Store, sessionID string, sc story.Scene, d PrepDirection, party []int, band string, cat *encounter.Catalog) (*PrepEncounter, error) {
-	budget := encounter.Plan(party, band)
+	budget := encounter.Plan(party, band, encounter.Objective{})
 	enc := &PrepEncounter{SceneID: sc.ID, Party: budget.Party, Band: budget.Band}
 
 	monsters := pickPrepRoster(cat, budget, sc.Name+" "+sc.Purpose+" "+d.Advances)

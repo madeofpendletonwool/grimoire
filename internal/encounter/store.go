@@ -29,23 +29,24 @@ var ErrNotFound = errors.New("encounter not found")
 // ordinary owner-scoped encounter, which is exactly what the builder has
 // always saved.
 //
-// Objective and Terrain are reserved by migration 0026 for the objectives
-// issue; this package reads and round-trips them so that issue needs no
-// migration, and nothing writes them yet.
+// Objective and Terrain fill the columns migration 0026 reserved (MAD-380):
+// what the fight is about, and the battlefield generated with it. Both are
+// nil on an ordinary encounter, and both are validated against their
+// declared vocabularies before anything is written.
 type Encounter struct {
-	ID             string         `json:"id"`
-	Name           string         `json:"name"`
-	Party          []int          `json:"party"`
-	Monsters       []Monster      `json:"monsters"`
-	Notes          string         `json:"notes"`
-	CampaignID     string         `json:"campaign_id,omitempty"`
-	SessionEventID string         `json:"session_event_id,omitempty"`
-	SceneID        string         `json:"scene_id,omitempty"`
-	Objective      string         `json:"objective,omitempty"`
-	Terrain        map[string]any `json:"terrain,omitempty"`
-	Status         string         `json:"status"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	Party          []int      `json:"party"`
+	Monsters       []Monster  `json:"monsters"`
+	Notes          string     `json:"notes"`
+	CampaignID     string     `json:"campaign_id,omitempty"`
+	SessionEventID string     `json:"session_event_id,omitempty"`
+	SceneID        string     `json:"scene_id,omitempty"`
+	Objective      *Objective `json:"objective,omitempty"`
+	Terrain        *Terrain   `json:"terrain,omitempty"`
+	Status         string     `json:"status"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // The statuses a campaign-scoped encounter moves through. An owner-scoped
@@ -73,6 +74,45 @@ type Scope struct {
 	SessionEventID string
 	SceneID        string
 	Status         string
+}
+
+// Option is one optional part of an encounter write. The two that exist are
+// the objective and the terrain (MAD-380); both are validated against their
+// declared vocabularies before anything is stored.
+type Option func(*Encounter) error
+
+// WithObjective declares what the fight is about. An empty kind declares
+// nothing; an unknown kind is ErrInvalid, never a default.
+func WithObjective(o Objective) Option {
+	return func(e *Encounter) error {
+		if err := o.Validate(); err != nil {
+			return err
+		}
+		if o.Kind == "" {
+			return nil
+		}
+		stored := o
+		e.Objective = &stored
+		return nil
+	}
+}
+
+// WithTerrain declares the battlefield the fight is generated with. An
+// empty Terrain clears whatever was there — "no battlefield declared" is
+// nil, never an empty object.
+func WithTerrain(t Terrain) Option {
+	return func(e *Encounter) error {
+		if err := t.Validate(); err != nil {
+			return err
+		}
+		if len(t.Features) == 0 && len(t.Hazards) == 0 {
+			e.Terrain = nil
+			return nil
+		}
+		stored := t
+		e.Terrain = &stored
+		return nil
+	}
 }
 
 // Store persists encounters in the shared SQLite database, following the
@@ -190,9 +230,10 @@ func newID() string {
 }
 
 // Create saves a new encounter for the owner, belonging to no campaign. It is
-// what the builder has always called and its behaviour is unchanged.
-func (s *Store) Create(ctx context.Context, owner, name string, party []int, monsters []Monster, notes string) (Encounter, error) {
-	return s.CreateIn(ctx, owner, Scope{}, name, party, monsters, notes)
+// what the builder has always called; the objective and terrain options are
+// the only way it has changed.
+func (s *Store) Create(ctx context.Context, owner, name string, party []int, monsters []Monster, notes string, opts ...Option) (Encounter, error) {
+	return s.CreateIn(ctx, owner, Scope{}, name, party, monsters, notes, opts...)
 }
 
 // CreateIn saves a new encounter inside a campaign scope. The zero Scope is
@@ -204,7 +245,7 @@ func (s *Store) Create(ctx context.Context, owner, name string, party []int, mon
 // layer, per ADR 2 — a roster is DM material by definition), but knowing who
 // wrote it is worth keeping and it is what lets the builder's own saved list
 // still show it.
-func (s *Store) CreateIn(ctx context.Context, owner string, scope Scope, name string, party []int, monsters []Monster, notes string) (Encounter, error) {
+func (s *Store) CreateIn(ctx context.Context, owner string, scope Scope, name string, party []int, monsters []Monster, notes string, opts ...Option) (Encounter, error) {
 	status := strings.TrimSpace(scope.Status)
 	if status == "" {
 		status = StatusPlanned
@@ -221,6 +262,14 @@ func (s *Store) CreateIn(ctx context.Context, owner string, scope Scope, name st
 		CampaignID: scope.CampaignID, SessionEventID: scope.SessionEventID, SceneID: scope.SceneID,
 		Status: status, CreatedAt: now, UpdatedAt: now,
 	}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if err := opt(&e); err != nil {
+			return Encounter{}, err
+		}
+	}
 	partyJSON, err := json.Marshal(e.Party)
 	if err != nil {
 		return Encounter{}, fmt.Errorf("encode party: %w", err)
@@ -229,16 +278,43 @@ func (s *Store) CreateIn(ctx context.Context, owner string, scope Scope, name st
 	if err != nil {
 		return Encounter{}, fmt.Errorf("encode monsters: %w", err)
 	}
+	objectiveJSON, terrainJSON, err := encodeContent(e)
+	if err != nil {
+		return Encounter{}, err
+	}
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO encounters (id, owner_id, name, notes, party, monsters,
-		                        campaign_id, session_event_id, scene_id, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                        campaign_id, session_event_id, scene_id, objective, terrain, status,
+		                        created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, owner, e.Name, e.Notes, string(partyJSON), string(monstersJSON),
-		e.CampaignID, e.SessionEventID, e.SceneID, e.Status,
+		e.CampaignID, e.SessionEventID, e.SceneID, objectiveJSON, terrainJSON, e.Status,
 		e.CreatedAt.UnixMilli(), e.UpdatedAt.UnixMilli()); err != nil {
 		return Encounter{}, fmt.Errorf("insert encounter: %w", err)
 	}
 	return e, nil
+}
+
+// encodeContent marshals the objective and terrain columns. Nothing declared
+// stays at the column defaults — ” and '{}' — so an encounter without an
+// objective is byte-identical to one saved before objectives existed.
+func encodeContent(e Encounter) (objectiveJSON, terrainJSON string, err error) {
+	objectiveJSON, terrainJSON = "", "{}"
+	if e.Objective != nil {
+		b, err := json.Marshal(e.Objective)
+		if err != nil {
+			return "", "", fmt.Errorf("encode objective: %w", err)
+		}
+		objectiveJSON = string(b)
+	}
+	if e.Terrain != nil {
+		b, err := json.Marshal(e.Terrain)
+		if err != nil {
+			return "", "", fmt.Errorf("encode terrain: %w", err)
+		}
+		terrainJSON = string(b)
+	}
+	return objectiveJSON, terrainJSON, nil
 }
 
 // List returns the owner's encounters, most recently updated first —
@@ -315,7 +391,10 @@ func (s *Store) GetCampaign(ctx context.Context, campaignID, id string) (Encount
 // Update replaces the mutable fields of one of the owner's encounters.
 // Empty monsters means "leave the roster alone" so a rename does not have to
 // re-send the encounter body; party updates likewise only apply when sent.
-func (s *Store) Update(ctx context.Context, owner, id string, name *string, party []int, monsters []Monster, notes *string, hasParty, hasMonsters bool) (Encounter, error) {
+// The objective and terrain options apply when passed: WithObjective declares
+// what the fight is about, WithTerrain replaces the battlefield, and
+// WithTerrain(Terrain{}) clears it.
+func (s *Store) Update(ctx context.Context, owner, id string, name *string, party []int, monsters []Monster, notes *string, hasParty, hasMonsters bool, opts ...Option) (Encounter, error) {
 	e, err := s.Get(ctx, owner, id)
 	if err != nil {
 		return Encounter{}, err
@@ -332,6 +411,14 @@ func (s *Store) Update(ctx context.Context, owner, id string, name *string, part
 	if hasMonsters {
 		e.Monsters = monsters
 	}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if err := opt(&e); err != nil {
+			return Encounter{}, err
+		}
+	}
 	partyJSON, err := json.Marshal(e.Party)
 	if err != nil {
 		return Encounter{}, fmt.Errorf("encode party: %w", err)
@@ -340,11 +427,17 @@ func (s *Store) Update(ctx context.Context, owner, id string, name *string, part
 	if err != nil {
 		return Encounter{}, fmt.Errorf("encode monsters: %w", err)
 	}
+	objectiveJSON, terrainJSON, err := encodeContent(e)
+	if err != nil {
+		return Encounter{}, err
+	}
 	e.UpdatedAt = time.Now().UTC()
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE encounters SET name = ?, notes = ?, party = ?, monsters = ?, updated_at = ?
+		UPDATE encounters SET name = ?, notes = ?, party = ?, monsters = ?,
+		                      objective = ?, terrain = ?, updated_at = ?
 		 WHERE owner_id = ? AND id = ?`,
-		e.Name, e.Notes, string(partyJSON), string(monstersJSON), e.UpdatedAt.UnixMilli(), owner, id)
+		e.Name, e.Notes, string(partyJSON), string(monstersJSON),
+		objectiveJSON, terrainJSON, e.UpdatedAt.UnixMilli(), owner, id)
 	if err != nil {
 		return Encounter{}, fmt.Errorf("update encounter: %w", err)
 	}
@@ -369,18 +462,18 @@ func (s *Store) Delete(ctx context.Context, owner, id string) error {
 
 // scanAll drains an encounterCols cursor into encounters.
 //
-// Terrain is decoded leniently: it is a column this issue reserves and does
-// not write, so a hand-edited or empty value costs the terrain block and never
-// the encounter.
+// Objective and Terrain are decoded leniently: they are columns a hand edit
+// or an older writer could fill with anything, so a value that does not
+// parse costs the objective or terrain block and never the encounter.
 func scanAll(rows *sql.Rows) ([]Encounter, error) {
 	defer rows.Close()
 	var out []Encounter
 	for rows.Next() {
 		var e Encounter
-		var partyJSON, monstersJSON, terrainJSON string
+		var partyJSON, monstersJSON, objectiveJSON, terrainJSON string
 		var createdMilli, updatedMilli int64
 		if err := rows.Scan(&e.ID, &e.Name, &e.Notes, &partyJSON, &monstersJSON,
-			&e.CampaignID, &e.SessionEventID, &e.SceneID, &e.Objective, &terrainJSON, &e.Status,
+			&e.CampaignID, &e.SessionEventID, &e.SceneID, &objectiveJSON, &terrainJSON, &e.Status,
 			&createdMilli, &updatedMilli); err != nil {
 			return nil, err
 		}
@@ -390,10 +483,16 @@ func scanAll(rows *sql.Rows) ([]Encounter, error) {
 		if err := json.Unmarshal([]byte(monstersJSON), &e.Monsters); err != nil {
 			return nil, fmt.Errorf("decode monsters: %w", err)
 		}
+		if objectiveJSON != "" {
+			var o Objective
+			if json.Unmarshal([]byte(objectiveJSON), &o) == nil && o.Kind != "" {
+				e.Objective = &o
+			}
+		}
 		if terrainJSON != "" && terrainJSON != "{}" {
-			var terrain map[string]any
-			if json.Unmarshal([]byte(terrainJSON), &terrain) == nil {
-				e.Terrain = terrain
+			var t Terrain
+			if json.Unmarshal([]byte(terrainJSON), &t) == nil {
+				e.Terrain = &t
 			}
 		}
 		e.CreatedAt = time.UnixMilli(createdMilli).UTC()
