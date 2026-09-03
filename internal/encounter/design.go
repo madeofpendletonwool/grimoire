@@ -341,14 +341,17 @@ const perTier = 14
 
 // BuildPool assembles the shortlist for a budget and an idea. Each tier is
 // filtered against the CR window that slot can afford, so nothing in the pool
-// is a creature the encounter could not actually pay for.
+// is a creature the encounter could not actually pay for. A homebrew
+// overlay, when one is handed, competes in the same tiers under the same
+// windows — a designed creature is picked into the pool exactly like an SRD
+// one, tagged as homebrew.
 //
 // The flavour tier is the escape hatch from the DM's own words: it ignores
 // the CR windows entirely and returns whatever best matches the idea, so a
 // request for "goblins" surfaces every goblin even when the budget wants
 // something bigger. The model is told which tier is which.
-func BuildPool(cat *Catalog, b Budget, h Hints, exclude map[string]bool) Pool {
-	if cat == nil {
+func BuildPool(cat *Catalog, hb *Overlay, b Budget, h Hints, exclude map[string]bool) Pool {
+	if cat == nil && hb.Len() == 0 {
 		return Pool{}
 	}
 	soloCap := crValue(b.MaxSoloCR)
@@ -375,7 +378,7 @@ func BuildPool(cat *Catalog, b Budget, h Hints, exclude map[string]bool) Pool {
 			MinCR: minCR, MaxCR: maxCR,
 			Types: h.Types, Tags: h.Tags, Terms: h.Terms,
 			Exclude: exclude, Limit: limit,
-		})
+		}, hb)
 	}
 
 	p := Pool{
@@ -387,7 +390,7 @@ func BuildPool(cat *Catalog, b Budget, h Hints, exclude map[string]bool) Pool {
 		p.Flavour = cat.Filter(Filter{
 			MaxCR: 30, Types: h.Types, Tags: h.Tags, Terms: h.Terms,
 			Exclude: exclude, Limit: perTier,
-		})
+		}, hb)
 	}
 	return dedupePool(p)
 }
@@ -447,11 +450,13 @@ var waveLineRE = regexp.MustCompile(`(?i)^\s*(?:[-*+]\s*)?\**\s*wave\s*(\d{1,2})
 
 // ParseDesign reads the model's Markdown reply: the first heading is the
 // encounter's name, the "Roster" section is the machine-parsed part, and
-// every name in it is resolved against the catalog. Names the catalog does
-// not carry are reported as unverified rather than silently kept — the same
+// every name in it is resolved against the catalog — the homebrew overlay
+// asked first when one is handed, so a design naming a campaign's own
+// creature resolves to it. Names nothing resolves for are reported as
+// unverified rather than silently kept — the same
 // discipline the deck builder applies to fabricated cards. Lines that open
 // with a wave marker group the roster into waves for a survive objective.
-func ParseDesign(cat *Catalog, md string) Design {
+func ParseDesign(cat *Catalog, hb *Overlay, md string) Design {
 	d := Design{Prose: md}
 	lines := strings.Split(md, "\n")
 
@@ -513,7 +518,7 @@ func ParseDesign(cat *Catalog, md string) Design {
 		}
 		sort.Slice(waves, func(i, j int) bool { return waves[i].num < waves[j].num })
 		for _, w := range waves {
-			wave := parseRosterEntries(cat, w.lines, &d)
+			wave := parseRosterEntries(cat, hb, w.lines, &d)
 			if len(wave) > 0 {
 				d.Waves = append(d.Waves, wave)
 				d.Monsters = append(d.Monsters, wave...)
@@ -526,14 +531,14 @@ func ParseDesign(cat *Catalog, md string) Design {
 		}
 		return d
 	}
-	d.Monsters = parseRosterEntries(cat, rosterLines, &d)
+	d.Monsters = parseRosterEntries(cat, hb, rosterLines, &d)
 	return d
 }
 
 // parseRosterEntries parses roster lines into verified monsters, appending
 // anything unverified to the design as it goes. Names repeat across waves,
 // so entries are merged within the lines given, never across them.
-func parseRosterEntries(cat *Catalog, lines []string, d *Design) []Monster {
+func parseRosterEntries(cat *Catalog, hb *Overlay, lines []string, d *Design) []Monster {
 	counts := map[string]int{}
 	var order []string
 	for _, line := range lines {
@@ -563,7 +568,7 @@ func parseRosterEntries(cat *Catalog, lines []string, d *Design) []Monster {
 	var out []Monster
 	for _, key := range order {
 		written := names[key]
-		cr, ok := cat.Lookup(written)
+		cr, ok := cat.Lookup(written, hb)
 		if !ok {
 			d.Unverified = append(d.Unverified, written)
 			continue

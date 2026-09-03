@@ -359,6 +359,33 @@ func LoadSnapshot(ctx context.Context, db *sql.DB, campaignID string) (*Snapshot
 		}
 	}
 
+	// The campaign's own homebrew (MAD-382): a planned encounter using a
+	// creature this campaign designed is resolved, not a continuity
+	// finding. The overlay is the same one the builder reads through —
+	// campaign-scoped rows only, never another owner's unscoped designs.
+	if have, err := tableExists(ctx, db, "homebrew_monsters"); err != nil {
+		return nil, err
+	} else if have {
+		rows, err = db.QueryContext(ctx,
+			`SELECT name FROM homebrew_monsters WHERE campaign_id = ?`, campaignID)
+		if err != nil {
+			return nil, fmt.Errorf("engine homebrew: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				return nil, err
+			}
+			if key := squashName(name); key != "" {
+				snap.Bestiary[key] = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("engine homebrew: %w", err)
+		}
+	}
+
 	// The current party. The declared party block (MAD-378) is the one reader
 	// of the pc payload now; Levels() is bit-for-bit what this loader used to
 	// compute by hand — live pcs, a level only when it parses to 1..20, name

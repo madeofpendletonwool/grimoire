@@ -26,6 +26,29 @@ func (s *Server) WithEncounters(store *encounter.Store, bestiary *encounter.Best
 	return s
 }
 
+// WithHomebrew wires the homebrew monster store (MAD-382): the overlay the
+// builder's reads and the monster designer save through. nil disables both.
+func (s *Server) WithHomebrew(store *encounter.HomebrewStore) *Server {
+	s.homebrew = store
+	return s
+}
+
+// homebrewOverlay loads the caller's homebrew as a catalog overlay. With a
+// campaign named, that campaign's designs ride along. Every failure
+// degrades to no overlay — the builder must never stop because the
+// homebrew shelf is unreadable — which is safe because nil is the plain
+// catalog everywhere the overlay is taken.
+func (s *Server) homebrewOverlay(r *http.Request, campaignID string) *encounter.Overlay {
+	if s.homebrew == nil {
+		return nil
+	}
+	list, err := s.homebrew.Overlay(r.Context(), userID(r), campaignID)
+	if err != nil || len(list) == 0 {
+		return nil
+	}
+	return encounter.NewOverlay(list)
+}
+
 // encountersEnabled reports whether the encounter builder is wired, writing
 // the error response when it is not.
 func (s *Server) encountersEnabled(w http.ResponseWriter) bool {
@@ -193,9 +216,12 @@ func (s *Server) handleEncounterMonsters(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, fmt.Errorf("q is required"))
 		return
 	}
+	// The caller's homebrew leads the search when they have any; an optional
+	// campaign scopes which designs ride along.
+	overlay := s.homebrewOverlay(r, strings.TrimSpace(r.URL.Query().Get("campaign")))
 	// The mirrored bestiary answers instantly and works offline; the remote
 	// search is the fallback for an install that has not mirrored yet.
-	if hits := s.catalog.Search(q, 0); len(hits) > 0 {
+	if hits := s.catalog.Search(q, 0, overlay); len(hits) > 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"monsters": hits, "source": "local"})
 		return
 	}

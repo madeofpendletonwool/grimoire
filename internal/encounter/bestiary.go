@@ -46,6 +46,9 @@ type MonsterSummary struct {
 	CR   string `json:"cr"`
 	XP   int    `json:"xp"`
 	Type string `json:"type,omitempty"`
+	// Homebrew marks a hit that came from the caller's overlay rather than
+	// the SRD — the picker labels it, the same rule Creature carries.
+	Homebrew bool `json:"homebrew,omitempty"`
 }
 
 // Bestiary searches Open5e for SRD creatures, with the same cache, throttle,

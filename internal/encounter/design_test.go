@@ -145,7 +145,7 @@ func TestParseDesign(t *testing.T) {
 		"The boss stays back.",
 	}, "\n")
 
-	d := ParseDesign(cat, md)
+	d := ParseDesign(cat, nil, md)
 	if d.Name != "The Ledge Above the Trail" {
 		t.Errorf("name = %q", d.Name)
 	}
@@ -179,7 +179,7 @@ func TestParseDesignRosterVariants(t *testing.T) {
 		"4 × Goblin appear here but must not be counted.",
 	}, "\n")
 
-	d := ParseDesign(cat, md)
+	d := ParseDesign(cat, nil, md)
 	got := map[string]int{}
 	for _, m := range d.Monsters {
 		got[m.Name] = m.Count
@@ -194,7 +194,7 @@ func TestParseDesignRosterVariants(t *testing.T) {
 // "Roster" become the encounter's name.
 func TestParseDesignSkipsSectionHeadingsAsTitles(t *testing.T) {
 	cat := testCatalog(t)
-	d := ParseDesign(cat, "## The pitch\nA fight.\n\n## Roster\n1 × Owlbear\n")
+	d := ParseDesign(cat, nil, "## The pitch\nA fight.\n\n## Roster\n1 × Owlbear\n")
 	if d.Name != "" {
 		t.Errorf("name = %q, want empty rather than a section label", d.Name)
 	}
@@ -207,7 +207,7 @@ func TestParseDesignSkipsSectionHeadingsAsTitles(t *testing.T) {
 // model that writes "500 × Goblin" should still produce a saveable encounter.
 func TestParseDesignClampsCounts(t *testing.T) {
 	cat := testCatalog(t)
-	d := ParseDesign(cat, "# Swarm\n## Roster\n500 × Goblin\n")
+	d := ParseDesign(cat, nil, "# Swarm\n## Roster\n500 × Goblin\n")
 	if len(d.Monsters) != 1 || d.Monsters[0].Count != 200 {
 		t.Fatalf("monsters = %+v, want a single entry clamped to 200", d.Monsters)
 	}
@@ -217,7 +217,7 @@ func TestParseDesignClampsCounts(t *testing.T) {
 // as a monster the SRD is missing.
 func TestParseDesignIgnoresProseInTheRoster(t *testing.T) {
 	cat := testCatalog(t)
-	d := ParseDesign(cat, strings.Join([]string{
+	d := ParseDesign(cat, nil, strings.Join([]string{
 		"# Noise",
 		"## Roster",
 		"2 × Goblin",
@@ -250,7 +250,7 @@ func TestParseDesignWaves(t *testing.T) {
 		"4 × Goblin would be prose if it were not a wave line.",
 	}, "\n")
 
-	d := ParseDesign(cat, md)
+	d := ParseDesign(cat, nil, md)
 	if len(d.Waves) != 3 {
 		t.Fatalf("waves = %d, want 3: %+v", len(d.Waves), d.Waves)
 	}
@@ -277,7 +277,7 @@ func TestParseDesignWaves(t *testing.T) {
 // roster but no wave structure, so the verdict prices it the ordinary way.
 func TestParseDesignSingleWaveIsNoWaves(t *testing.T) {
 	cat := testCatalog(t)
-	d := ParseDesign(cat, "# Not really waves\n## Roster\nWave 1: 4 × Goblin\n")
+	d := ParseDesign(cat, nil, "# Not really waves\n## Roster\nWave 1: 4 × Goblin\n")
 	if d.Waves != nil {
 		t.Errorf("waves = %+v, want none for a single-wave roster", d.Waves)
 	}

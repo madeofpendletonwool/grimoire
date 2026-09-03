@@ -105,6 +105,12 @@ type Creature struct {
 	Actions    []NamedText    `json:"actions,omitempty"`
 	Tags       []string       `json:"tags,omitempty"`
 
+	// Homebrew marks a creature that came from a campaign's or a DM's own
+	// designs (homebrew_monsters) rather than the SRD mirror. It rides the
+	// JSON so every surface that renders or lists the creature can keep the
+	// label visible — a homebrew monster is never presented as SRD.
+	Homebrew bool `json:"homebrew,omitempty"`
+
 	// The statblock engine's half.
 	Abilities    *statblock.Abilities `json:"abilities,omitempty"`
 	Saves        map[string]int       `json:"saves,omitempty"`  // "str"..."cha" -> total bonus
@@ -842,18 +848,101 @@ type scored struct {
 	score float64
 }
 
+// Overlay is an explicit homebrew layer for the catalog's reads: the
+// creatures a DM (or one of their campaigns) designed, in the catalog's own
+// Creature shape. It is a value the caller loads and hands to Filter,
+// Lookup and Search — never rows inside the mirror — so Catalog.Sync can
+// never destroy it, and nothing that trusts the mirror mistakes it for SRD.
+// A nil *Overlay is the plain catalog: every existing call site keeps its
+// behaviour.
+//
+// Where a homebrew name collides with an SRD name, the homebrew creature
+// wins in the owner's own scope: the DM's design is the more specific
+// statement about their table. The SRD entry is untouched and still serves
+// every other owner.
+type Overlay struct {
+	list  []Creature
+	byKey map[string]int // squashed name -> index into list
+}
+
+// NewOverlay builds the layer from loaded homebrew creatures. Names are
+// keyed squashed, the way the mirror's own index is.
+func NewOverlay(list []Creature) *Overlay {
+	if len(list) == 0 {
+		return nil
+	}
+	o := &Overlay{list: list, byKey: make(map[string]int, len(list))}
+	for i, c := range list {
+		if k := squash(c.Name); k != "" {
+			if _, dup := o.byKey[k]; !dup {
+				o.byKey[k] = i
+			}
+		}
+	}
+	return o
+}
+
+// Len reports how many homebrew creatures the layer carries.
+func (o *Overlay) Len() int {
+	if o == nil {
+		return 0
+	}
+	return len(o.list)
+}
+
+// Creatures exposes the layer's creatures in load order.
+func (o *Overlay) Creatures() []Creature {
+	if o == nil {
+		return nil
+	}
+	return o.list
+}
+
+// Lookup resolves a homebrew creature by name with the same tolerance the
+// catalog applies to the mirror: squashed equality, plural and possessive
+// noise, then the typo-tolerant gate the card matcher uses.
+func (o *Overlay) Lookup(name string) (Creature, bool) {
+	if o == nil {
+		return Creature{}, false
+	}
+	key := squash(name)
+	if key == "" {
+		return Creature{}, false
+	}
+	if i, ok := o.byKey[key]; ok {
+		return o.list[i], true
+	}
+	for _, suffix := range []string{"s", "es"} {
+		if trimmed := strings.TrimSuffix(key, suffix); trimmed != key && trimmed != "" {
+			if i, ok := o.byKey[trimmed]; ok {
+				return o.list[i], true
+			}
+		}
+	}
+	for i, c := range o.list {
+		if cards.NameMatches(name, c.Name) {
+			return o.list[i], true
+		}
+	}
+	return Creature{}, false
+}
+
 // Filter ranks the catalog against a brief. Scoring is additive and
 // explainable: a type match, a tag match, and a term appearing in the name,
 // type or statblock text each contribute, with the name weighted hardest so
 // "goblin" surfaces goblins before things that merely mention them.
-func (c *Catalog) Filter(f Filter) []Creature {
+//
+// The homebrew overlay, when one is handed, is ranked in the same pass and
+// under the same gates — a designed creature competes with the SRD on its
+// numbers, and carries its homebrew tag through.
+func (c *Catalog) Filter(f Filter, hb *Overlay) []Creature {
 	if c == nil {
 		return nil
 	}
 	c.mu.RLock()
 	list := c.list
 	c.mu.RUnlock()
-	if len(list) == 0 {
+	if len(list) == 0 && hb.Len() == 0 {
 		return nil
 	}
 	if f.Limit <= 0 {
@@ -868,12 +957,12 @@ func (c *Catalog) Filter(f Filter) []Creature {
 	terms := lowerAll(f.Terms)
 
 	var out []scored
-	for _, cr := range list {
+	appendScored := func(cr Creature) {
 		if cr.CRNum < f.MinCR || cr.CRNum > f.MaxCR {
-			continue
+			return
 		}
 		if f.Exclude != nil && f.Exclude[squash(cr.Name)] {
-			continue
+			return
 		}
 		score := 1.0
 		lowType := strings.ToLower(cr.Type)
@@ -886,7 +975,7 @@ func (c *Catalog) Filter(f Filter) []Creature {
 				}
 			}
 			if !matched {
-				continue // an explicit type filter is a gate, not a nudge
+				return // an explicit type filter is a gate, not a nudge
 			}
 			score += 4
 		}
@@ -899,6 +988,12 @@ func (c *Catalog) Filter(f Filter) []Creature {
 			score += termScore(cr, terms)
 		}
 		out = append(out, scored{c: cr, score: score})
+	}
+	for _, cr := range list {
+		appendScored(cr)
+	}
+	for _, cr := range hb.Creatures() {
+		appendScored(cr)
 	}
 
 	sort.SliceStable(out, func(i, j int) bool {
@@ -976,8 +1071,14 @@ func lowerAll(in []string) []string {
 
 // Lookup resolves a creature by name: squashed equality first, then the same
 // typo-tolerant gate the card matcher uses, so a model that writes "Goblin
-// Boss." or "goblin-boss" still lands on the real statblock.
-func (c *Catalog) Lookup(name string) (Creature, bool) {
+// Boss." or "goblin-boss" still lands on the real statblock. When a
+// homebrew overlay is handed, it is asked first — the DM's own design is
+// the more specific answer about their table, and an SRD name it reuses
+// stays untouched for everyone else.
+func (c *Catalog) Lookup(name string, hb *Overlay) (Creature, bool) {
+	if h, ok := hb.Lookup(name); ok {
+		return h, true
+	}
 	if c == nil {
 		return Creature{}, false
 	}
@@ -1007,11 +1108,11 @@ func (c *Catalog) Lookup(name string) (Creature, bool) {
 }
 
 // Search finds creatures by name for the manual picker, ranked the way the
-// remote bestiary ranks: exact, prefix, contains, then typo-tolerant.
-func (c *Catalog) Search(query string, limit int) []MonsterSummary {
-	if c == nil {
-		return nil
-	}
+// remote bestiary ranks: exact, prefix, contains, then typo-tolerant. The
+// homebrew overlay, when one is handed, is searched in the same pass and
+// its hits lead the list — the DM's own monsters are the ones they are most
+// likely reaching for, and every homebrew hit carries its flag.
+func (c *Catalog) Search(query string, limit int, hb *Overlay) []MonsterSummary {
 	key := squash(query)
 	if key == "" {
 		return nil
@@ -1019,9 +1120,38 @@ func (c *Catalog) Search(query string, limit int) []MonsterSummary {
 	if limit <= 0 {
 		limit = maxSearchResults
 	}
-	c.mu.RLock()
-	list := c.list
-	c.mu.RUnlock()
+	if c == nil && hb.Len() == 0 {
+		return nil
+	}
+	var list []Creature
+	if c != nil {
+		c.mu.RLock()
+		list = c.list
+		c.mu.RUnlock()
+	}
+	// The overlay's hits, ranked on their own, lead the result.
+	var out []MonsterSummary
+	if hb.Len() > 0 {
+		out = append(out, searchList(query, key, hb.list, limit)...)
+	}
+	if len(out) >= limit {
+		return out[:limit]
+	}
+	if len(list) > 0 {
+		out = append(out, searchList(query, key, list, limit-len(out))...)
+	}
+	return out
+}
+
+// searchList ranks one creature list against a query — the shared body of
+// the picker's search, used for both the mirror and a homebrew overlay.
+func searchList(query, key string, list []Creature, limit int) []MonsterSummary {
+	if key == "" {
+		return nil
+	}
+	if limit <= 0 {
+		return nil
+	}
 
 	type hit struct {
 		sum  MonsterSummary
@@ -1034,7 +1164,7 @@ func (c *Catalog) Search(query string, limit int) []MonsterSummary {
 			continue
 		}
 		hits = append(hits, hit{
-			sum:  MonsterSummary{Name: cr.Name, CR: cr.CR, XP: cr.XP, Type: cr.Type},
+			sum:  MonsterSummary{Name: cr.Name, CR: cr.CR, XP: cr.XP, Type: cr.Type, Homebrew: cr.Homebrew},
 			tier: tier,
 		})
 	}

@@ -64,15 +64,16 @@ func levelFacts(party []int) []encounter.PCFact {
 	return out
 }
 
-// rosterFacts resolves a roster against the mirrored bestiary. Entries the
-// catalog cannot vouch for are skipped and counted — the analysis prices
-// only statblocks it has, and says what it left out.
-func rosterFacts(cat *encounter.Catalog, monsters []encounter.Monster) (roster []encounter.Combatant, missing int) {
-	if cat == nil {
+// rosterFacts resolves a roster against the mirrored bestiary, the
+// homebrew overlay asked first when one is handed. Entries nothing resolves
+// for are skipped and counted — the analysis prices only statblocks it
+// has, and says what it left out.
+func rosterFacts(cat *encounter.Catalog, hb *encounter.Overlay, monsters []encounter.Monster) (roster []encounter.Combatant, missing int) {
+	if cat == nil && hb.Len() == 0 {
 		return nil, len(monsters)
 	}
 	for _, m := range monsters {
-		c, ok := cat.Lookup(m.Name)
+		c, ok := cat.Lookup(m.Name, hb)
 		if !ok {
 			missing++
 			continue
@@ -149,7 +150,7 @@ func (s *Server) handleTactics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	roster, missing := rosterFacts(s.catalog, monsters)
+	roster, missing := rosterFacts(s.catalog, s.homebrewOverlay(r, strings.TrimSpace(req.CampaignID)), monsters)
 	obj := encounter.Objective{}
 	if req.Objective != nil {
 		obj = *req.Objective

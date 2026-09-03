@@ -92,7 +92,7 @@ func TestCatalogSyncScopesAndPages(t *testing.T) {
 	if cat.Count() != 3 {
 		t.Fatalf("count = %d, want 3 SRD creatures (community entries dropped)", cat.Count())
 	}
-	if _, ok := cat.Lookup("Gribbly"); ok {
+	if _, ok := cat.Lookup("Gribbly", nil); ok {
 		t.Error("a community-document creature reached the catalog")
 	}
 	if cat.Stale() {
@@ -100,7 +100,7 @@ func TestCatalogSyncScopesAndPages(t *testing.T) {
 	}
 
 	// The duplicate Goblin must resolve to the preferred SRD document.
-	g, ok := cat.Lookup("goblin")
+	g, ok := cat.Lookup("goblin", nil)
 	if !ok {
 		t.Fatal("goblin missing after sync")
 	}
@@ -143,7 +143,7 @@ func TestCatalogDerivesTags(t *testing.T) {
 		{"Goblin", []string{"ranged", "ambusher", "darkvision", "minion"}, []string{"legendary", "flying"}},
 	}
 	for _, tc := range cases {
-		c, ok := cat.Lookup(tc.name)
+		c, ok := cat.Lookup(tc.name, nil)
 		if !ok {
 			t.Fatalf("%s missing", tc.name)
 		}
@@ -169,26 +169,26 @@ func TestCatalogFilter(t *testing.T) {
 
 	// A challenge-rating window is a hard bound: nothing outside it may ever
 	// reach the model, because the budget cannot pay for it.
-	for _, c := range cat.Filter(Filter{MinCR: 1, MaxCR: 10}) {
+	for _, c := range cat.Filter(Filter{MinCR: 1, MaxCR: 10}, nil) {
 		if c.CRNum < 1 || c.CRNum > 10 {
 			t.Errorf("%s (CR %s) escaped the window", c.Name, c.CR)
 		}
 	}
 
 	// A type is a gate, not a nudge.
-	got := cat.Filter(Filter{MaxCR: 30, Types: []string{"dragon"}})
+	got := cat.Filter(Filter{MaxCR: 30, Types: []string{"dragon"}}, nil)
 	if len(got) != 1 || got[0].Name != "Young Black Dragon" {
 		t.Errorf("type gate = %+v, want only the dragon", names(got))
 	}
 
 	// The DM's own words outrank everything else.
-	ranked := cat.Filter(Filter{MaxCR: 30, Terms: []string{"lich"}})
+	ranked := cat.Filter(Filter{MaxCR: 30, Terms: []string{"lich"}}, nil)
 	if len(ranked) == 0 || ranked[0].Name != "Lich" {
 		t.Errorf("term ranking = %v, want Lich first", names(ranked))
 	}
 
 	// Exclusions keep a revision from re-proposing what is already fielded.
-	excluded := cat.Filter(Filter{MaxCR: 30, Exclude: map[string]bool{"lich": true}})
+	excluded := cat.Filter(Filter{MaxCR: 30, Exclude: map[string]bool{"lich": true}}, nil)
 	for _, c := range excluded {
 		if c.Name == "Lich" {
 			t.Error("an excluded creature was offered again")
@@ -203,16 +203,16 @@ func TestCatalogSearchAndLookupTolerateNoise(t *testing.T) {
 		t.Fatalf("sync: %v", err)
 	}
 
-	if hits := cat.Search("gob", 0); len(hits) == 0 || hits[0].Name != "Goblin" {
+	if hits := cat.Search("gob", 0, nil); len(hits) == 0 || hits[0].Name != "Goblin" {
 		t.Errorf("search = %+v, want Goblin", hits)
 	}
 	// A model writing a plural or odd punctuation must still resolve.
 	for _, written := range []string{"Goblins", "goblin", "GOBLIN"} {
-		if _, ok := cat.Lookup(written); !ok {
+		if _, ok := cat.Lookup(written, nil); !ok {
 			t.Errorf("lookup(%q) missed", written)
 		}
 	}
-	if _, ok := cat.Lookup("Shadow Wyrm of Nowhere"); ok {
+	if _, ok := cat.Lookup("Shadow Wyrm of Nowhere", nil); ok {
 		t.Error("an invented monster resolved")
 	}
 }
@@ -221,10 +221,10 @@ func TestCatalogSearchAndLookupTolerateNoise(t *testing.T) {
 // path has to survive it rather than panic inside a request.
 func TestNilCatalogIsSafe(t *testing.T) {
 	var cat *Catalog
-	if cat.Count() != 0 || cat.Stale() || len(cat.Filter(Filter{})) != 0 || len(cat.Search("goblin", 0)) != 0 {
+	if cat.Count() != 0 || cat.Stale() || len(cat.Filter(Filter{}, nil)) != 0 || len(cat.Search("goblin", 0, nil)) != 0 {
 		t.Fatal("nil catalog did not degrade quietly")
 	}
-	if _, ok := cat.Lookup("Goblin"); ok {
+	if _, ok := cat.Lookup("Goblin", nil); ok {
 		t.Fatal("nil catalog resolved a name")
 	}
 	if err := cat.EnsureFresh(context.Background()); err != nil {
@@ -240,7 +240,7 @@ func TestBuildPoolStaysInsideTheBudget(t *testing.T) {
 	}
 
 	b := Plan([]int{3, 3, 3, 3}, BandMedium, Objective{})
-	pool := BuildPool(cat, b, ReadIdea(""), nil)
+	pool := BuildPool(cat, nil, b, ReadIdea(""), nil)
 	soloCap := crValue(b.MaxSoloCR)
 	for _, c := range pool.All() {
 		if c.CRNum > soloCap {
@@ -266,7 +266,7 @@ func TestBuildPoolKeepsTheFlavourTheDMAskedFor(t *testing.T) {
 	if err := cat.Sync(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	pool := BuildPool(cat, Plan([]int{3, 3, 3, 3}, BandMedium, Objective{}), ReadIdea("a lich in its tomb"), nil)
+	pool := BuildPool(cat, nil, Plan([]int{3, 3, 3, 3}, BandMedium, Objective{}), ReadIdea("a lich in its tomb"), nil)
 	found := false
 	for _, c := range pool.Flavour {
 		if c.Name == "Lich" {
@@ -284,4 +284,81 @@ func names(list []Creature) []string {
 		out = append(out, c.Name)
 	}
 	return out
+}
+
+// A sync running mid-flight can never destroy or shadow a homebrew
+// monster: homebrew rides beside the mirror as an explicit overlay, and a
+// refresh replaces the SRD rows without touching the layer. Both survive,
+// and stay distinguishable.
+func TestCatalogSyncNeverDestroysHomebrew(t *testing.T) {
+	srv := catalogFixture(t)
+	cat, _ := newCatalog(t, srv.URL)
+	if err := cat.Sync(context.Background()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	homebrew := Creature{
+		Slug: "vashkthegravemarshal", Name: "Vashk, the Grave Marshal", Doc: "homebrew",
+		CR: "7", CRNum: 7, XP: 2900, Type: "undead", Size: "Medium",
+		Tags: []string{"homebrew", "boss"}, Homebrew: true,
+	}
+	// A homebrew creature that reuses an SRD name: the DM's own design is
+	// the more specific answer about their table, in their scope only.
+	srdNamed := Creature{Slug: "goblin", Name: "Goblin", Doc: "homebrew", CR: "7", CRNum: 7,
+		Tags: []string{"homebrew"}, Homebrew: true}
+	overlay := NewOverlay([]Creature{homebrew, srdNamed})
+	if overlay.Len() != 2 {
+		t.Fatalf("overlay carries %d", overlay.Len())
+	}
+
+	v, ok := cat.Lookup("Vashk, the Grave Marshal", overlay)
+	if !ok || !v.Homebrew {
+		t.Fatalf("homebrew lookup: ok=%v creature=%+v", ok, v)
+	}
+	g, ok := cat.Lookup("Goblin", overlay)
+	if !ok || !g.Homebrew || g.Doc != "homebrew" {
+		t.Fatalf("a homebrew name must win over the SRD in its own scope: %+v", g)
+	}
+	// Without the overlay, the SRD's Goblin serves untouched.
+	plain, ok := cat.Lookup("Goblin", nil)
+	if !ok || plain.Homebrew || plain.Doc != "srd-2024" {
+		t.Fatalf("the SRD entry must stay itself for everyone else: %+v", plain)
+	}
+
+	// The sync replaces the mirror wholesale — and the overlay survives it.
+	if err := cat.Sync(context.Background()); err != nil {
+		t.Fatalf("re-sync: %v", err)
+	}
+	if cat.Count() != 3 {
+		t.Fatalf("mirror count = %d, want the same 3 SRD creatures", cat.Count())
+	}
+	if _, ok := cat.Lookup("Vashk, the Grave Marshal", overlay); !ok {
+		t.Fatal("the sync destroyed a homebrew monster")
+	}
+	srdAgain, ok := cat.Lookup("Goblin", nil)
+	if !ok || srdAgain.Homebrew {
+		t.Fatalf("the sync shadowed the SRD with homebrew: %+v", srdAgain)
+	}
+	// Search leads with the owner's own, and every homebrew hit is flagged.
+	hits := cat.Search("vashk", 0, overlay)
+	if len(hits) != 1 || !hits[0].Homebrew {
+		t.Fatalf("search = %+v, want the flagged homebrew hit", hits)
+	}
+	// A homebrew creature competes in the builder's tiers under the same
+	// windows as the SRD.
+	pool := BuildPool(cat, overlay, Plan([]int{9, 9, 9, 9, 9}, BandHard, Objective{}), ReadIdea("an undead commander"), nil)
+	found := false
+	for _, c := range pool.All() {
+		if c.Name == homebrew.Name {
+			found = c.Homebrew
+		}
+	}
+	if !found {
+		t.Fatalf("the homebrew monster never reached the pool: %+v", pool.All())
+	}
+	// A design naming it resolves to the overlay's creature, tagged.
+	d := ParseDesign(cat, overlay, "# The ambush\n\n## Roster\n1 × Vashk, the Grave Marshal\n")
+	if len(d.Monsters) != 1 || d.Monsters[0].Name != homebrew.Name || len(d.Unverified) != 0 {
+		t.Fatalf("design = %+v unverified = %v", d.Monsters, d.Unverified)
+	}
 }

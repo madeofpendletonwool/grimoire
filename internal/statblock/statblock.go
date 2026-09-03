@@ -141,8 +141,12 @@ func (a Action) Legendary() bool { return a.Kind == "LEGENDARY_ACTION" }
 // value — the encounter mirror fills it from the SRD, a designer fills it
 // from a draft.
 type Statblock struct {
-	Name      string    `json:"name"`
-	Size      string    `json:"size,omitempty"`
+	Name string `json:"name"`
+	Size string `json:"size,omitempty"`
+	// Type is the creature's SRD type word ("undead", "dragon") —
+	// informational, the way Speeds and Senses are: the arithmetic never
+	// reads it, the rendering and the homebrew overlay do.
+	Type      string    `json:"type,omitempty"`
 	AC        int       `json:"ac"`
 	HP        int       `json:"hp"`
 	HitDice   string    `json:"hit_dice,omitempty"` // fallback when HP is absent

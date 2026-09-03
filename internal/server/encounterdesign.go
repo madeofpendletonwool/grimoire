@@ -101,6 +101,9 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The caller's homebrew rides the whole design: the pool may offer it,
+	// the roster parse resolves it, and the tactical read prices it.
+	overlay := s.homebrewOverlay(r, req.CampaignID)
 	assumedParty := partySource == "default"
 	obj := encounter.Objective{}
 	if req.Objective != nil {
@@ -108,12 +111,12 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 	}
 	budget := encounter.Plan(party, req.Difficulty, obj)
 	hints := encounter.ReadIdea(req.Idea + " " + req.Feedback)
-	pool := encounter.BuildPool(s.catalog, budget, hints, nil)
+	pool := encounter.BuildPool(s.catalog, overlay, budget, hints, nil)
 	if pool.Len() == 0 {
 		// A gate that narrowed to nothing (an idea naming a creature type the
 		// budget cannot afford) still deserves an encounter: drop the hints
 		// and offer the budget's own shortlist.
-		pool = encounter.BuildPool(s.catalog, budget, encounter.Hints{}, nil)
+		pool = encounter.BuildPool(s.catalog, overlay, budget, encounter.Hints{}, nil)
 	}
 
 	sse := newSSEWriter(w)
@@ -143,7 +146,7 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	design := encounter.ParseDesign(s.catalog, answer)
+	design := encounter.ParseDesign(s.catalog, overlay, answer)
 	// A survive roster priced across its waves, not as one board; every
 	// other fight is priced the way it always was.
 	verdict := encounter.Evaluate(party, design.Monsters)
@@ -160,7 +163,7 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 	if len(tacticsParty) == 0 {
 		tacticsParty = levelFacts(party)
 	}
-	tacticsRoster, missing := rosterFacts(s.catalog, design.Monsters)
+	tacticsRoster, missing := rosterFacts(s.catalog, overlay, design.Monsters)
 	tacticsIn := encounter.TacticsInput{
 		Party:   tacticsParty,
 		Roster:  tacticsRoster,
@@ -440,7 +443,7 @@ func (s *Server) handleEncounterStatblock(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, fmt.Errorf("name is required"))
 		return
 	}
-	c, ok := s.catalog.Lookup(name)
+	c, ok := s.catalog.Lookup(name, s.homebrewOverlay(r, strings.TrimSpace(r.URL.Query().Get("campaign"))))
 	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no SRD statblock for %q", name))
 		return

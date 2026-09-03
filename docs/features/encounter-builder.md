@@ -46,6 +46,10 @@ If you run a campaign, the disclosure under the party boxes lists the ones you k
 
 Saving with a campaign picked stores the encounter against that campaign — the one record a planned fight has, so the continuity engine can check it: an encounter whose roster names a monster with no bestiary entry raises `stat_block_unresolved` in `canon check` whether it arrived as session prep or as a saved record. Without a campaign, everything works exactly as it always did.
 
+## Your own monsters
+
+The [monster designer](../campaign/monster-designer.md) saves homebrew creatures onto your shelf, and they ride every read here as an explicit overlay beside the SRD mirror — never inside it, so a bestiary refresh can never destroy or shadow them. Your monsters (and the named campaign's) lead the picker's search flagged **homebrew**, compete in the pool's tiers under the same CR windows as the SRD, resolve by name when a design's roster names them, and price off their *computed* challenge rating — the calculator's verdict, not the CR the brief asked for. A planned encounter that uses a campaign's own homebrew is resolved for the continuity check, not a `stat_block_unresolved` finding.
+
 ## What the server decides, and what the model decides
 
 The split matters, because it is why the result lands on the difficulty you asked for instead of near it.

@@ -67,11 +67,15 @@ type Server struct {
 	encounters *encounter.Store
 	bestiary   *encounter.Bestiary
 	catalog    *encounter.Catalog
-	carddb     *carddb.Store
-	decks      *deck.Store
-	edhrec     *edhrec.Client
-	shares     *share.Store
-	users      *auth.Store
+	// Homebrew monsters (MAD-382): the overlay the builder's reads and the
+	// monster designer save through. Wired with WithHomebrew; nil disables
+	// both.
+	homebrew *encounter.HomebrewStore
+	carddb   *carddb.Store
+	decks    *deck.Store
+	edhrec   *edhrec.Client
+	shares   *share.Store
+	users    *auth.Store
 	// The campaign graph with its knowledge layer and its session layer
 	// (MAD-303/305/306). Wired with WithCampaign/WithCampaigns; nil
 	// disables the campaign endpoints.
@@ -210,6 +214,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/encounters/{id}", s.handleGetEncounter)
 	mux.HandleFunc("PATCH /api/encounters/{id}", s.handleUpdateEncounter)
 	mux.HandleFunc("DELETE /api/encounters/{id}", s.handleDeleteEncounter)
+	// The monster designer (MAD-382): the homebrew shelf the designer saves
+	// onto, the brief-to-statblock loop, and the campaign placement.
+	mux.HandleFunc("GET /api/monsters", s.handleListMonsters)
+	mux.HandleFunc("POST /api/monsters", s.handleCreateMonster)
+	mux.HandleFunc("POST /api/monsters/generate", s.handleMonsterGenerate)
+	mux.HandleFunc("GET /api/monsters/{id}", s.handleGetMonster)
+	mux.HandleFunc("DELETE /api/monsters/{id}", s.handleDeleteMonster)
+	mux.HandleFunc("POST /api/monsters/{id}/place", s.handleMonsterPlace)
 	mux.HandleFunc("POST /api/chats/{id}/messages/{messageID}/share", s.handleShareMessage)
 	mux.HandleFunc("GET /api/shares", s.handleListShares)
 	mux.HandleFunc("DELETE /api/shares/{token}", s.handleRevokeShare)
