@@ -19,7 +19,7 @@ func TestCatalogMirrorCarriesStatblockFields(t *testing.T) {
 		t.Fatalf("sync: %v", err)
 	}
 
-	g, ok := cat.Lookup("goblin")
+	g, ok := cat.Lookup("goblin", nil)
 	if !ok {
 		t.Fatal("goblin missing")
 	}
@@ -47,7 +47,7 @@ func TestCatalogMirrorCarriesStatblockFields(t *testing.T) {
 		t.Error("a goblin is no spellcaster")
 	}
 
-	l, _ := cat.Lookup("lich")
+	l, _ := cat.Lookup("lich", nil)
 	if !l.Spellcasting {
 		t.Error("the lich's Spellcasting trait must set the flag")
 	}
@@ -78,7 +78,7 @@ func TestCreatureStatblockBridge(t *testing.T) {
 	if err := cat.Sync(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	g, _ := cat.Lookup("goblin")
+	g, _ := cat.Lookup("goblin", nil)
 	s := g.Statblock()
 
 	if s.AC != 15 || s.HP != 7 || s.Abilities.Dex != 14 || s.ProfBonus != 2 {
@@ -96,7 +96,7 @@ func TestCreatureStatblockBridge(t *testing.T) {
 	}
 
 	// A creature whose actions were not parseable rates, but honestly low.
-	l, _ := cat.Lookup("lich")
+	l, _ := cat.Lookup("lich", nil)
 	lr := statblock.ComputeCR(l.Statblock())
 	if lr.Confidence != statblock.ConfidenceLow {
 		t.Errorf("lich confidence = %q, want low — its actions do not parse", lr.Confidence)
@@ -134,7 +134,7 @@ func TestCatalogResyncMigratesMirror(t *testing.T) {
 	if err := cat.Load(); err != nil {
 		t.Fatalf("load downgraded mirror: %v", err)
 	}
-	g, _ := cat.Lookup("goblin")
+	g, _ := cat.Lookup("goblin", nil)
 	if len(g.Attacks) != 0 || g.Abilities != nil {
 		t.Fatal("test setup: the downgraded blob should have no statblock fields")
 	}
@@ -148,7 +148,7 @@ func TestCatalogResyncMigratesMirror(t *testing.T) {
 	if cat.Stale() {
 		t.Error("a re-synced mirror must not still report stale")
 	}
-	g, _ = cat.Lookup("goblin")
+	g, _ = cat.Lookup("goblin", nil)
 	if len(g.Attacks) != 1 || g.Abilities == nil {
 		t.Errorf("migrated goblin carries attacks=%d abilities=%+v, want both filled",
 			len(g.Attacks), g.Abilities)
@@ -226,7 +226,7 @@ func TestCatalogStatblockFieldsSurviveReload(t *testing.T) {
 	if reloaded.Stale() {
 		t.Fatal("a freshly written v2 mirror must not report stale after reload")
 	}
-	g, _ := reloaded.Lookup("goblin")
+	g, _ := reloaded.Lookup("goblin", nil)
 	if len(g.Attacks) != 1 {
 		t.Errorf("reloaded goblin attacks = %d, want 1", len(g.Attacks))
 	}

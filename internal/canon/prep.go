@@ -1149,9 +1149,9 @@ func pickPrepRoster(cat *encounter.Catalog, budget encounter.Budget, idea string
 		return nil
 	}
 	hints := encounter.ReadIdea(idea)
-	pool := encounter.BuildPool(cat, budget, hints, nil)
+	pool := encounter.BuildPool(cat, nil, budget, hints, nil)
 	if pool.Len() == 0 {
-		pool = encounter.BuildPool(cat, budget, encounter.Hints{}, nil)
+		pool = encounter.BuildPool(cat, nil, budget, encounter.Hints{}, nil)
 	}
 	count := defaultMonstersPerEnc
 	for _, sh := range budget.Shapes {

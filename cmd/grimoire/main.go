@@ -1553,6 +1553,7 @@ func runServe() error {
 	srv = srv.WithCampaign(campaigns, gameSessions)
 	srv = srv.WithFactions(factions)
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()), bestiary)
+	srv = srv.WithHomebrew(encounter.NewHomebrewStore(store.DB()))
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)
