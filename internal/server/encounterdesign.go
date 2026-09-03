@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 )
 
@@ -96,7 +97,7 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	party, partySource, partyLine, ok := s.resolveDesignParty(w, r, req.CampaignID, req.Party)
+	party, partySource, partyLine, partyTable, ok := s.resolveDesignParty(w, r, req.CampaignID, req.Party)
 	if !ok {
 		return
 	}
@@ -130,7 +131,7 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
 	defer cancel()
 	answer, streamErr := s.llm.StreamPrompt(ctx, encounterDesignSystemPrompt,
-		designUserPrompt(req, budget, hints, pool, obj),
+		designUserPrompt(req, budget, hints, pool, obj, partyFacts(partyTable)),
 		func(text string) error {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -149,6 +150,26 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 	if obj.Normalized().Kind == encounter.Survive && len(design.Waves) >= 2 {
 		verdict = encounter.EvaluateWaves(party, design.Waves)
 	}
+
+	// The tactical analysis (MAD-381): the server's read of what this roster
+	// will do and to whom, over the statblocks the design chose and the
+	// party block, with the terrain when the objective generated one. The
+	// model's Tactics prose is gated against it — any figure it asserted
+	// that traces to no derivation rejects the prose, never the analysis.
+	tacticsParty := partyFacts(partyTable)
+	if len(tacticsParty) == 0 {
+		tacticsParty = levelFacts(party)
+	}
+	tacticsRoster, missing := rosterFacts(s.catalog, design.Monsters)
+	tacticsIn := encounter.TacticsInput{
+		Party:   tacticsParty,
+		Roster:  tacticsRoster,
+		Terrain: budget.Terrain,
+		Waves:   budget.Waves,
+	}
+	analysis := encounter.Analyze(tacticsIn)
+	appendMissingCaveat(analysis, missing)
+
 	payload := map[string]any{
 		"name":       design.Name,
 		"monsters":   design.Monsters,
@@ -157,6 +178,7 @@ func (s *Server) handleEncounterDesign(w http.ResponseWriter, r *http.Request) {
 		"verdict":    verdict,
 		"budget":     budget,
 		"party":      party,
+		"tactics":    withProse(tacticsIn, analysis, design.Prose),
 	}
 	if obj.Normalized().Kind != encounter.Defeat {
 		// The fight is about something: the structured objective for the
@@ -189,6 +211,7 @@ STRICT RULES
 3. Hit the budget. Pick one of the offered shapes (or blend two — a boss plus minions is a blend of solo and horde) and keep the encounter's total raw XP close to that shape's allowance. The server recomputes the difficulty and shows the DM whether you landed it.
 4. The DM's idea is the brief. Honour it — the creatures, the mood, the setting. If they gave no idea at all, invent one worth running rather than asking them for more.
 5. Keep the whole reply under 450 words. A DM is skimming this at the table.
+6. The "## Tactics" section may not contain a single digit. Every number in this encounter is the server's; yours is the story. Spell counts as words ("both shamans", "three waves"). The server checks your tactics against its own arithmetic, and a prose with an asserted figure in it is shown to the DM as rejected.
 
 FORMAT — Markdown, exactly these sections, in this order:
 
@@ -205,7 +228,7 @@ N × Creature Name
 Two or three sentences on the battlefield: one feature that changes how the fight plays (cover, height, water, darkness, a hazard), stated concretely with distances.
 
 ## Tactics
-Three or four short lines on how the monsters actually fight — opening move, what they do when hurt, whether they flee or fight to the death. Name creatures from the roster and reference their real abilities.
+Three or four short lines on how the monsters actually fight — opening move, what they do when hurt, whether they flee or fight to the death. Name creatures from the roster and reference their real abilities, and write from the party facts and statblocks you were handed: who the pack's output actually threatens, and what the party can and cannot answer it with. Not a single digit (rule 6) — the server shows the DM the numbers itself.
 
 ## Twist
 One sentence: something that could turn the fight sideways — a reinforcement, a hostage, a collapse, a reason to talk instead.
@@ -219,14 +242,17 @@ Write like an experienced DM handing a colleague a prepped encounter: concrete, 
 // fact, and the shortlist tiered by the slot each creature can fill. A
 // non-defeat objective adds its own blocks — what the fight is about, the
 // terrain generated with it, and the roster format a survive fight needs —
-// and a defeat objective adds nothing at all.
-func designUserPrompt(req designRequest, b encounter.Budget, h encounter.Hints, pool encounter.Pool, obj encounter.Objective) string {
+// and a defeat objective adds nothing at all. Party facts ride when the
+// party block declared anything: the tactics prose is written against real
+// armour classes and weak saves, not invented ones.
+func designUserPrompt(req designRequest, b encounter.Budget, h encounter.Hints, pool encounter.Pool, obj encounter.Objective, facts []encounter.PCFact) string {
 	var sb strings.Builder
 
 	fmt.Fprintf(&sb, "PARTY: %d characters, levels %s (average %.1f)\n",
 		b.PartySize, levelList(b.Party), b.AvgLevel)
 	fmt.Fprintf(&sb, "TARGET DIFFICULTY: %s\n\n", b.Band)
 
+	writePartyFacts(&sb, facts)
 	writeObjectiveBlock(&sb, obj, b)
 
 	sb.WriteString("BUDGET (2014 DMG, computed by the server — treat as fact):\n")
@@ -284,6 +310,56 @@ func designUserPrompt(req designRequest, b encounter.Budget, h encounter.Hints, 
 
 	sb.WriteString("\nDesign the encounter now, in the exact format given.")
 	return sb.String()
+}
+
+// writePartyFacts hands the model the party block's mechanical sheet: who
+// the tactics prose is written against. Only declared fields ride — an
+// undeclared armour class stays unknown rather than becoming a number.
+func writePartyFacts(sb *strings.Builder, facts []encounter.PCFact) {
+	usable := 0
+	for _, pc := range facts {
+		if pc.AC > 0 || pc.MaxHP > 0 || len(pc.Saves) > 0 || pc.Class != "" {
+			usable++
+		}
+	}
+	if usable == 0 {
+		return
+	}
+	sb.WriteString("PARTY FACTS (from the party block — treat as fact; the Tactics section is written against these):\n")
+	for _, pc := range facts {
+		var bits []string
+		if pc.Class != "" && pc.Level > 0 {
+			bits = append(bits, fmt.Sprintf("%s %d", pc.Class, pc.Level))
+		}
+		if pc.AC > 0 {
+			bits = append(bits, fmt.Sprintf("AC %d", pc.AC))
+		}
+		if pc.MaxHP > 0 {
+			bits = append(bits, fmt.Sprintf("%d hp", pc.MaxHP))
+		}
+		if worst, bonus := weakestSave(pc.Saves); worst != "" {
+			bits = append(bits, fmt.Sprintf("weakest save %s %+d", worst, bonus))
+		}
+		if len(bits) > 0 {
+			fmt.Fprintf(sb, "- %s: %s\n", pc.Name, strings.Join(bits, ", "))
+		}
+	}
+	sb.WriteString("\n")
+}
+
+// weakestSave names the pc's lowest declared save — the one a rider wants.
+func weakestSave(saves map[string]int) (string, int) {
+	worst, bonus := "", 0
+	for _, ab := range []string{"str", "dex", "con", "int", "wis", "cha"} {
+		v, ok := saves[ab]
+		if !ok {
+			continue
+		}
+		if worst == "" || v < bonus {
+			worst, bonus = strings.ToUpper(ab), v
+		}
+	}
+	return worst, bonus
 }
 
 // writeObjectiveBlock tells the model what the fight is about and which of
@@ -448,21 +524,23 @@ func (s *Server) handleEncounterBudget(w http.ResponseWriter, r *http.Request) {
 // accepted.
 //
 // The returned source is "request", "campaign" or "default"; the line is the
-// "from your campaign — …" note, empty unless the party came from one.
-func (s *Server) resolveDesignParty(w http.ResponseWriter, r *http.Request, campaignID string, sent []int) (party []int, source, line string, ok bool) {
+// "from your campaign — …" note, empty unless the party came from one. The
+// table is the campaign's full party block when one was read — the tactical
+// analysis aims at it — and nil otherwise.
+func (s *Server) resolveDesignParty(w http.ResponseWriter, r *http.Request, campaignID string, sent []int) (party []int, source, line string, table *campaign.PartyTable, ok bool) {
 	if strings.TrimSpace(campaignID) != "" {
-		table := s.campaignParty(w, r, campaignID)
+		table = s.campaignParty(w, r, campaignID)
 		if table == nil {
-			return nil, "", "", false
+			return nil, "", "", nil, false
 		}
 		if len(sent) == 0 {
 			if levels := table.Levels(); len(levels) > 0 {
-				return levels, "campaign", partyLabel(levels), true
+				return levels, "campaign", partyLabel(levels), table, true
 			}
 		}
 	}
 	if len(sent) > 0 {
-		return sent, "request", "", true
+		return sent, "request", "", nil, true
 	}
-	return append([]int(nil), encounter.DefaultParty...), "default", "", true
+	return append([]int(nil), encounter.DefaultParty...), "default", "", nil, true
 }

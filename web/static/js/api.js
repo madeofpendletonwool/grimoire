@@ -169,6 +169,24 @@ export const api = {
 			signal,
 		}).then(json),
 
+	// The tactical analysis (MAD-381): what this roster will do and to whom,
+	// always the server's arithmetic, recomputed as the roster is edited.
+	// A campaign id fills the party block in (DM scope); the objective
+	// carries the wave note for a survive fight.
+	encounterTactics: (party, monsters, campaignId, objective, terrain, signal) =>
+		fetch("/api/encounters/tactics", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				party,
+				monsters,
+				campaign_id: campaignId || "",
+				objective: objective || { kind: "defeat" },
+				...(terrain ? { terrain } : {}),
+			}),
+			signal,
+		}).then(json),
+
 	listEncounters: () => fetch("/api/encounters").then(json),
 
 	getEncounter: (id) => fetch(`/api/encounters/${encodeURIComponent(id)}`).then(json),
