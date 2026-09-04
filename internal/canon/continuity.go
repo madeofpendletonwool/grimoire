@@ -64,12 +64,11 @@ var deathPredicates = map[string]bool{
 }
 
 // possessionPredicates are the fact predicates read as "this entity is
-// somewhere": held_by, kept_in, located_in and their kin.
-var possessionPredicates = map[string]bool{
-	"held_by": true, "carried_by": true, "possessed_by": true, "bears": true,
-	"holds": true, "has": true, "keeps": true, "kept_in": true,
-	"stored_in": true, "stashed_in": true, "hidden_in": true, "located_in": true,
-}
+// somewhere": held_by, kept_in, located_in and their kin. The set is the
+// campaign package's shared possession vocabulary (MAD-384) — the loot
+// surface's hand-out fold reads the same predicates, so a hand-out the
+// continuity engine sees is a hand-out the loot view sees, and vice versa.
+var possessionPredicates = campaign.PossessionPredicates
 
 // Prep is the DM's plan for a session: scenes, who is on stage, and what the
 // prep assumes about the world. Refs may be entity ids or names as written —
@@ -398,7 +397,7 @@ func partyKnownHolder(snap *Snapshot, idx *prepIndex, itemID string) (string, st
 // normalizePredicate lowercases and trims a predicate so the closed
 // vocabularies match what free-form authoring actually produces.
 func normalizePredicate(p string) string {
-	return strings.ToLower(strings.TrimSpace(p))
+	return campaign.NormalizePredicate(p)
 }
 
 /* ---------- the store entry point ---------- */

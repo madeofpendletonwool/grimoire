@@ -14,6 +14,7 @@ func (c Creature) Statblock() statblock.Statblock {
 	s := statblock.Statblock{
 		Name:         c.Name,
 		Size:         c.Size,
+		Type:         c.Type,
 		AC:           c.AC,
 		HP:           c.HP,
 		HitDice:      c.HitDice,

@@ -117,6 +117,10 @@ nav:
       - Quests: campaign/quests.md
       - Dungeons: campaign/dungeons.md
       - Encounters: campaign/encounters.md
+      - Monster Designer: campaign/monster-designer.md
+      - Item Designer: campaign/item-designer.md
+      - Homebrew Linter: campaign/homebrew-linter.md
+      - Loot: campaign/loot.md
       - Rumours: campaign/rumors.md
       - Travel: campaign/travel.md
       - The Simulation Tick: campaign/simulation.md
