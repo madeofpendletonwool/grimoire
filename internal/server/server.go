@@ -31,6 +31,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
+	"github.com/madeofpendletonwool/grimoire/internal/items"
 	"github.com/madeofpendletonwool/grimoire/internal/journey"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -71,11 +72,16 @@ type Server struct {
 	// monster designer save through. Wired with WithHomebrew; nil disables
 	// both.
 	homebrew *encounter.HomebrewStore
-	carddb   *carddb.Store
-	decks    *deck.Store
-	edhrec   *edhrec.Client
-	shares   *share.Store
-	users    *auth.Store
+	// The SRD item catalog and homebrew items (MAD-383): the shelf the
+	// picker browses and the item designer compares against, plus the
+	// homebrew overlay and shelf. Wired with WithItems; nil disables both.
+	itemCatalog  *items.Catalog
+	itemHomebrew *items.HomebrewStore
+	carddb       *carddb.Store
+	decks        *deck.Store
+	edhrec       *edhrec.Client
+	shares       *share.Store
+	users        *auth.Store
 	// The campaign graph with its knowledge layer and its session layer
 	// (MAD-303/305/306). Wired with WithCampaign/WithCampaigns; nil
 	// disables the campaign endpoints.
@@ -222,6 +228,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/monsters/{id}", s.handleGetMonster)
 	mux.HandleFunc("DELETE /api/monsters/{id}", s.handleDeleteMonster)
 	mux.HandleFunc("POST /api/monsters/{id}/place", s.handleMonsterPlace)
+	// The item catalog and the item designer (MAD-383): the SRD shelf,
+	// the design comparison, the homebrew shelf and the placement.
+	mux.HandleFunc("GET /api/items", s.handleItems)
+	mux.HandleFunc("POST /api/items/design", s.handleItemDesign)
+	mux.HandleFunc("GET /api/items/homebrew", s.handleListItems)
+	mux.HandleFunc("POST /api/items/homebrew", s.handleCreateItem)
+	mux.HandleFunc("GET /api/items/homebrew/{id}", s.handleGetItem)
+	mux.HandleFunc("DELETE /api/items/homebrew/{id}", s.handleDeleteItem)
+	mux.HandleFunc("POST /api/items/homebrew/{id}/place", s.handleItemPlace)
 	mux.HandleFunc("POST /api/chats/{id}/messages/{messageID}/share", s.handleShareMessage)
 	mux.HandleFunc("GET /api/shares", s.handleListShares)
 	mux.HandleFunc("DELETE /api/shares/{token}", s.handleRevokeShare)
