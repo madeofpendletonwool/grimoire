@@ -86,6 +86,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
+	"github.com/madeofpendletonwool/grimoire/internal/items"
 	"github.com/madeofpendletonwool/grimoire/internal/journey"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
@@ -1425,6 +1426,29 @@ func runServe() error {
 		log.Printf("bestiary ready: %d SRD creatures", bestiary.Count())
 	}
 
+	// The SRD magic items are mirrored the same way (MAD-383): the item
+	// designer's rarity bands and nearest-neighbour reads need the whole
+	// shelf, not one lookup at a time. Same deal as the bestiary: load is
+	// instant, a cold start serves immediately and fetches behind.
+	itemCatalog, err := items.NewCatalog(store.DB(), open5eBaseURL())
+	if err != nil {
+		return err
+	}
+	if err := itemCatalog.Load(); err != nil {
+		log.Printf("magic items load: %v", err)
+	}
+	if itemCatalog.Stale() {
+		go func() {
+			if err := itemCatalog.EnsureFresh(context.Background()); err != nil {
+				log.Printf("magic items sync: %v (the item designer waits for a mirror)", err)
+				return
+			}
+			log.Printf("magic items mirrored: %d SRD items", itemCatalog.Count())
+		}()
+	} else {
+		log.Printf("magic items ready: %d SRD items", itemCatalog.Count())
+	}
+
 	// The deck builder's card database shares it too. An install that indexed
 	// before the deck builder existed has an empty table; populate it once
 	// from MTGJSON rather than reporting the feature unavailable forever.
@@ -1554,6 +1578,7 @@ func runServe() error {
 	srv = srv.WithFactions(factions)
 	srv = srv.WithEncounters(encounters, encounter.NewBestiaryWithBase(open5eBaseURL()), bestiary)
 	srv = srv.WithHomebrew(encounter.NewHomebrewStore(store.DB()))
+	srv = srv.WithItems(itemCatalog, items.NewHomebrewStore(store.DB()))
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)

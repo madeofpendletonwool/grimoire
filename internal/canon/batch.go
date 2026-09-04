@@ -82,6 +82,7 @@ const (
 	BatchSourceRumor       = "rumor"
 	BatchSourceJourney     = "journey"
 	BatchSourceMonster     = "monster"
+	BatchSourceItem        = "item"
 )
 
 // batchSources is the validated source vocabulary.
@@ -90,7 +91,7 @@ var batchSources = map[string]bool{
 	BatchSourceNLCommand: true, BatchSourceSessionPrep: true, BatchSourceTick: true,
 	BatchSourceDowntime: true, BatchSourceQuest: true, BatchSourceLocation: true,
 	BatchSourceDungeon: true, BatchSourceRumor: true, BatchSourceJourney: true,
-	BatchSourceMonster: true,
+	BatchSourceMonster: true, BatchSourceItem: true,
 }
 
 /* ---------- the stored shape ---------- */

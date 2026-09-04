@@ -33,6 +33,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
+	"github.com/madeofpendletonwool/grimoire/internal/items"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
@@ -72,6 +73,9 @@ func constructStores(t *testing.T, store *index.Store) {
 	}
 	if _, err := encounter.NewCatalog(db, "http://127.0.0.1:1/unused"); err != nil {
 		t.Fatalf("bestiary: %v", err)
+	}
+	if _, err := items.NewCatalog(db, "http://127.0.0.1:1/unused"); err != nil {
+		t.Fatalf("magic items: %v", err)
 	}
 	if _, err := carddb.New(db); err != nil {
 		t.Fatalf("carddb: %v", err)
