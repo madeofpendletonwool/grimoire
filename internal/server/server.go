@@ -30,6 +30,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
+	"github.com/madeofpendletonwool/grimoire/internal/homebrew"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/items"
 	"github.com/madeofpendletonwool/grimoire/internal/journey"
@@ -124,6 +125,10 @@ type Server struct {
 	openRegistration bool
 	tmpl             *template.Template
 	static           fs.FS
+	// The homebrew linter (MAD-385) runs from the shared index store, the
+	// homebrew shelves and the model client — no dedicated wiring. The
+	// override exists for tests that script the model pass.
+	lintModelOverride homebrew.ModelClient
 	// rebuild, when wired, rebuilds the rules index from its sources. It backs
 	// the admin's reindex control in Settings; nil disables those endpoints.
 	rebuild func(ctx context.Context) error
@@ -228,6 +233,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/monsters/{id}", s.handleGetMonster)
 	mux.HandleFunc("DELETE /api/monsters/{id}", s.handleDeleteMonster)
 	mux.HandleFunc("POST /api/monsters/{id}/place", s.handleMonsterPlace)
+	// The homebrew linter (MAD-385): a reviewer, not a referee.
+	mux.HandleFunc("POST /api/monsters/{id}/lint", s.handleMonsterLint)
 	// The item catalog and the item designer (MAD-383): the SRD shelf,
 	// the design comparison, the homebrew shelf and the placement.
 	mux.HandleFunc("GET /api/items", s.handleItems)
@@ -237,6 +244,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/items/homebrew/{id}", s.handleGetItem)
 	mux.HandleFunc("DELETE /api/items/homebrew/{id}", s.handleDeleteItem)
 	mux.HandleFunc("POST /api/items/homebrew/{id}/place", s.handleItemPlace)
+	mux.HandleFunc("POST /api/items/homebrew/{id}/lint", s.handleItemLint)
 	mux.HandleFunc("POST /api/chats/{id}/messages/{messageID}/share", s.handleShareMessage)
 	mux.HandleFunc("GET /api/shares", s.handleListShares)
 	mux.HandleFunc("DELETE /api/shares/{token}", s.handleRevokeShare)
@@ -309,6 +317,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{id}/party", s.handleCampaignParty)
 	mux.HandleFunc("GET /api/campaigns/{id}/encounters", s.handleCampaignEncounters)
 	mux.HandleFunc("POST /api/campaigns/{id}/encounters", s.handleCampaignEncounters)
+
+	// Campaign-aware loot (MAD-384): the distribution, the power curve and
+	// the hoard generator, all DM-only — the reads are off the party block
+	// and the event log, and the hoard places behind the review gate.
+	mux.HandleFunc("GET /api/campaigns/{id}/loot/distribution", s.handleLootDistribution)
+	mux.HandleFunc("GET /api/campaigns/{id}/loot/power-curve", s.handleLootPowerCurve)
+	mux.HandleFunc("POST /api/campaigns/{id}/loot/hoard", s.handleLootGenerate)
+	mux.HandleFunc("POST /api/campaigns/{id}/loot/hoard/reroll", s.handleLootReroll)
+	mux.HandleFunc("POST /api/campaigns/{id}/loot/hoard/place", s.handleLootPlace)
 
 	mux.HandleFunc("GET /api/campaigns/{id}/dungeons", s.handleCampaignDungeons)
 	mux.HandleFunc("POST /api/campaigns/{id}/dungeons", s.handleCreateCampaignDungeon)

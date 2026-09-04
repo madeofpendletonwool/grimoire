@@ -11,6 +11,7 @@
 //	grimoire campaign plans    list a campaign's faction plans
 //	grimoire campaign simulate preview a simulation tick — advance the world by N days
 //	grimoire canon check       run the canon engine's deterministic checks
+//	grimoire homebrew lint     lint homebrew monsters and items — a reviewer, not a referee
 //	grimoire [-h]           help
 //
 // Configuration is via environment variables (see .env.example):
@@ -85,6 +86,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/faction"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
+	"github.com/madeofpendletonwool/grimoire/internal/homebrew"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 	"github.com/madeofpendletonwool/grimoire/internal/items"
 	"github.com/madeofpendletonwool/grimoire/internal/journey"
@@ -133,6 +135,10 @@ func main() {
 		if err := runCanon(os.Args[2:]); err != nil {
 			log.Fatalf("canon: %v", err)
 		}
+	case "homebrew":
+		if err := runHomebrew(os.Args[2:]); err != nil {
+			log.Fatalf("homebrew: %v", err)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
 		usage()
@@ -154,8 +160,11 @@ Usage:
   grimoire canon continuity [flags] <id> <prep.json>   pre-session continuity check
   grimoire canon entail [flags] <id> <prose.txt>       entailment pass over prose
   grimoire canon health [flags] [id]          the campaign health report
+  grimoire homebrew lint [monster|item] [id...]   lint homebrew — findings, never a verdict
 
   continuity/entail/health flags: --offline  skip the model pass, deterministic only
+  homebrew lint: with no ids, lints every homebrew record; with a kind,
+  restricts the shelf; the model pass runs only when chat is configured.
 
 Env (see .env.example):
   GRIMOIRE_ADDR, GRIMOIRE_DB, GRIMOIRE_SESSION_TTL, GRIMOIRE_OPEN_REGISTRATION,
@@ -1624,5 +1633,242 @@ func runServe() error {
 		return err
 	}
 	log.Println("shutdown complete")
+	return nil
+}
+
+/* ---------- the homebrew linter ---------- */
+
+func runHomebrew(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: grimoire homebrew lint [monster|item] [id ...]")
+	}
+	switch args[0] {
+	case "lint":
+		return runHomebrewLint(args[1:])
+	default:
+		return fmt.Errorf("unknown homebrew subcommand %q (want lint)", args[0])
+	}
+}
+
+// homebrewLintModel adapts the canon engine's model client onto the
+// linter's, so the write-up pass shares the chat configuration when it
+// is set — and never runs when it is not.
+type homebrewLintModel struct{ m canon.ModelClient }
+
+func (h homebrewLintModel) ModelName() string { return h.m.ModelName() }
+
+func (h homebrewLintModel) Complete(ctx context.Context, system, user string) (homebrew.Completion, error) {
+	c, err := h.m.Complete(ctx, system, user)
+	return homebrew.Completion(c), err
+}
+
+// runHomebrewLint lints homebrew records the way `grimoire canon check`
+// checks campaigns: deterministic output, one line per finding, and a
+// non-zero exit when anything structurally invalid turns up.
+//
+//	grimoire homebrew lint [monster|item] [id ...]
+//
+// With no ids, every homebrew record is linted; with a kind, the shelf
+// is restricted. The structural and computed checks run with no model
+// and no network; retrieval reads the local index; the model pass runs
+// only when chat is configured.
+func runHomebrewLint(args []string) error {
+	kind := ""
+	var ids []string
+	for _, a := range args {
+		switch a {
+		case "monster", "monsters":
+			if kind != "" && kind != "monster" {
+				return fmt.Errorf("lint one kind at a time")
+			}
+			kind = "monster"
+		case "item", "items":
+			if kind != "" && kind != "item" {
+				return fmt.Errorf("lint one kind at a time")
+			}
+			kind = "item"
+		default:
+			ids = append(ids, a)
+		}
+	}
+	if err := ensureDBDir(); err != nil {
+		return err
+	}
+	store, err := index.Open(dbPath())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	db := store.DB()
+	if err := migrate.Up(db); err != nil {
+		return err
+	}
+
+	engine := &homebrew.Engine{Index: store, Corpus: data.CorpusDND}
+	if client := llmClient(); client != nil && client.Configured() {
+		engine.Model = homebrewLintModel{canon.NewLLMModel(client)}
+	} else {
+		log.Printf("no model configured — running the deterministic checks only")
+	}
+
+	monsters := encounter.NewHomebrewStore(db)
+	shelf := items.NewHomebrewStore(db)
+	catalog, err := items.NewCatalog(db, os.Getenv("OPEN5E_BASE_URL"))
+	if err != nil {
+		return err
+	}
+	// Offline by design: the mirror is read, never synced here. An empty
+	// mirror degrades into the report's notices rather than a guess.
+	if err := catalog.Load(); err != nil {
+		return err
+	}
+	corpus := catalog.All()
+	if len(corpus) == 0 {
+		log.Printf("item mirror is empty — the rarity comparison will be skipped")
+	}
+
+	ctx := context.Background()
+	lintErrorCount := 0
+	printReport := func(name, kindLabel, id string, rep *homebrew.Report) {
+		if len(rep.Findings) == 0 && rep.WrittenUp == "" {
+			log.Printf("%s (%s %s): clean", name, kindLabel, id)
+			return
+		}
+		log.Printf("%s (%s %s): %d finding(s)", name, kindLabel, id, len(rep.Findings))
+		for _, f := range rep.Findings {
+			log.Printf("  [%s/%s] %s — %s", f.Severity, f.Check, f.Subject, f.Message)
+			switch {
+			case f.Basis.Arithmetic != "":
+				log.Printf("      basis (%s): %s", f.Basis.Origin, f.Basis.Arithmetic)
+			case f.Basis.Rule != "":
+				log.Printf("      basis (%s): %s", f.Basis.Origin, f.Basis.Rule)
+			case f.Basis.Citation != nil:
+				log.Printf("      basis (%s): %s (%s %s)",
+					f.Basis.Origin, f.Basis.Citation.Title, f.Basis.Citation.Corpus, f.Basis.Citation.Number)
+			}
+			if f.Severity == homebrew.SeverityError {
+				lintErrorCount++
+			}
+		}
+		for _, n := range rep.Notices {
+			log.Printf("  note: %s", n)
+		}
+		switch rep.WrittenUp {
+		case homebrew.WriteUpWritten:
+			log.Printf("  write-up: %s", rep.WriteUp)
+		case homebrew.WriteUpRejected:
+			log.Printf("  write-up rejected by the prose gate: %s", rep.WriteUpNote)
+		}
+	}
+
+	lintMonster := func(owner, id string) error {
+		m, err := monsters.Get(ctx, owner, id)
+		if err != nil {
+			return err
+		}
+		rep := engine.LintMonster(ctx, homebrew.MonsterInput{
+			Statblock:   m.Statblock,
+			RequestedCR: m.RequestedCR,
+		})
+		printReport(m.Name, "monster", m.ID, rep)
+		return nil
+	}
+	lintItem := func(owner, id string) error {
+		m, err := shelf.Get(ctx, owner, id)
+		if err != nil {
+			return err
+		}
+		rep := engine.LintItem(ctx, homebrew.ItemInput{Design: m.Design, Corpus: corpus})
+		printReport(m.Name, "item", m.ID, rep)
+		return nil
+	}
+	ownerOf := func(table, id string) (string, error) {
+		var owner string
+		err := db.QueryRow(`SELECT owner_id FROM `+table+` WHERE id = ?`, id).Scan(&owner)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("%s %s: %w", table, id, campaign.ErrNotFound)
+		}
+		return owner, err
+	}
+
+	switch {
+	case kind == "monster" && len(ids) > 0:
+		for _, id := range ids {
+			owner, err := ownerOf("homebrew_monsters", id)
+			if err != nil {
+				return err
+			}
+			if err := lintMonster(owner, id); err != nil {
+				return err
+			}
+		}
+	case kind == "item" && len(ids) > 0:
+		for _, id := range ids {
+			owner, err := ownerOf("homebrew_items", id)
+			if err != nil {
+				return err
+			}
+			if err := lintItem(owner, id); err != nil {
+				return err
+			}
+		}
+	case len(ids) > 0:
+		return fmt.Errorf("give a kind (monster or item) before specific ids")
+	default:
+		// Everything on both shelves, the way `canon check` walks every
+		// campaign.
+		rows, err := db.Query(`SELECT owner_id, id FROM homebrew_monsters ORDER BY updated_at DESC`)
+		if err != nil {
+			return err
+		}
+		type ref struct{ owner, id string }
+		var monsterRefs, itemRefs []ref
+		for rows.Next() {
+			var r ref
+			if err := rows.Scan(&r.owner, &r.id); err != nil {
+				rows.Close()
+				return err
+			}
+			monsterRefs = append(monsterRefs, r)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows, err = db.Query(`SELECT owner_id, id FROM homebrew_items ORDER BY updated_at DESC`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var r ref
+			if err := rows.Scan(&r.owner, &r.id); err != nil {
+				rows.Close()
+				return err
+			}
+			itemRefs = append(itemRefs, r)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(monsterRefs) == 0 && len(itemRefs) == 0 {
+			log.Printf("no homebrew to lint")
+			return nil
+		}
+		for _, r := range monsterRefs {
+			if err := lintMonster(r.owner, r.id); err != nil {
+				return err
+			}
+		}
+		for _, r := range itemRefs {
+			if err := lintItem(r.owner, r.id); err != nil {
+				return err
+			}
+		}
+	}
+
+	if lintErrorCount > 0 {
+		return fmt.Errorf("%d structurally invalid finding(s) — the linter is a reviewer; fix them or weigh them", lintErrorCount)
+	}
 	return nil
 }
