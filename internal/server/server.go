@@ -35,6 +35,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/items"
 	"github.com/madeofpendletonwool/grimoire/internal/journey"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
+	"github.com/madeofpendletonwool/grimoire/internal/ledger"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
@@ -112,6 +113,10 @@ type Server struct {
 	// density. Wired with WithJourneys (needs the campaign, canon and
 	// knowledge stores); nil disables the journeys endpoints.
 	journeys *journey.Store
+	// The resource ledger (MAD-419): pools, transactions and rests over the
+	// typed sheets. Wired with WithLedger (needs the campaign store and the
+	// canon engine); nil disables the resource endpoints.
+	ledgers *ledger.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -275,6 +280,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{id}/characters/{eid}/sheet", s.handleGetCharacterSheet)
 	mux.HandleFunc("PUT /api/campaigns/{id}/characters/{eid}/sheet", s.handlePutCharacterSheet)
 	mux.HandleFunc("POST /api/campaigns/{id}/characters/import", s.handleImportCharacter)
+	// The resource ledger (MAD-419): the sheet's state as an append-only
+	// log. Players read and spend their own; the DM adjusts anyone, and a
+	// rest — the live button or a model's proposal — is a batch transaction
+	// that advances the clock.
+	mux.HandleFunc("GET /api/campaigns/{id}/characters/{eid}/resources", s.handleCharacterResources)
+	mux.HandleFunc("POST /api/campaigns/{id}/characters/{eid}/resources", s.handleCreateResourcePool)
+	mux.HandleFunc("PATCH /api/campaigns/{id}/characters/{eid}/resources/{pid}", s.handleUpdateResourcePool)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/characters/{eid}/resources/{pid}", s.handleDeleteResourcePool)
+	mux.HandleFunc("POST /api/campaigns/{id}/characters/{eid}/resources/{pid}/transactions", s.handleResourceTransaction)
+	mux.HandleFunc("POST /api/campaigns/{id}/rests", s.handleCampaignRest)
+	mux.HandleFunc("POST /api/campaigns/{id}/rests/propose", s.handleCampaignRestPropose)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts", s.handleCampaignFacts)
 	mux.HandleFunc("POST /api/campaigns/{id}/facts", s.handleCreateCampaignFact)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts/{fid}", s.handleCampaignFact)

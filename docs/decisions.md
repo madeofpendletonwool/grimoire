@@ -689,3 +689,56 @@ portal stage's (MAD-319), not a default set here.
 | Sheet as the payload's top level (the party block's spelling) | Would collide with the legacy keys every existing campaign carries, and force a rewrite of every pc payload to adopt |
 | SQLite generated columns / `json_extract` views over the payload | The tolerant-read rules (number-or-string, per-key problems) are not expressible in SQL without inventing numbers the typed reader rejects |
 | Computing save bonuses and remaining slots into the party view | Saves are a derivation (Stage 3 computes them); remaining slots are ledger state (MAD-419). Storing either twice is the drift this split exists to prevent |
+
+---
+
+## ADR 16 — The resource ledger: transactions, not balances
+
+**Status:** accepted · **Date:** 2026-09-05 · **Issue:** MAD-419
+
+### Context
+
+Stage 1 ([ADR 15](#adr-15--the-typed-character-sheet-payload-block-plus-a-narrow-derived-projection))
+made the sheet the character's definition and explicitly left "what is
+left" out of it. Stage 2 must build that state: spell slots (pact magic
+included), hit dice, ki, rage, ammunition, the purse — and the rests that
+reset them, which are also the moment a campaign's clock moves while the
+party sleeps. The design question is where current values live.
+
+### Decision
+
+**Every tracked thing is a pool** — `{owner, kind, size, recovery:
+short|long|dawn|manual, granularity}` — and **every change is an
+append-only transaction** (spend, regain, set, reset) linked to the session
+event and actor that caused it. There is no balance column anywhere:
+current values are folded from the log on every read (`internal/ledger`),
+byte-stable for the same pools and the same log. The same rule that makes
+a sim tick re-runnable makes "why is the wizard out of 3rd levels?"
+resolve to the actual spends, in order, with provenance.
+
+Pool definitions are **derived from the sheet** where the sheet carries
+numbers (slot levels, total level as hit dice, the purse), re-synced on
+every sheet write with row ids preserved; the DM registers what the sheet
+cannot hold (ki, arrows) through the same grammar. Rests are batch
+transactions whose resets are decided by the recovery grammar alone —
+short rest resets `short`; long rest resets `short`, `long` and `dawn`;
+hit dice are regained by an explicit transaction implementing the 2014
+"up to half, minimum one" rule rather than a grammar special case. A long
+rest advances the campaign clock one day under a new `rest` reason on the
+`clock_advances` ledger (migration `0030`'s CHECK rebuild).
+
+A rest proposed by a machine stages behind the review gate as one canon
+batch (source `rest`, the finalizer pattern the tick, downtime and journey
+set); the DM's live button executes immediately. Players spend their own
+(spend/regain only); the DM adjusts anyone, always as a visible
+transaction.
+
+### Alternatives rejected
+
+| Alternative | Why rejected |
+|---|---|
+| A `current` column updated in place | Two writers and a stale read make "why" unanswerable; the append-only log is the whole point, and derivation is cheap at table scale |
+| Balances as a payload block on the pc | The sheet/definition split ADR 15 pinned; state that edits in place is exactly the drift the split prevents |
+| Hit dice as `long` recovery with a half-size reset | Wrong per the 2014 PHB (they return *up to* half, minimum one); the explicit regain transaction keeps the grammar pure and the number correct |
+| Per-feature rest rules (a `resets_on` table per feature) | The recovery grammar is the one rule; pact magic is just a `short` slot pool, and a special case per feature is the maintenance burden the grammar exists to avoid |
+| Hooking dawn recovery into every clock advance | Would couple the campaign store to the ledger for a vocabulary nothing in the 2014 core uses; dawns reset on the rest that crosses them, and other advances take an explicit, visible transaction |

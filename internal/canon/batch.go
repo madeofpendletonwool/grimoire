@@ -84,6 +84,7 @@ const (
 	BatchSourceMonster     = "monster"
 	BatchSourceItem        = "item"
 	BatchSourceLoot        = "loot"
+	BatchSourceRest        = "rest"
 )
 
 // batchSources is the validated source vocabulary.
@@ -93,6 +94,7 @@ var batchSources = map[string]bool{
 	BatchSourceDowntime: true, BatchSourceQuest: true, BatchSourceLocation: true,
 	BatchSourceDungeon: true, BatchSourceRumor: true, BatchSourceJourney: true,
 	BatchSourceMonster: true, BatchSourceItem: true, BatchSourceLoot: true,
+	BatchSourceRest: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -803,6 +805,12 @@ func (s *Store) finishDecide(ctx context.Context, campaignID string, batch *Batc
 			if s.journeyFinalizer != nil {
 				if err := s.journeyFinalizer.FinalizeJourneyBatch(ctx, out.Batch); err != nil {
 					return nil, fmt.Errorf("finish journey batch %s: %w", out.Batch.ID, err)
+				}
+			}
+		case BatchSourceRest:
+			if s.restFinalizer != nil {
+				if err := s.restFinalizer.FinalizeRestBatch(ctx, out.Batch); err != nil {
+					return nil, fmt.Errorf("finish rest batch %s: %w", out.Batch.ID, err)
 				}
 			}
 		}

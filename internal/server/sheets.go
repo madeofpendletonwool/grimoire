@@ -23,6 +23,7 @@ package server
 // default this issue sets.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -136,15 +137,32 @@ func (s *Server) handlePutCharacterSheet(w http.ResponseWriter, r *http.Request)
 		writeStoreError(w, err)
 		return
 	}
-	if err := sheet.SyncEntity(ctx, s.campaigns.DB(), a.campaign.ID, eid); err != nil {
-		// The sheet is stored; the projection is a cache that rebuilds at
-		// boot. The write succeeded — report it with the cache complaint.
-		read := sheetReadOf(updated)
-		read.Problems = append(read.Problems, err.Error())
+	problems := s.syncSheetDerivations(ctx, a.campaign.ID, eid)
+	read := sheetReadOf(updated)
+	read.Problems = append(read.Problems, problems...)
+	if len(problems) > 0 {
+		// The sheet is stored; the caches are a convenience that rebuilds
+		// at boot. The write succeeded — report it with the complaint.
 		writeJSON(w, http.StatusOK, read)
 		return
 	}
-	writeJSON(w, http.StatusOK, sheetReadOf(updated))
+	writeJSON(w, http.StatusOK, read)
+}
+
+// syncSheetDerivations refreshes the caches a sheet write feeds — the query
+// projection (MAD-418) and the ledger's pool definitions (MAD-419). Both
+// rebuild at boot, so a failure here is a report, never a failed write.
+func (s *Server) syncSheetDerivations(ctx context.Context, campaignID, entityID string) []string {
+	var problems []string
+	if err := sheet.SyncEntity(ctx, s.campaigns.DB(), campaignID, entityID); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if s.ledgers != nil {
+		if err := s.ledgers.SyncEntity(ctx, campaignID, entityID); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	return problems
 }
 
 // importRequest is the import body: the format's name (or "auto"), the
@@ -218,6 +236,9 @@ func (s *Server) handleImportCharacter(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := sheet.SyncEntity(r.Context(), s.campaigns.DB(), a.campaign.ID, entity.ID); err != nil {
 		_ = err // the projection rebuilds at boot; the import itself is done
+	}
+	if s.ledgers != nil {
+		_ = s.ledgers.SyncEntity(r.Context(), a.campaign.ID, entity.ID)
 	}
 	writeJSON(w, http.StatusCreated, importResponse{
 		Entity: toCampaignEntityView(entity, true),
