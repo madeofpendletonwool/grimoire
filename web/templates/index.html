@@ -444,6 +444,25 @@
 					</label>
 					<button type="submit" class="enc-btn">Add to the world</button>
 				</form>
+				<!-- The character import door (MAD-418): a sheet exported from
+				     another tool becomes a typed pc — best-effort, with the
+				     report's honesty about what mapped. DM-only. -->
+				<form class="camp-panel" id="camp-character-import" autocomplete="off" hidden>
+					<h3 class="enc-heading">Import a character</h3>
+					<label class="camp-field"><span>Export file (.json or .xml)</span>
+						<input id="camp-import-file" class="enc-field" type="file" accept=".json,.xml,application/json,text/xml" aria-label="Character export file">
+					</label>
+					<label class="camp-field"><span>Format</span>
+						<select id="camp-import-format" class="enc-field" aria-label="Export format">
+							<option value="auto">Detect</option>
+							<option value="grimoire">Grimoire sheet JSON</option>
+							<option value="roll20">Roll20 OGL export</option>
+							<option value="fc5">Fight Club 5 / GM5 XML</option>
+						</select>
+					</label>
+					<button type="submit" class="enc-btn" id="camp-import-submit">Import</button>
+					<p class="camp-status" id="camp-import-status" hidden></p>
+				</form>
 				<!-- The place designer (MAD-372): a premise becomes a
 				     settlement — the place, its people, its sub-locations,
 				     its hooks and its secrets — computed structure, model

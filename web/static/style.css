@@ -3735,8 +3735,7 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 
 /* ---------- the faction page (MAD-366) ---------- */
 
-.camp-faction { margin-top: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
-.camp-faction-face { display: flex; flex-direction: column; gap: var(--sp-1); }
+.camp-faction { margin-top: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }.camp-faction-face { display: flex; flex-direction: column; gap: var(--sp-1); }
 .camp-faction-truth { color: var(--ink-soft); font-style: italic; }
 .camp-faction-goals { margin: 0; padding-left: 1.2rem; }
 .camp-faction-ties { display: flex; flex-direction: column; gap: var(--sp-1); }
@@ -3753,6 +3752,16 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .camp-plan-step-cost { color: var(--ink-soft); font-size: var(--fs-xs); }
 .camp-plan-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
 .camp-plan-form .enc-field { width: 100%; }
+
+/* ---------- the character page (MAD-418) ---------- */
+
+.camp-character { margin-top: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
+.camp-character-stats { display: flex; flex-direction: column; gap: var(--sp-1); }
+.camp-character-stat { display: flex; align-items: baseline; gap: var(--sp-2); }
+.camp-character-stat-label { font-family: var(--font-pixel); font-size: var(--fs-xs); letter-spacing: 0.04em; color: var(--gold-bright); min-width: 8rem; }
+.camp-character-stat-value { flex: 1; }
+.camp-character-edit { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
+.camp-character-paste { width: 100%; resize: vertical; }
 
 /* ---------- the location page (MAD-370) ---------- */
 

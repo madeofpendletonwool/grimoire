@@ -1,0 +1,69 @@
+<compendium>
+  <!-- A schema-shaped Fight Club 5 / Game Master 5 character export,
+       constructed for the importer's fixture suite: the FC5 app is
+       iOS-only and its exports surface one table at a time, so no single
+       canonical public file exists. The shape is the published schema's
+       (name / race / background / alignment / size / speed / hp / ac /
+       profBonus / stat rows / class rows / save+skill prof flags /
+       spellslot rows / spells / items / features / traits / coin rows);
+       where the FC5 family's exporters disagree the importer reads both
+       spellings and this fixture carries one of each. -->
+  <character>
+    <name>Brannor Steelhelm</name>
+    <race>Mountain Dwarf</race>
+    <background>Soldier</background>
+    <alignment>lawful good</alignment>
+    <size>M</size>
+    <speed>25</speed>
+    <hp>49</hp>
+    <ac>18</ac>
+    <xp>34000</xp>
+    <profBonus>3</profBonus>
+    <stat stat="str" value="17"/>
+    <stat stat="dex" value="10"/>
+    <stat stat="con" value="16"/>
+    <stat stat="int" value="8"/>
+    <stat stat="wis" value="13"/>
+    <stat stat="cha" value="12"/>
+    <class>
+      <name>Fighter</name>
+      <level>8</level>
+      <subclass>Champion</subclass>
+    </class>
+    <save save="str" prof="1">+6</save>
+    <save save="con" prof="1">+6</save>
+    <skill skill="athletics" prof="1">+6</skill>
+    <skill skill="intimidation" prof="1">+4</skill>
+    <spellslot level="1" max="0" used="0"/>
+    <spellslot level="2" max="0" used="0"/>
+    <item>
+      <name>Plate armor</name>
+      <count>1</count>
+      <equipped>true</equipped>
+    </item>
+    <item>
+      <name>Potion of healing</name>
+      <count>3</count>
+    </item>
+    <item>
+      <name>Flame tongue warhammer</name>
+      <count>1</count>
+      <equipped>true</equipped>
+      <attuned>true</attuned>
+    </item>
+    <feature>
+      <name>Second Wind</name>
+      <description>...</description>
+    </feature>
+    <feature>
+      <name>Action Surge</name>
+      <description>...</description>
+    </feature>
+    <trait>
+      <name>Dwarven Resilience</name>
+      <description>...</description>
+    </trait>
+    <coin type="gp" amount="55"/>
+    <coin type="sp" amount="12"/>
+  </character>
+</compendium>

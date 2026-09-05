@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/madeofpendletonwool/grimoire/internal/sheet"
 )
 
 // Entity is a typed node of the graph: pc, npc, faction, location, item,
@@ -84,6 +86,12 @@ func (s *Store) CreateEntity(ctx context.Context, campaignID, kind, name, summar
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("entity commit: %w", err)
+	}
+	if kind == KindPC {
+		// The sheet projection (MAD-418) tracks pcs and nothing else.
+		// Best-effort here: the entity is stored, and the boot sync heals
+		// a row this could not write.
+		_ = sheet.SyncEntity(ctx, s.db, campaignID, e.ID)
 	}
 	return e, nil
 }
@@ -225,6 +233,11 @@ func (s *Store) UpdateEntity(ctx context.Context, campaignID, id string, name, s
 		return nil, fmt.Errorf("entity commit: %w", err)
 	}
 	e.UpdatedAt = now
+	if e.Kind == KindPC {
+		// Same rule as CreateEntity: pcs refresh their projection row;
+		// everything else never has one.
+		_ = sheet.SyncEntity(ctx, s.db, campaignID, e.ID)
+	}
 	return e, nil
 }
 

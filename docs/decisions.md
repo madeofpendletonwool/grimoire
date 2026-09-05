@@ -634,3 +634,58 @@ territory and ADR 8 still governs it.
 - The precedent is bounded. A future module wanting tests must first be
   DOM-free; "make it testable" is a design constraint, not a licence to add a
   harness.
+
+---
+
+## ADR 15 — The typed character sheet: payload block plus a narrow derived projection
+
+**Status:** accepted · **Date:** 2026-09-05 · **Issue:** MAD-418
+
+### Context
+
+The mechanical layer (MAD-417) starts from a `pc` that is a typed entity node
+with a freeform JSON payload. Its first stage must make the character sheet —
+abilities, proficiencies, class levels, spellcasting, inventory — first-class
+data, and decide where it lives. The house pattern (`docs/campaign/model.md`)
+says payload JSON beats a wide table of mostly-NULL columns; but the party
+board and the encounter surfaces want queryable numbers, and a JSON blob per
+row answers no `ORDER BY level` at all.
+
+### Decision
+
+The sheet is a **typed Go struct** (`internal/sheet`) serialized under the pc
+payload's `"sheet"` key — the place-block pattern, not the party block's
+top-level ownership, because a pc payload now carries both spellings and a
+block that owned the top level would collide with its own legacy keys.
+
+`PartyBlockOf` reads **sheet-first**: a payload carrying a sheet is the
+definition (level totals, class, AC, max HP, resistances, inventory names);
+the legacy top-level keys remain the fallback, so every existing campaign
+reads exactly as it did. The mapping is deliberately partial — remaining
+slots, conditions and save bonuses do not map, because they are state or
+derivations, and state belongs to the resource ledger (MAD-419), never to
+the definition.
+
+A **narrow projection table** (`pc_sheet_projection`, migration `0029`)
+carries the queryable numbers — level, a classes label, max hp, ac, and
+`structured`, the unstructured marker made queryable. It is maintained, never
+trusted: every pc entity write refreshes its row, and server start re-derives
+the table whole. Legacy payloads project from their existing keys (reading
+keys that exist is derivation, not invention); a dropped table costs one
+boot, not data. Backfill happens in Go, not SQL, because turning a payload
+into numbers is the typed reader's job with its tolerance rules.
+
+Player scope gets **one deliberate widening**: a character-scoped player may
+read exactly their own bound character's sheet through the player view
+(`knowledge.PlayerView.CharacterSheet`) — no other pc, no other payload key,
+no facts. Writes and imports stay DM-only; the player-edit question is the
+portal stage's (MAD-319), not a default set here.
+
+### Alternatives rejected
+
+| Alternative | Why rejected |
+|---|---|
+| A wide `character_sheets` table, one column per field | Twenty-plus mostly-NULL columns against the house pattern; a sheet and a place block are the same kind of thing, and JSON is the honest container for both |
+| Sheet as the payload's top level (the party block's spelling) | Would collide with the legacy keys every existing campaign carries, and force a rewrite of every pc payload to adopt |
+| SQLite generated columns / `json_extract` views over the payload | The tolerant-read rules (number-or-string, per-key problems) are not expressible in SQL without inventing numbers the typed reader rejects |
+| Computing save bonuses and remaining slots into the party view | Saves are a derivation (Stage 3 computes them); remaining slots are ledger state (MAD-419). Storing either twice is the drift this split exists to prevent |

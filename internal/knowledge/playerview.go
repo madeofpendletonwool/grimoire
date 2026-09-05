@@ -66,6 +66,11 @@ type PlayerView interface {
 	// edges, and public quests with their site links. Secrets, private
 	// truth and unmet entities are absent because their rows never load.
 	PlaceSnapshot(ctx context.Context, campaignID, locationID string) (*campaign.Snapshot, error)
+	// CharacterSheet reads the caller's own bound character's typed sheet
+	// (MAD-418): the pc payload's "sheet" block and nothing else — no
+	// other pc, no other payload key, no facts. Party and npc scopes are
+	// refused; a character scope asking for any id but its own is refused.
+	CharacterSheet(ctx context.Context, campaignID, characterID string) (*SheetRead, error)
 }
 
 // playerView is the PlayerView implementation: the wide store's scoped reads
