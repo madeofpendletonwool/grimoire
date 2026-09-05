@@ -125,10 +125,19 @@ func (t *PartyTable) Size() int { return len(t.Levels()) }
 // nothing else: a payload whose "ac" is the string "high" still yields the
 // level, the class and the saves. Problems name the entity and the key, and
 // an entity that is not a live pc yields the zero block and no problems.
+//
+// Since the typed sheet (MAD-418) the sheet is the definition: a payload
+// carrying one is read through it and the legacy keys below are the
+// fallback. See internal/campaign/sheet.go for what maps and what
+// deliberately does not (state — remaining slots, conditions — is the
+// ledger's, not the sheet's).
 func PartyBlockOf(e *Entity) (PartyBlock, []PartyProblem) {
 	var b PartyBlock
 	if e == nil || e.Kind != KindPC {
 		return b, nil
+	}
+	if s, has, err := SheetOf(e); has && err == nil {
+		return partyBlockOfSheet(e, s)
 	}
 	var problems []PartyProblem
 	bad := func(field, detail string) {

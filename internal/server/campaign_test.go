@@ -290,6 +290,8 @@ func TestPlayerCannotWriteAnything(t *testing.T) {
 		{"update entity", http.MethodPatch, base + "/entities/" + f.dukeID, `{"summary":"x"}`},
 		{"delete entity", http.MethodDelete, base + "/entities/" + f.dukeID, ""},
 		{"add alias", http.MethodPost, base + "/entities/" + f.dukeID + "/names", `{"name":"Aldric"}`},
+		{"put character sheet", http.MethodPut, base + "/characters/" + f.pcID + "/sheet", `{"ac":20}`},
+		{"import character", http.MethodPost, base + "/characters/import", `{"format":"grimoire","data":{"ac":20}}`},
 		{"create fact", http.MethodPost, base + "/facts", `{"subject":"` + f.dukeID + `","predicate":"is","object_literal":"tested","statement":"tested"}`},
 		{"supersede fact", http.MethodPost, base + "/facts/" + f.publicID + "/supersede", `{"subject":"` + f.dukeID + `","predicate":"is","object_literal":"x","statement":"x"}`},
 		{"create event", http.MethodPost, base + "/events", `{"summary":"something happened"}`},

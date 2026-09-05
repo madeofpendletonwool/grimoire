@@ -269,6 +269,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/campaigns/{id}/entities/{eid}", s.handleUpdateCampaignEntity)
 	mux.HandleFunc("DELETE /api/campaigns/{id}/entities/{eid}", s.handleDeleteCampaignEntity)
 	mux.HandleFunc("POST /api/campaigns/{id}/entities/{eid}/names", s.handleAddEntityName)
+	// The typed character sheet (MAD-418): the pc's definition as data.
+	// Reads are the DM's or the owning player's; writes and imports are
+	// DM-only. "import" is a literal, so it wins over {eid} beside it.
+	mux.HandleFunc("GET /api/campaigns/{id}/characters/{eid}/sheet", s.handleGetCharacterSheet)
+	mux.HandleFunc("PUT /api/campaigns/{id}/characters/{eid}/sheet", s.handlePutCharacterSheet)
+	mux.HandleFunc("POST /api/campaigns/{id}/characters/import", s.handleImportCharacter)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts", s.handleCampaignFacts)
 	mux.HandleFunc("POST /api/campaigns/{id}/facts", s.handleCreateCampaignFact)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts/{fid}", s.handleCampaignFact)

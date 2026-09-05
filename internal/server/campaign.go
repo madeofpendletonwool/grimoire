@@ -18,17 +18,20 @@ package server
 // hint that the campaign exists.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/clock"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
+	"github.com/madeofpendletonwool/grimoire/internal/sheet"
 )
 
 // WithCampaigns wires the campaign graph and the knowledge layer. Separate
@@ -37,6 +40,13 @@ import (
 func (s *Server) WithCampaigns(store *campaign.Store, knowledge *knowledge.Store) *Server {
 	s.campaigns = store
 	s.knowledge = knowledge
+	// The sheet projection (MAD-418) is a cache the payloads derive; a boot
+	// re-derives it whole, so a dropped or stale table never outlives a
+	// restart. Best-effort by design: a failed sync costs one boot's worth
+	// of stale projection rows, not a server that will not start.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = sheet.SyncProjections(ctx, store.DB())
 	return s
 }
 

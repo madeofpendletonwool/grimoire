@@ -303,6 +303,27 @@ export const api = {
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/entities` +
 			(kind ? `?kind=${encodeURIComponent(kind)}` : "")).then(json),
 
+	// The typed character sheet (MAD-418): the pc's definition as data. The
+	// read is the DM's or the owning player's; writes and imports are the
+	// DM's. `data` is the export verbatim (an object for JSON formats, a
+	// string for XML).
+	characterSheet: (cid, eid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/characters/${encodeURIComponent(eid)}/sheet`).then(json),
+
+	characterSheetPut: (cid, eid, sheet) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/characters/${encodeURIComponent(eid)}/sheet`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(sheet),
+		}).then(json),
+
+	characterImport: (cid, format, data, name) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/characters/import`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ format, data, name: name || "" }),
+		}).then(json),
+
 	campaignEntity: (cid, eid) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/entities/${encodeURIComponent(eid)}`).then(json),
 

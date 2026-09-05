@@ -60,6 +60,7 @@ function wire() {
 		selectEntity(row.dataset.eid);
 	});
 	$("camp-new-entity").addEventListener("submit", onCreateEntity);
+	$("camp-character-import").addEventListener("submit", onImportCharacter);
 	$("camp-fact-form").addEventListener("submit", onSubmitFact);
 	// The calendar (MAD-365): clock reads, schedule writes and inline edits,
 	// and advancing the days — all delegated so re-renders need no re-binds.
@@ -195,6 +196,7 @@ async function selectCampaign(id) {
 	supersedeTarget = null;
 	renderMeta();
 	$("camp-new-entity").hidden = !isDM();
+	$("camp-character-import").hidden = !isDM();
 	$("camp-fact-form").hidden = !isDM();
 	$("camp-members-panel").hidden = !isDM();
 	$("camp-cmd-form").hidden = !isDM();
@@ -444,6 +446,47 @@ async function onCreateEntity(e) {
 	}
 }
 
+// The character import door (MAD-418): read the export file, post it
+// through the import endpoint, and let the server's report speak — what
+// mapped arrives as the sheet, what did not is named in the status line.
+async function onImportCharacter(e) {
+	e.preventDefault();
+	const status = $("camp-import-status");
+	status.hidden = false;
+	status.classList.remove("warn");
+	const file = $("camp-import-file").files[0];
+	if (!file) {
+		status.classList.add("warn");
+		status.textContent = "Choose an export file first.";
+		return;
+	}
+	status.textContent = `Reading ${file.name}…`;
+	const text = await file.text();
+	// JSON travels as parsed data; XML travels as its text — the endpoint
+	// accepts both spellings of the data field.
+	let data = text;
+	if ($("camp-import-format").value !== "fc5" && text.trimStart().startsWith("{")) {
+		try {
+			data = JSON.parse(text);
+		} catch (err) {
+			status.classList.add("warn");
+			status.textContent = `That file is not valid JSON: ${err.message}`;
+			return;
+		}
+	}
+	try {
+		const res = await api.characterImport(current.id, $("camp-import-format").value, data, "");
+		const mapped = (res.report && res.report.mapped) || [];
+		const unmapped = (res.report && res.report.unmapped) || [];
+		status.textContent = `${res.entity.name} imported${mapped.length ? ` — mapped: ${mapped.join(", ")}` : ""}${unmapped.length ? `; left behind: ${unmapped.join(", ")}` : ""}.`;
+		$("camp-import-file").value = "";
+		await loadEntities();
+	} catch (err) {
+		status.classList.add("warn");
+		status.textContent = err.message;
+	}
+}
+
 async function runSearch(q) {
 	const hits = clear($("camp-hits"));
 	if (!q) {
@@ -533,6 +576,17 @@ function renderSheet() {
 		mount.append(el("p", { class: "camp-status", text: "Opening the dossier…" }));
 		body.append(mount);
 		loadFactionDossier(selected.id);
+	}
+
+	// The character page (MAD-418): the typed sheet — abilities, classes,
+	// defences, spellcasting, inventory — or the honest marker when the pc
+	// predates typed sheets. Loaded async into its own section, the faction
+	// and location pattern.
+	if (selected.kind === "pc") {
+		const mount = el("div", { class: "camp-character", attrs: { id: "camp-character-body" } });
+		mount.append(el("p", { class: "camp-status", text: "Opening the sheet…" }));
+		body.append(mount);
+		loadCharacterSheet(selected.id);
 	}
 
 	// The location page (MAD-370): the place block as an editable form and
@@ -2629,6 +2683,148 @@ async function loadSheetRumors(eid) {
 	box.append(list.children.length
 		? list
 		: el("p", { class: "camp-status", text: "Nothing yet — the mill is quiet about them." }));
+}
+
+/* ---------- the character page (MAD-418) ---------- */
+
+// The typed sheet, rendered as a read: abilities, classes, defences,
+// spellcasting, features, inventory, currency. The DM can replace the
+// sheet wholesale by pasting a Grimoire sheet JSON; the import door (from a
+// Roll20 or FC5 export) lives in the entity list's add form, where new
+// characters are made. An unstructured pc says so — the marker is the
+// product, not an empty widget pretending.
+let characterSheetRead = null; // the last sheet body for the selected pc
+
+async function loadCharacterSheet(eid) {
+	const mount = document.getElementById("camp-character-body");
+	if (!mount || !current || !selected || selected.id !== eid) return;
+	let data;
+	try {
+		data = await api.characterSheet(current.id, eid);
+	} catch (err) {
+		clear(mount).append(el("p", { class: "camp-status warn", text: err.message }));
+		return;
+	}
+	if (!selected || selected.id !== eid) return; // the sheet moved on
+	characterSheetRead = data;
+	renderCharacterSheet(clear(mount));
+}
+
+function abilityLine(s) {
+	const ab = s.abilities || {};
+	const names = [["STR", ab.str], ["DEX", ab.dex], ["CON", ab.con], ["INT", ab.int], ["WIS", ab.wis], ["CHA", ab.cha]];
+	const parts = names.filter(([, v]) => v).map(([k, v]) => `${k} ${v}`);
+	return parts.join(" · ");
+}
+
+function classesLine(s) {
+	return (s.classes || []).map((c) => `${c.class}${c.level ? " " + c.level : ""}${c.subclass ? " (" + c.subclass + ")" : ""}`).join(" / ");
+}
+
+function sheetRow(label, value) {
+	const row = el("div", { class: "camp-character-stat" });
+	row.append(el("span", { class: "camp-character-stat-label", text: label }));
+	row.append(el("span", { class: "camp-character-stat-value", text: value }));
+	return row;
+}
+
+function renderCharacterSheet(mount) {
+	const data = characterSheetRead;
+	if (!data) return;
+	const s = data.structured ? data.sheet || {} : null;
+	const wrap = el("div", { class: "camp-character-body" });
+
+	if (!s) {
+		wrap.append(el("p", { class: "camp-status", text: "Unstructured sheet — this character predates typed sheets. Import or fill one in below." }));
+		if (isDM()) wrap.append(sheetPasteForm());
+		mount.append(wrap);
+		return;
+	}
+
+	const head = el("div", { class: "camp-character-stats" });
+	const stats = [["Classes", classesLine(s)], ["Level", String(s.classes || []).reduce((n, c) => n + (c.level || 0), 0) || ""],
+		["AC", s.ac ? String(s.ac) : ""], ["Max HP", s.max_hp ? String(s.max_hp) : ""],
+		["Race", s.race || ""], ["Background", s.background || ""], ["Abilities", abilityLine(s)]]
+		.filter(([, v]) => v);
+	for (const [label, value] of stats) head.append(sheetRow(label, value));
+	wrap.append(section("The sheet", head));
+
+	if (s.spellcasting) {
+		const sc = el("div", { class: "camp-character-stats" });
+		if (s.spellcasting.ability) sc.append(sheetRow("Casting ability", s.spellcasting.ability.toUpperCase()));
+		if (s.spellcasting.dc) sc.append(sheetRow("Save DC", String(s.spellcasting.dc)));
+		if (s.spellcasting.attack_bonus) sc.append(sheetRow("Spell attack", "+" + s.spellcasting.attack_bonus));
+		const slots = Object.entries(s.spellcasting.slots || {}).sort((a, b) => a[0] - b[0]).map(([lvl, n]) => `${lvl}: ${n}`).join(" · ");
+		if (slots) sc.append(sheetRow("Slots", slots));
+		if ((s.spellcasting.known || []).length) sc.append(sheetRow("Known", s.spellcasting.known.map((e) => e.name).join(", ")));
+		if ((s.spellcasting.prepared || []).length) sc.append(sheetRow("Prepared", s.spellcasting.prepared.map((e) => e.name).join(", ")));
+		wrap.append(section("Spellcasting", sc));
+	}
+
+	const listLine = (items, labelOf) => {
+		const list = el("div", { class: "camp-facts" });
+		for (const item of items) {
+			list.append(el("p", { class: "prose", text: labelOf(item) }));
+		}
+		return list;
+	};
+	if ((s.features || []).length || (s.traits || []).length) {
+		const feats = listLine([...(s.traits || []), ...(s.features || [])], (f) => f.note ? `${f.name} — ${f.note}` : f.name);
+		wrap.append(section("Features & traits", feats));
+	}
+	if ((s.inventory || []).length) {
+		const inv = listLine(s.inventory, (it) => {
+			const bits = [it.name + (it.qty > 1 ? ` x${it.qty}` : "")];
+			if (it.equipped) bits.push("equipped");
+			if (it.attuned) bits.push("attuned");
+			if (it.notes) bits.push(it.notes);
+			return bits.join(" · ");
+		});
+		wrap.append(section("Inventory", inv));
+	}
+	const coins = s.currency ? Object.entries(s.currency).filter(([, v]) => v).map(([k, v]) => `${v} ${k}`).join(", ") : "";
+	if (coins) wrap.append(section("Currency", (() => { const l = el("div", { class: "camp-facts" }); l.append(el("p", { class: "prose", text: coins })); return l; })()));
+	if (s.notes) {
+		const notes = el("div", { class: "camp-facts" });
+		notes.append(el("p", { class: "prose", text: s.notes }));
+		wrap.append(section("Notes", notes));
+	}
+
+	if (isDM()) wrap.append(sheetPasteForm());
+	mount.append(wrap);
+}
+
+// sheetPasteForm is the DM's whole-sheet editor: paste a Grimoire sheet
+// JSON, it validates server-side and replaces the sheet. Field-level
+// editing is the portal's job (MAD-319), not the browser's.
+function sheetPasteForm() {
+	const form = el("div", { class: "camp-character-edit" });
+	const area = el("textarea", { class: "camp-character-paste", attrs: { rows: "6", placeholder: "Paste a Grimoire sheet JSON to replace this character's sheet…", "aria-label": "Sheet JSON" } });
+	const save = el("button", { class: "btn", text: "Save sheet", attrs: { type: "button" } });
+	const status = el("p", { class: "camp-status", attrs: { hidden: "" } });
+	save.addEventListener("click", async () => {
+		status.hidden = false;
+		status.textContent = "Validating and saving…";
+		status.classList.remove("warn");
+		let sheet;
+		try {
+			sheet = JSON.parse(area.value);
+		} catch (err) {
+			status.classList.add("warn");
+			status.textContent = `That is not JSON: ${err.message}`;
+			return;
+		}
+		try {
+			const data = await api.characterSheetPut(current.id, selected.id, sheet);
+			characterSheetRead = data;
+			renderCharacterSheet(clear(document.getElementById("camp-character-body")));
+		} catch (err) {
+			status.classList.add("warn");
+			status.textContent = err.message;
+		}
+	});
+	form.append(area, save, status);
+	return form;
 }
 
 /* ---------- the location page (MAD-370) ---------- */
