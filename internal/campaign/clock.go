@@ -24,12 +24,15 @@ import (
 /* ---------- vocabularies ---------- */
 
 // Reasons a clock advances. 'manual' is what a plain PATCH on the campaign
-// records; the others are the features that move time deliberately.
+// records; the others are the features that move time deliberately. 'rest'
+// is the resource ledger's long rest (MAD-419): the day the party slept
+// through, recorded like any other move.
 const (
 	AdvanceTravel   = "travel"
 	AdvanceDowntime = "downtime"
 	AdvanceSession  = "session"
 	AdvanceTick     = "tick"
+	AdvanceRest     = "rest"
 	AdvanceManual   = "manual"
 )
 
@@ -44,7 +47,7 @@ const (
 
 var validAdvanceReasons = map[string]bool{
 	AdvanceTravel: true, AdvanceDowntime: true, AdvanceSession: true,
-	AdvanceTick: true, AdvanceManual: true,
+	AdvanceTick: true, AdvanceRest: true, AdvanceManual: true,
 }
 
 var validScheduleStatuses = map[string]bool{

@@ -91,6 +91,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/items"
 	"github.com/madeofpendletonwool/grimoire/internal/journey"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
+	"github.com/madeofpendletonwool/grimoire/internal/ledger"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
@@ -1576,6 +1577,16 @@ func runServe() error {
 	}
 	canonEngine = canonEngine.WithJourneyFinalizer(journeyEngine)
 
+	// The resource ledger (MAD-419): pools, transactions and rests over the
+	// typed sheets. Its store completes a decided rest batch — the ledger
+	// writes and the long rest's clock move — so it is wired back onto the
+	// canon engine as the rest finalizer.
+	ledgerEngine, err := ledger.New(store.DB(), campaigns, canonEngine)
+	if err != nil {
+		return err
+	}
+	canonEngine = canonEngine.WithRestFinalizer(ledgerEngine)
+
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
 		func(ctx context.Context) error { return buildIndex(ctx, store) })
@@ -1591,7 +1602,7 @@ func runServe() error {
 	srv = srv.WithCampaigns(campaigns, knowledge)
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)
-	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine).WithJourneys(journeyEngine)
+	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine).WithJourneys(journeyEngine).WithLedger(ledgerEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {

@@ -255,6 +255,25 @@ func (s *Store) WithJourneyFinalizer(f JourneyFinalizer) *Store {
 	return s
 }
 
+// RestFinalizer completes a decided rest batch (MAD-419): the mechanics a
+// rest batch cannot carry itself — the ledger transactions for every
+// character whose item was accepted, and the campaign clock's one-day move
+// under reason 'rest' for a long rest — plus the rests row's status flip.
+// Implemented by internal/ledger's store and wired with WithRestFinalizer;
+// the same idempotency contract as the tick, downtime and journey
+// finalizers.
+type RestFinalizer interface {
+	FinalizeRestBatch(ctx context.Context, batch *Batch) error
+}
+
+// WithRestFinalizer wires the rest completion. Without it rest batches are
+// still decidable — their events are ordinary batch items — but the
+// mechanical rest and its clock move never run.
+func (s *Store) WithRestFinalizer(f RestFinalizer) *Store {
+	s.restFinalizer = f
+	return s
+}
+
 /* ---------- building the queue ---------- */
 
 // BuildQueue creates queue items for every finding the three upstream passes
