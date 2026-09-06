@@ -82,6 +82,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/dice"
 	"github.com/madeofpendletonwool/grimoire/internal/downtime"
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
+	"github.com/madeofpendletonwool/grimoire/internal/effects"
 	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
@@ -1596,6 +1597,14 @@ func runServe() error {
 		return err
 	}
 
+	// The duration and condition engine (MAD-421): ongoing effects that
+	// count themselves down. It reads the campaign clock and the rests
+	// the ledger writes, and grounds conditions in the indexed SRD.
+	effectEngine, err := effects.New(store.DB(), campaigns, store)
+	if err != nil {
+		return err
+	}
+
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
 		func(ctx context.Context) error { return buildIndex(ctx, store) })
@@ -1612,7 +1621,7 @@ func runServe() error {
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)
 	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine).WithJourneys(journeyEngine).WithLedger(ledgerEngine)
-	srv = srv.WithDice(diceStore)
+	srv = srv.WithDice(diceStore).WithEffects(effectEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {

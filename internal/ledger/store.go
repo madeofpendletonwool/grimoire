@@ -98,7 +98,12 @@ func New(db *sql.DB, campaigns *campaign.Store, canonStore *canon.Store) (*Store
 	if campaigns == nil || canonStore == nil {
 		return nil, errors.New("ledger: the campaign and canon stores are both required")
 	}
-	return &Store{db: db, campaigns: campaigns, canon: canonStore, now: time.Now().UTC}, nil
+	// now must be a call, not a bound method of one moment: a bound
+	// time.Now().UTC freezes the clock at construction, and every rest
+	// row would share the store's birth timestamp — which the effects
+	// engine's until-rest derivation (and Rests' ordering) reads.
+	return &Store{db: db, campaigns: campaigns, canon: canonStore,
+		now: func() time.Time { return time.Now().UTC() }}, nil
 }
 
 /* ---------- the sheet sync ---------- */

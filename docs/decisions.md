@@ -796,3 +796,64 @@ for stat rolls.
 | Advantage as parser syntax (`2d20kh1` required) | Every table says "roll with advantage"; refusing `1d20+5 adv` to force the keep-clause spelling serves the grammar, not the game |
 | Rolls refused without a live session | A roller that demands ceremony before it rolls does not get used; sessionless rolls stay campaign-scoped facts, and the log mirrors the moment a sitting is live |
 | Roll visibility decided client-side | Same rule as every visibility in Grimoire: the server's query is the gate; the UI only renders what arrived |
+
+## ADR 18 — Durations are canonical seconds, judged by two clocks
+
+**Status:** accepted · **Date:** 2026-09-06 · **Issue:** MAD-421
+
+### Context
+
+Stage 4 of the mechanical layer adds the bookkeeping nobody does by
+hand: every ongoing effect — a spell's minute, a condition's hour, Hex
+across a long rest — must count itself down. Two clocks judge the same
+duration: in combat a round counter ticks (Stage 5 wires it), out of
+combat the campaign clock and the rests move (Stages 2's ledger already
+move them). The design questions: what a remaining amount is stored as,
+who decrements it, and what "one minute" means the moment combat starts.
+
+### Decision
+
+**A duration is canonical seconds; the declared `{amount, unit}` travels
+beside it as provenance.** A round is 6 seconds and every unit in the
+vocabulary (round, minute, hour, day, until-dispelled, until-rest)
+converts exactly, so `10 rounds` and `1 minute` are the same stored
+number, count down identically, and render the same bytes — the
+round/minute boundary the golden file pins. Rendering decomposes seconds
+greedily into the game's own words ("1 minute", "9 days 23 hours",
+"7 rounds"), never a float.
+
+**Two clocks, one engine, split by what is already persisted.** The
+combat clock's wear is persisted onto the rows (a turn tick writes the
+worn seconds and the expiries — nothing else records that rounds passed);
+the world clock's wear is *derived* at read time from the campaign clock
+and the applied rests, because those are already rows (`clock_advances`,
+`rests`). A day advance spends 24 hours of every timed effect; an applied
+rest additionally ends `until-rest` rows; `until-dispelled` ends on
+nothing time can do. Backward clock moves give time back — the clock
+ledger's own rule, honoured rather than second-guessed.
+
+**Ending is a state change with a reason, never a delete**: expired,
+dispelled, concentration_broken, rest, superseded, manual — plus the hand
+that wrote it. Concentration is one link at a time per source, enforced
+at apply (the old link ends the moment the new one lands); a bare
+condition refuses the flag — the spell carries the concentration, not the
+condition it leaves behind. Re-applying the same effect supersedes its
+row: conditions do not stack, the latest application wins, the history
+keeps both.
+
+The condition vocabulary is the game's fifteen, declared once in
+`internal/homebrew` — the same rule MAD-383 set for damage types — and
+conditions ground in the indexed SRD at read time: applying *poisoned*
+surfaces the real rules text beside the row, never a paraphrase stored
+away from its source.
+
+### Alternatives rejected
+
+| Alternative | Why rejected |
+|---|---|
+| Storing remaining in the declared unit, converting on the fly | Every comparison then depends on which unit a row happens to declare; the canonical second makes both clocks and the render one arithmetic with no unit cases |
+| A world-clock pass that rewrites rows on every clock advance | Couples the campaign store to the effect engine for no read benefit; the clock and the rests are already ledgered rows, so deriving at read is the same answer with zero writes |
+| Persisting turn ticks as event rows and deriving wear | One row per turn per campaign to re-derive a subtraction; the tick's persisted result is the same number with no replay benefit Stage 9 cannot get from the combat log Stage 5 will own |
+| Durations as wall-clock timestamps (expires_at) | The campaign clock is a day counter, not a wall clock — there is no wall time to stamp; an anchor day plus canonical seconds is the honest model |
+| Free-text conditions with a suggested list | The vocabulary is the game's own set; `dizzy` accepted today is a sheet no validator can trust tomorrow (MAD-383's rule, applied) |
+| Storing the SRD text on the row at apply time | A paraphrase frozen at apply drifts from the index; read-time grounding always shows what the corpus actually says |
