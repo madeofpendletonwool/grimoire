@@ -323,6 +323,19 @@ export const api = {
 	diceFeed: (cid, after = 0, limit = 50) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rolls?after=${after}&limit=${limit}`).then(json),
 
+	// The party board (MAD-423): the table's live view. The stream is an
+	// EventSource the board module owns — cookie-authenticated like every
+	// other read; the settings write is the owner's.
+	boardSnapshot: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/board`).then(json),
+
+	boardSettingsPut: (cid, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/board/settings`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
 	characterSheetPut: (cid, eid, sheet) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/characters/${encodeURIComponent(eid)}/sheet`, {
 			method: "PUT",

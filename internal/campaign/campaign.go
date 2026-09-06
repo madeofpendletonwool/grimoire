@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
 )
 
 // Errors callers are expected to branch on.
@@ -177,7 +178,8 @@ var validLinks = map[string]bool{
 // Store reads and writes the campaign graph on the shared database handle.
 // The schema must already be applied (migrate.Up runs before anything serves).
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	broker *pubsub.Broker
 }
 
 // New builds a campaign store on an open, migrated database handle.
@@ -190,6 +192,25 @@ func New(db *sql.DB) (*Store, error) {
 
 // DB exposes the underlying handle for the CLI subcommand and later stages.
 func (s *Store) DB() *sql.DB { return s.db }
+
+// WithBroker wires the shared campaign broker (MAD-423): membership and
+// settings writes — the facts the party board renders — ping the
+// campaign topic. A nil broker is the store's standalone default.
+func (s *Store) WithBroker(b *pubsub.Broker) *Store {
+	if b != nil {
+		s.broker = b
+	}
+	return s
+}
+
+// Notify pings the campaign topic; exposed so handlers that compose a
+// campaign write with their own (sheet puts, board settings) wake the
+// streams once, after everything landed.
+func (s *Store) Notify(campaignID string) {
+	if s.broker != nil {
+		s.broker.Notify(campaignID)
+	}
+}
 
 /* ---------- campaigns ---------- */
 
@@ -382,6 +403,7 @@ func (s *Store) UpdateCampaign(ctx context.Context, ownerID, id string, name, sy
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("campaign commit: %w", err)
 	}
+	s.Notify(id)
 	return c, nil
 }
 
@@ -414,7 +436,11 @@ type Member struct {
 // this function is the only thing that mints them ahead of the invite flow
 // (MAD-305). A second row for the same user is ErrAlreadyExists.
 func (s *Store) AddMember(ctx context.Context, campaignID, userID, role, characterID string) error {
-	return s.addMember(ctx, s.db, campaignID, userID, role, characterID)
+	if err := s.addMember(ctx, s.db, campaignID, userID, role, characterID); err != nil {
+		return err
+	}
+	s.Notify(campaignID)
+	return nil
 }
 
 // AddMemberTx is AddMember inside a caller-owned transaction, so the invite
@@ -469,6 +495,7 @@ func (s *Store) RemoveMember(ctx context.Context, campaignID, userID string) err
 		`DELETE FROM campaign_members WHERE campaign_id = ? AND user_id = ?`, campaignID, userID); err != nil {
 		return fmt.Errorf("remove member: %w", err)
 	}
+	s.Notify(campaignID)
 	return nil
 }
 
@@ -487,6 +514,7 @@ func (s *Store) SetMemberRole(ctx context.Context, campaignID, userID, role stri
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("%w: member %s in campaign %s", ErrNotFound, userID, campaignID)
 	}
+	s.Notify(campaignID)
 	return nil
 }
 
@@ -507,6 +535,7 @@ func (s *Store) SetMemberCharacter(ctx context.Context, campaignID, userID, char
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("%w: member %s in campaign %s", ErrNotFound, userID, campaignID)
 	}
+	s.Notify(campaignID)
 	return nil
 }
 

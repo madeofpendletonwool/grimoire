@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
+	"github.com/madeofpendletonwool/grimoire/internal/board"
 	"github.com/madeofpendletonwool/grimoire/internal/cache"
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/canon"
@@ -135,6 +136,10 @@ type Server struct {
 	// the statblock resolver for the full automations); nil disables
 	// the combat endpoints.
 	combats *combat.Store
+
+	// The party board (MAD-423): the campaign pub/sub's first reader.
+	// nil disables the board endpoints.
+	board *board.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -343,6 +348,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/legendary", s.handleCombatLegendary)
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions", s.handleCombatApplyCondition)
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions/{condid}/end", s.handleCombatEndCondition)
+	mux.HandleFunc("GET /api/campaigns/{id}/board", s.handleBoardSnapshot)
+	mux.HandleFunc("GET /api/campaigns/{id}/board/stream", s.handleBoardStream)
+	mux.HandleFunc("PUT /api/campaigns/{id}/board/settings", s.handleBoardSettings)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts", s.handleCampaignFacts)
 	mux.HandleFunc("POST /api/campaigns/{id}/facts", s.handleCreateCampaignFact)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts/{fid}", s.handleCampaignFact)

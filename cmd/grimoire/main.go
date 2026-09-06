@@ -71,6 +71,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/auth"
+	"github.com/madeofpendletonwool/grimoire/internal/board"
 	"github.com/madeofpendletonwool/grimoire/internal/cache"
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/canon"
@@ -97,6 +98,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/ledger"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
+	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/server"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
@@ -1618,6 +1620,32 @@ func runServe() error {
 		catalog: bestiary, homebrew: encounter.NewHomebrewStore(store.DB()),
 	})
 
+	// The campaign pub/sub (MAD-423): one broker, topics are campaigns.
+	// Every mechanical store pings it after a commit; the dice feed and
+	// the party board's streams sleep on it. Pings carry no data — each
+	// subscriber re-queries with its own scope, so the push channel
+	// cannot widen what a reader may see.
+	campaignBroker := pubsub.New()
+	campaigns.WithBroker(campaignBroker)
+	ledgerEngine.WithBroker(campaignBroker)
+	diceStore.WithBroker(campaignBroker)
+	effectEngine.WithBroker(campaignBroker)
+	combatEngine.WithBroker(campaignBroker)
+	// The hp bridge: a battle starts from the ledger's truth between
+	// fights and writes its survivors' final numbers back on end.
+	combatEngine = combatEngine.WithHitPoints(ledgerEngine)
+
+	// The party board (MAD-423): the table's live view of the party's
+	// mechanical state, reading the sheets' projection, the ledger's
+	// derived balances, the effect engine's conditions and the tracker's
+	// in-fight state — enforced per viewer by the campaign's visibility
+	// config.
+	boardStore, err := board.New(campaigns, ledgerEngine, effectEngine, combatEngine, users)
+	if err != nil {
+		return err
+	}
+	boardStore.WithBroker(campaignBroker)
+
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
 		func(ctx context.Context) error { return buildIndex(ctx, store) })
@@ -1635,6 +1663,7 @@ func runServe() error {
 	srv = srv.WithStory(stories)
 	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine).WithJourneys(journeyEngine).WithLedger(ledgerEngine)
 	srv = srv.WithDice(diceStore).WithEffects(effectEngine).WithCombat(combatEngine)
+	srv = srv.WithBoard(boardStore)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {
