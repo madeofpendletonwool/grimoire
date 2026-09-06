@@ -1,0 +1,541 @@
+[
+  {
+    "effects": [
+      {
+        "display": "1 minute",
+        "end_reason": "",
+        "ended": false,
+        "id": "1",
+        "name": "Bless",
+        "remaining_seconds": 60,
+        "unit": "round"
+      },
+      {
+        "display": "1 minute",
+        "end_reason": "",
+        "ended": false,
+        "id": "2",
+        "name": "Guiding Bolt",
+        "remaining_seconds": 60,
+        "unit": "minute"
+      },
+      {
+        "display": "1 hour",
+        "end_reason": "",
+        "ended": false,
+        "id": "3",
+        "name": "poisoned",
+        "remaining_seconds": 3600,
+        "unit": "hour"
+      },
+      {
+        "display": "1 day",
+        "end_reason": "",
+        "ended": false,
+        "id": "4",
+        "name": "Hex",
+        "remaining_seconds": 86400,
+        "unit": "hour"
+      },
+      {
+        "display": "8 hours",
+        "end_reason": "",
+        "ended": false,
+        "id": "5",
+        "name": "Mage Armor",
+        "remaining_seconds": 28800,
+        "unit": "hour"
+      },
+      {
+        "display": "30 days",
+        "end_reason": "",
+        "ended": false,
+        "id": "6",
+        "name": "Geas",
+        "remaining_seconds": 2592000,
+        "unit": "day"
+      },
+      {
+        "display": "until rest",
+        "end_reason": "",
+        "ended": false,
+        "id": "7",
+        "name": "Blessed by the spring",
+        "remaining_seconds": 0,
+        "unit": "until_rest"
+      },
+      {
+        "display": "until dispelled",
+        "end_reason": "",
+        "ended": false,
+        "id": "8",
+        "name": "Unseen Servant",
+        "remaining_seconds": 0,
+        "unit": "until_dispelled"
+      }
+    ],
+    "stage": "applied"
+  },
+  {
+    "effects": [
+      {
+        "display": "9 rounds",
+        "end_reason": "",
+        "ended": false,
+        "id": "1",
+        "name": "Bless",
+        "remaining_seconds": 54,
+        "unit": "round"
+      },
+      {
+        "display": "9 rounds",
+        "end_reason": "",
+        "ended": false,
+        "id": "2",
+        "name": "Guiding Bolt",
+        "remaining_seconds": 54,
+        "unit": "minute"
+      },
+      {
+        "display": "59 minutes 9 rounds",
+        "end_reason": "",
+        "ended": false,
+        "id": "3",
+        "name": "poisoned",
+        "remaining_seconds": 3594,
+        "unit": "hour"
+      },
+      {
+        "display": "23 hours 59 minutes",
+        "end_reason": "",
+        "ended": false,
+        "id": "4",
+        "name": "Hex",
+        "remaining_seconds": 86394,
+        "unit": "hour"
+      },
+      {
+        "display": "7 hours 59 minutes",
+        "end_reason": "",
+        "ended": false,
+        "id": "5",
+        "name": "Mage Armor",
+        "remaining_seconds": 28794,
+        "unit": "hour"
+      },
+      {
+        "display": "29 days 23 hours",
+        "end_reason": "",
+        "ended": false,
+        "id": "6",
+        "name": "Geas",
+        "remaining_seconds": 2591994,
+        "unit": "day"
+      },
+      {
+        "display": "until rest",
+        "end_reason": "",
+        "ended": false,
+        "id": "7",
+        "name": "Blessed by the spring",
+        "remaining_seconds": 0,
+        "unit": "until_rest"
+      },
+      {
+        "display": "until dispelled",
+        "end_reason": "",
+        "ended": false,
+        "id": "8",
+        "name": "Unseen Servant",
+        "remaining_seconds": 0,
+        "unit": "until_dispelled"
+      }
+    ],
+    "stage": "combat_turn_1"
+  },
+  {
+    "effects": [
+      {
+        "display": "5 rounds",
+        "end_reason": "",
+        "ended": false,
+        "id": "1",
+        "name": "Bless",
+        "remaining_seconds": 30,
+        "unit": "round"
+      },
+      {
+        "display": "5 rounds",
+        "end_reason": "",
+        "ended": false,
+        "id": "2",
+        "name": "Guiding Bolt",
+        "remaining_seconds": 30,
+        "unit": "minute"
+      },
+      {
+        "display": "59 minutes 5 rounds",
+        "end_reason": "",
+        "ended": false,
+        "id": "3",
+        "name": "poisoned",
+        "remaining_seconds": 3570,
+        "unit": "hour"
+      },
+      {
+        "display": "23 hours 59 minutes",
+        "end_reason": "",
+        "ended": false,
+        "id": "4",
+        "name": "Hex",
+        "remaining_seconds": 86370,
+        "unit": "hour"
+      },
+      {
+        "display": "7 hours 59 minutes",
+        "end_reason": "",
+        "ended": false,
+        "id": "5",
+        "name": "Mage Armor",
+        "remaining_seconds": 28770,
+        "unit": "hour"
+      },
+      {
+        "display": "29 days 23 hours",
+        "end_reason": "",
+        "ended": false,
+        "id": "6",
+        "name": "Geas",
+        "remaining_seconds": 2591970,
+        "unit": "day"
+      },
+      {
+        "display": "until rest",
+        "end_reason": "",
+        "ended": false,
+        "id": "7",
+        "name": "Blessed by the spring",
+        "remaining_seconds": 0,
+        "unit": "until_rest"
+      },
+      {
+        "display": "until dispelled",
+        "end_reason": "",
+        "ended": false,
+        "id": "8",
+        "name": "Unseen Servant",
+        "remaining_seconds": 0,
+        "unit": "until_dispelled"
+      }
+    ],
+    "stage": "combat_turn_5"
+  },
+  {
+    "effects": [
+      {
+        "display": "1 round",
+        "end_reason": "",
+        "ended": false,
+        "id": "1",
+        "name": "Bless",
+        "remaining_seconds": 6,
+        "unit": "round"
+      },
+      {
+        "display": "1 round",
+        "end_reason": "",
+        "ended": false,
+        "id": "2",
+        "name": "Guiding Bolt",
+        "remaining_seconds": 6,
+        "unit": "minute"
+      },
+      {
+        "display": "59 minutes 1 round",
+        "end_reason": "",
+        "ended": false,
+        "id": "3",
+        "name": "poisoned",
+        "remaining_seconds": 3546,
+        "unit": "hour"
+      },
+      {
+        "display": "23 hours 59 minutes",
+        "end_reason": "",
+        "ended": false,
+        "id": "4",
+        "name": "Hex",
+        "remaining_seconds": 86346,
+        "unit": "hour"
+      },
+      {
+        "display": "7 hours 59 minutes",
+        "end_reason": "",
+        "ended": false,
+        "id": "5",
+        "name": "Mage Armor",
+        "remaining_seconds": 28746,
+        "unit": "hour"
+      },
+      {
+        "display": "29 days 23 hours",
+        "end_reason": "",
+        "ended": false,
+        "id": "6",
+        "name": "Geas",
+        "remaining_seconds": 2591946,
+        "unit": "day"
+      },
+      {
+        "display": "until rest",
+        "end_reason": "",
+        "ended": false,
+        "id": "7",
+        "name": "Blessed by the spring",
+        "remaining_seconds": 0,
+        "unit": "until_rest"
+      },
+      {
+        "display": "until dispelled",
+        "end_reason": "",
+        "ended": false,
+        "id": "8",
+        "name": "Unseen Servant",
+        "remaining_seconds": 0,
+        "unit": "until_dispelled"
+      }
+    ],
+    "stage": "combat_turn_9"
+  },
+  {
+    "effects": [
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "1",
+        "name": "Bless",
+        "remaining_seconds": 0,
+        "unit": "round"
+      },
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "2",
+        "name": "Guiding Bolt",
+        "remaining_seconds": 0,
+        "unit": "minute"
+      },
+      {
+        "display": "59 minutes",
+        "end_reason": "",
+        "ended": false,
+        "id": "3",
+        "name": "poisoned",
+        "remaining_seconds": 3540,
+        "unit": "hour"
+      },
+      {
+        "display": "23 hours 59 minutes",
+        "end_reason": "",
+        "ended": false,
+        "id": "4",
+        "name": "Hex",
+        "remaining_seconds": 86340,
+        "unit": "hour"
+      },
+      {
+        "display": "7 hours 59 minutes",
+        "end_reason": "",
+        "ended": false,
+        "id": "5",
+        "name": "Mage Armor",
+        "remaining_seconds": 28740,
+        "unit": "hour"
+      },
+      {
+        "display": "29 days 23 hours",
+        "end_reason": "",
+        "ended": false,
+        "id": "6",
+        "name": "Geas",
+        "remaining_seconds": 2591940,
+        "unit": "day"
+      },
+      {
+        "display": "until rest",
+        "end_reason": "",
+        "ended": false,
+        "id": "7",
+        "name": "Blessed by the spring",
+        "remaining_seconds": 0,
+        "unit": "until_rest"
+      },
+      {
+        "display": "until dispelled",
+        "end_reason": "",
+        "ended": false,
+        "id": "8",
+        "name": "Unseen Servant",
+        "remaining_seconds": 0,
+        "unit": "until_dispelled"
+      }
+    ],
+    "stage": "combat_turn_10"
+  },
+  {
+    "effects": [
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "1",
+        "name": "Bless",
+        "remaining_seconds": 0,
+        "unit": "round"
+      },
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "2",
+        "name": "Guiding Bolt",
+        "remaining_seconds": 0,
+        "unit": "minute"
+      },
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "3",
+        "name": "poisoned",
+        "remaining_seconds": 0,
+        "unit": "hour"
+      },
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "4",
+        "name": "Hex",
+        "remaining_seconds": 0,
+        "unit": "hour"
+      },
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "5",
+        "name": "Mage Armor",
+        "remaining_seconds": 0,
+        "unit": "hour"
+      },
+      {
+        "display": "27 days 23 hours",
+        "end_reason": "",
+        "ended": false,
+        "id": "6",
+        "name": "Geas",
+        "remaining_seconds": 2419140,
+        "unit": "day"
+      },
+      {
+        "display": "until rest",
+        "end_reason": "",
+        "ended": false,
+        "id": "7",
+        "name": "Blessed by the spring",
+        "remaining_seconds": 0,
+        "unit": "until_rest"
+      },
+      {
+        "display": "until dispelled",
+        "end_reason": "",
+        "ended": false,
+        "id": "8",
+        "name": "Unseen Servant",
+        "remaining_seconds": 0,
+        "unit": "until_dispelled"
+      }
+    ],
+    "stage": "travel_two_days"
+  },
+  {
+    "effects": [
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "1",
+        "name": "Bless",
+        "remaining_seconds": 0,
+        "unit": "round"
+      },
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "2",
+        "name": "Guiding Bolt",
+        "remaining_seconds": 0,
+        "unit": "minute"
+      },
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "3",
+        "name": "poisoned",
+        "remaining_seconds": 0,
+        "unit": "hour"
+      },
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "4",
+        "name": "Hex",
+        "remaining_seconds": 0,
+        "unit": "hour"
+      },
+      {
+        "display": "expired",
+        "end_reason": "expired",
+        "ended": true,
+        "id": "5",
+        "name": "Mage Armor",
+        "remaining_seconds": 0,
+        "unit": "hour"
+      },
+      {
+        "display": "27 days",
+        "end_reason": "",
+        "ended": false,
+        "id": "6",
+        "name": "Geas",
+        "remaining_seconds": 2332800,
+        "unit": "day"
+      },
+      {
+        "display": "expired",
+        "end_reason": "rest",
+        "ended": true,
+        "id": "7",
+        "name": "Blessed by the spring",
+        "remaining_seconds": 0,
+        "unit": "until_rest"
+      },
+      {
+        "display": "until dispelled",
+        "end_reason": "",
+        "ended": false,
+        "id": "8",
+        "name": "Unseen Servant",
+        "remaining_seconds": 0,
+        "unit": "until_dispelled"
+      }
+    ],
+    "stage": "long_rest"
+  }
+]

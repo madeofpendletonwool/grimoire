@@ -27,6 +27,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/dice"
 	"github.com/madeofpendletonwool/grimoire/internal/downtime"
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
+	"github.com/madeofpendletonwool/grimoire/internal/effects"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/entities"
 	"github.com/madeofpendletonwool/grimoire/internal/faction"
@@ -122,6 +123,11 @@ type Server struct {
 	// shared feed. Wired with WithDice (needs the campaign and session
 	// stores); nil disables the roll endpoints.
 	dice *dice.Store
+	// The duration and condition engine (MAD-421): ongoing effects that
+	// count themselves down against the combat clock and the campaign
+	// clock. Wired with WithEffects (needs the campaign store and the
+	// index for SRD grounding); nil disables the effect endpoints.
+	effectEngine *effects.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -299,6 +305,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/rolls", s.handleRollDice)
 	mux.HandleFunc("GET /api/campaigns/{id}/rolls", s.handleRollFeed)
 	mux.HandleFunc("GET /api/campaigns/{id}/rolls/stream", s.handleRollStream)
+	// The duration and condition engine (MAD-421): every ongoing effect
+	// a row, counting down on the combat clock and the campaign clock.
+	// Applying, ending and ticking are the DM's; a player reads exactly
+	// their bound character's effects. The literals win over {fxid}
+	// beside them.
+	mux.HandleFunc("GET /api/campaigns/{id}/effects", s.handleCampaignEffects)
+	mux.HandleFunc("GET /api/campaigns/{id}/effects/vocabulary", s.handleEffectVocabulary)
+	mux.HandleFunc("GET /api/campaigns/{id}/effects/concentrations", s.handleEffectConcentrations)
+	mux.HandleFunc("POST /api/campaigns/{id}/effects", s.handleApplyEffect)
+	mux.HandleFunc("POST /api/campaigns/{id}/effects/advance", s.handleEffectsAdvance)
+	mux.HandleFunc("POST /api/campaigns/{id}/effects/{fxid}/end", s.handleEndEffect)
+	mux.HandleFunc("GET /api/campaigns/{id}/characters/{eid}/effects", s.handleCharacterEffects)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts", s.handleCampaignFacts)
 	mux.HandleFunc("POST /api/campaigns/{id}/facts", s.handleCreateCampaignFact)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts/{fid}", s.handleCampaignFact)
