@@ -36,6 +36,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
+	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
 )
 
 // dbRunner is what a query runs over: the pool or a transaction.
@@ -51,6 +52,7 @@ type Store struct {
 	campaigns *campaign.Store
 	idx       *index.Store // optional: SRD grounding for conditions
 	now       func() time.Time
+	broker    *pubsub.Broker
 }
 
 // New builds an effects store on an open, migrated database handle. The
@@ -64,6 +66,24 @@ func New(db *sql.DB, campaigns *campaign.Store, idx *index.Store) (*Store, error
 		return nil, errors.New("effects: the campaign store is required")
 	}
 	return &Store{db: db, campaigns: campaigns, idx: idx, now: time.Now().UTC}, nil
+}
+
+// WithBroker moves the store onto a shared campaign broker (MAD-423):
+// applying, ending and ticking effects pings the campaign topic so the
+// party board's streams re-derive what their own scope may see.
+func (s *Store) WithBroker(b *pubsub.Broker) *Store {
+	if b != nil {
+		s.broker = b
+	}
+	return s
+}
+
+// notify pings the campaign after a committed change. A nil broker (the
+// store running standalone in a test) is a no-op.
+func (s *Store) notify(campaignID string) {
+	if s.broker != nil {
+		s.broker.Notify(campaignID)
+	}
 }
 
 /* ---------- the rows ---------- */
@@ -217,6 +237,7 @@ func (s *Store) Apply(ctx context.Context, campaignID string, in ApplyInput, act
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("effects apply: %w", err)
 	}
+	s.notify(campaignID)
 	out.Applied = row
 	return out, nil
 }
@@ -416,6 +437,7 @@ func (s *Store) End(ctx context.Context, campaignID, effectID, reason, actor str
 		reason, actor, now.UnixMilli(), now.UnixMilli(), r.ID, campaignID); err != nil {
 		return nil, fmt.Errorf("effects end: %w", err)
 	}
+	s.notify(campaignID)
 	return s.Get(ctx, campaignID, effectID, true)
 }
 
@@ -489,6 +511,7 @@ func (s *Store) AdvanceRounds(ctx context.Context, campaignID string, rounds int
 	if err != nil {
 		return nil, nil, err
 	}
+	s.notify(campaignID)
 	return after, expired, nil
 }
 

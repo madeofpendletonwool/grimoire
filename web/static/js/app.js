@@ -21,6 +21,7 @@ import { initShares } from "./shares.js";
 import { hydrate, sprite } from "./icons.js";
 import { initScene, initSettings } from "./scene.js";
 import { initDice } from "./dice.js";
+import { initBoard } from "./board.js";
 
 import { TOOLS, toolsFor } from "./wm/registry.js";
 import * as wm from "./wm/wm.js";
@@ -325,6 +326,7 @@ async function start() {
 	safe("chrome", syncChrome);
 	safe("account", initAccount);
 	safe("dice", () => initDice());
+	safe("board", () => initBoard());
 	safe("admin", initAdmin);
 	safe("library", initLibrary);
 	safe("shares", initShares);

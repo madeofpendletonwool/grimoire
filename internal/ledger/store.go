@@ -33,6 +33,7 @@ import (
 
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/canon"
+	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
 	"github.com/madeofpendletonwool/grimoire/internal/sheet"
 )
 
@@ -86,6 +87,7 @@ type Store struct {
 	campaigns *campaign.Store
 	canon     *canon.Store
 	now       func() time.Time
+	broker    *pubsub.Broker
 }
 
 // New builds a ledger store on an open, migrated database handle. The canon
@@ -104,6 +106,24 @@ func New(db *sql.DB, campaigns *campaign.Store, canonStore *canon.Store) (*Store
 	// engine's until-rest derivation (and Rests' ordering) reads.
 	return &Store{db: db, campaigns: campaigns, canon: canonStore,
 		now: func() time.Time { return time.Now().UTC() }}, nil
+}
+
+// WithBroker moves the store onto a shared campaign broker (MAD-423):
+// every committed transaction pings the campaign topic, and the party
+// board's streams re-derive what their own scope may see.
+func (s *Store) WithBroker(b *pubsub.Broker) *Store {
+	if b != nil {
+		s.broker = b
+	}
+	return s
+}
+
+// notify pings the campaign after a committed change. A nil broker (the
+// store running standalone in a test) is a no-op.
+func (s *Store) notify(campaignID string) {
+	if s.broker != nil {
+		s.broker.Notify(campaignID)
+	}
 }
 
 /* ---------- the sheet sync ---------- */
@@ -288,6 +308,68 @@ func (s *Store) Balances(ctx context.Context, campaignID, entityID string) ([]Ba
 	return Derive(pools, txns), nil
 }
 
+/* ---------- the hit-point bridge ---------- */
+
+// HPBalance reports a character's current and maximum hit points: the hp
+// pool's derived balance and size. ok is false when the character tracks
+// no hp pool (no structured sheet) or the read fails — the caller treats
+// that as "unknown", never as zero. This is the combat tracker's and the
+// party board's window on between-fight health (MAD-423).
+func (s *Store) HPBalance(ctx context.Context, campaignID, entityID string) (int, int, bool) {
+	pools, err := s.Pools(ctx, campaignID, entityID)
+	if err != nil {
+		return 0, 0, false
+	}
+	var poolID string
+	size := -1
+	for _, p := range pools {
+		if p.Kind == KindHP {
+			poolID, size = p.ID, p.Size
+			break
+		}
+	}
+	if poolID == "" {
+		return 0, 0, false
+	}
+	for _, b := range s.balancesOf(ctx, campaignID, entityID, pools) {
+		if b.Pool.Kind == KindHP {
+			return b.Current, size, true
+		}
+	}
+	return 0, 0, false
+}
+
+// SetHP records a character's current hit points as one visible 'set'
+// transaction — the combat tracker's end-of-battle write-back, or any
+// out-of-combat correction routed through the same provenance rule. A
+// character with no hp pool is a no-op: there is nothing to reconcile.
+func (s *Store) SetHP(ctx context.Context, campaignID, entityID string, amount int, actor, note string) error {
+	pools, err := s.Pools(ctx, campaignID, entityID)
+	if err != nil {
+		return err
+	}
+	for _, p := range pools {
+		if p.Kind != KindHP {
+			continue
+		}
+		if amount < 0 || amount > p.Size {
+			return fmt.Errorf("%w: hp %d outside 0..%d", campaign.ErrInvalid, amount, p.Size)
+		}
+		_, _, err := s.Apply(ctx, campaignID, entityID, p.ID, TxnInput{Kind: TxnSet, Amount: amount, Note: note}, actor)
+		return err
+	}
+	return nil
+}
+
+// balancesOf folds the log with pools the caller already loaded.
+func (s *Store) balancesOf(ctx context.Context, campaignID, entityID string, pools []Pool) []Balance {
+	txns, err := s.transactions(ctx, entityID)
+	if err != nil {
+		return nil
+	}
+	return Derive(pools, txns)
+}
+
 // History returns one character's transactions, most recent first up to
 // limit (0 picks a sensible default).
 func (s *Store) History(ctx context.Context, campaignID, entityID string, limit int) ([]TxnRow, error) {
@@ -421,6 +503,7 @@ func (s *Store) Apply(ctx context.Context, campaignID, entityID, poolID string, 
 	if err != nil {
 		return nil, nil, err
 	}
+	s.notify(campaignID)
 	return row, balances, nil
 }
 
@@ -523,6 +606,7 @@ func (s *Store) CreatePool(ctx context.Context, campaignID, entityID string, p P
 	if err != nil {
 		return nil, fmt.Errorf("read back created pool: %w", err)
 	}
+	s.notify(campaignID)
 	return &created, nil
 }
 
@@ -558,6 +642,7 @@ func (s *Store) UpdatePool(ctx context.Context, campaignID, entityID, poolID str
 		p.Label, p.Size, p.Recovery, granularityOf(*p), s.now().UnixMilli(), p.ID, entityID, campaignID); err != nil {
 		return nil, fmt.Errorf("update pool: %w", err)
 	}
+	s.notify(campaignID)
 	return p, nil
 }
 
@@ -576,6 +661,7 @@ func (s *Store) DeletePool(ctx context.Context, campaignID, entityID, poolID str
 		p.ID, entityID, campaignID); err != nil {
 		return fmt.Errorf("delete pool: %w", err)
 	}
+	s.notify(campaignID)
 	return nil
 }
 
@@ -630,6 +716,7 @@ func (s *Store) Rest(ctx context.Context, campaignID string, entityIDs []string,
 			return nil, nil, fmt.Errorf("record rest advance: %w", err)
 		}
 	}
+	s.notify(campaignID)
 	return rest, plans, nil
 }
 
@@ -872,6 +959,7 @@ func (s *Store) FinalizeRestBatch(ctx context.Context, batch *canon.Batch) error
 		RestApplied, nullString(applied.AdvanceID), applied.ClockTo, rest.ID); err != nil {
 		return fmt.Errorf("finish rest: %w", err)
 	}
+	s.notify(batch.CampaignID)
 	return nil
 }
 

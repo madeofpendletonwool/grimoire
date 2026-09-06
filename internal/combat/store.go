@@ -44,6 +44,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/effects"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
+	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
 )
 
 // StatblockResolver resolves a statblock name into the creature the
@@ -53,6 +54,21 @@ import (
 // tests wire a map.
 type StatblockResolver interface {
 	ResolveStatblock(ctx context.Context, owner, campaignID, name string) (encounter.Creature, bool)
+}
+
+// HitPoints is the ledger's window on one character's hit points — the
+// bridge MAD-423 built so the tracker and the party board read one truth
+// outside a fight. Current hp is a derived pool balance (never stored),
+// and writing it back is an ordinary 'set' transaction with provenance.
+// The ledger store implements it; ok is false when the character tracks
+// no hp pool (no structured sheet), which the caller treats as
+// "sheet-fresh".
+type HitPoints interface {
+	// HPBalance reports the character's current and maximum hit points.
+	HPBalance(ctx context.Context, campaignID, entityID string) (current, max int, ok bool)
+	// SetHP records the character's current hit points as one visible
+	// transaction. A character with no hp pool is a no-op.
+	SetHP(ctx context.Context, campaignID, entityID string, amount int, actor, note string) error
 }
 
 // maxCombatants bounds one battle's lineup: generous for any real table,
@@ -71,6 +87,8 @@ type Store struct {
 	dice      *dice.Store
 	effects   *effects.Store
 	resolver  StatblockResolver
+	hp        HitPoints
+	broker    *pubsub.Broker
 	now       func() time.Time
 }
 
@@ -105,6 +123,34 @@ func (s *Store) WithEffects(store *effects.Store) *Store {
 func (s *Store) WithResolver(r StatblockResolver) *Store {
 	s.resolver = r
 	return s
+}
+
+// WithHitPoints wires the ledger's hp bridge (MAD-423): current hit
+// points live in the resource ledger between fights, so a battle starts
+// from the party's real numbers — not the sheet's max — and a battle's
+// end writes the survivors' final hit points back as visible 'set'
+// transactions. Without it the tracker runs sheet-fresh, as before.
+func (s *Store) WithHitPoints(hp HitPoints) *Store {
+	s.hp = hp
+	return s
+}
+
+// WithBroker moves the store onto a shared campaign broker (MAD-423):
+// every committed combat write pings the campaign topic so the party
+// board's streams re-derive what their own scope may see.
+func (s *Store) WithBroker(b *pubsub.Broker) *Store {
+	if b != nil {
+		s.broker = b
+	}
+	return s
+}
+
+// notify pings the campaign after a committed change. A nil broker (the
+// store running standalone in a test) is a no-op.
+func (s *Store) notify(campaignID string) {
+	if s.broker != nil {
+		s.broker.Notify(campaignID)
+	}
 }
 
 /* ---------- the rows ---------- */
@@ -232,6 +278,16 @@ func (s *Store) Start(ctx context.Context, campaignID string, in StartInput, act
 			EntityID: e.ID, Name: e.Name, Side: SideParty, Kind: KindPC,
 			AC: sh.AC, MaxHP: sh.MaxHP, HP: sh.MaxHP, Snapshot: SnapshotOfSheet(sh),
 		}
+		// Tonight's numbers start where the last fight left the
+		// character, not at the sheet's max: the ledger's hp pool is
+		// the ongoing truth (MAD-423). A character with no hp pool —
+		// no structured sheet — keeps fighting from the sheet, which
+		// was full anyway.
+		if s.hp != nil {
+			if cur, _, ok := s.hp.HPBalance(ctx, campaignID, eid); ok {
+				c.HP = cur
+			}
+		}
 		if !ok || (sh.AC == 0 && sh.MaxHP == 0) {
 			warnings = append(warnings, fmt.Sprintf("%s has no structured sheet — fighting on AC 0, HP 0", e.Name))
 		}
@@ -358,6 +414,7 @@ func (s *Store) Start(ctx context.Context, campaignID string, in StartInput, act
 
 	entry.EventID = s.mirror(ctx, &combat, note, "", payload)
 	s.stampEventID(ctx, entry)
+	s.notify(campaignID)
 	return &StartResult{Combat: combat, Order: order, Warnings: warnings}, nil
 }
 
@@ -1062,6 +1119,7 @@ func (s *Store) NextTurn(ctx context.Context, campaignID, combatID, actor string
 	after.Round, after.TurnIndex, after.UpdatedAt = round, next, now
 	entry.EventID = s.mirror(ctx, &after, summary, detail, payload)
 	s.stampEventID(ctx, entry)
+	s.notify(campaignID)
 	out.Combat = after
 	out.Order = live
 	return out, nil
@@ -1140,6 +1198,23 @@ func (s *Store) End(ctx context.Context, campaignID, combatID, reason, actor str
 	}
 	entry.EventID = s.mirror(ctx, combat, summary, "", payload)
 	s.stampEventID(ctx, entry)
+
+	// The ledger write-back: the battle's survivors carry their final
+	// hit points out of the fight as one visible 'set' transaction each,
+	// so the board and the resource reads stay one truth between fights
+	// (MAD-423). Best-effort, like the session mirror — a failed
+	// write-back never un-ends a battle; the DM's correction path is the
+	// resources surface. Temp hit points do not survive the fight.
+	if s.hp != nil {
+		for _, c := range order {
+			if c.Kind != KindPC || c.EntityID == "" {
+				continue
+			}
+			_ = s.hp.SetHP(ctx, campaignID, c.EntityID, c.HP, actor,
+				fmt.Sprintf("%s ends — %s at %d hp", combat.Name, c.Name, c.HP))
+		}
+	}
+	s.notify(campaignID)
 	return &EndResult{Combat: *combat, Order: order, Summary: summary, Alive: alive}, nil
 }
 
@@ -1265,6 +1340,7 @@ func (s *Store) writeCombatant(ctx context.Context, combat *Combat, c *Combatant
 	}
 	entry.EventID = s.mirror(ctx, combat, summary, "", payload)
 	s.stampEventID(ctx, entry)
+	s.notify(combat.CampaignID)
 	return nil
 }
 

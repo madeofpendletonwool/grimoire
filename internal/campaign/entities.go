@@ -238,6 +238,9 @@ func (s *Store) UpdateEntity(ctx context.Context, campaignID, id string, name, s
 		// everything else never has one.
 		_ = sheet.SyncEntity(ctx, s.db, campaignID, e.ID)
 	}
+	// A renamed or re-sheeted entity changes what the party board
+	// renders (MAD-423): wake the campaign's streams.
+	s.Notify(campaignID)
 	return e, nil
 }
 

@@ -17,12 +17,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
+	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
 )
 
 // Store reads and writes dice rolls on the shared database handle.
@@ -30,7 +30,7 @@ type Store struct {
 	db        *sql.DB
 	campaigns *campaign.Store
 	sessions  *gamesession.Store
-	broker    broker
+	broker    *pubsub.Broker
 }
 
 // New builds a dice store. campaigns resolves character and target names
@@ -40,56 +40,24 @@ func New(db *sql.DB, campaigns *campaign.Store, sessions *gamesession.Store) (*S
 	if db == nil {
 		return nil, errors.New("dice: nil database handle")
 	}
-	return &Store{db: db, campaigns: campaigns, sessions: sessions}, nil
+	return &Store{db: db, campaigns: campaigns, sessions: sessions, broker: pubsub.New()}, nil
 }
 
-/* ---------- the broker ---------- */
-
-// broker is the in-process fan-out the SSE stream sleeps on: a roll
-// pings its campaign's subscribers, each subscriber re-queries from its
-// own cursor. Process-local by design — the app is one binary, and the
-// stream's poll tick is the safety net for anything a ping misses.
-type broker struct {
-	mu   sync.Mutex
-	subs map[string]map[chan struct{}]struct{}
+// WithBroker moves the store onto a shared campaign broker (MAD-423):
+// rolls notify the campaign topic every board stream also listens to.
+// The stream keeps its scope-filtered reads; a ping carries no data.
+func (s *Store) WithBroker(b *pubsub.Broker) *Store {
+	if b != nil {
+		s.broker = b
+	}
+	return s
 }
 
-func (b *broker) subscribe(campaignID string) (chan struct{}, func()) {
-	ch := make(chan struct{}, 1)
-	b.mu.Lock()
-	if b.subs == nil {
-		b.subs = make(map[string]map[chan struct{}]struct{})
-	}
-	if b.subs[campaignID] == nil {
-		b.subs[campaignID] = make(map[chan struct{}]struct{})
-	}
-	b.subs[campaignID][ch] = struct{}{}
-	b.mu.Unlock()
-	return ch, func() {
-		b.mu.Lock()
-		delete(b.subs[campaignID], ch)
-		if len(b.subs[campaignID]) == 0 {
-			delete(b.subs, campaignID)
-		}
-		b.mu.Unlock()
-	}
-}
-
-func (b *broker) notify(campaignID string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for ch := range b.subs[campaignID] {
-		select {
-		case ch <- struct{}{}:
-		default: // already pinged; the pending wake will re-query
-		}
-	}
-}
-
-// Subscribe wakes when a roll lands in this campaign. The returned cancel
-// must be called when the reader goes away.
+// Subscribe wakes when anything notifies this campaign — a roll, or any
+// other store sharing the broker. The returned cancel must be called
+// when the reader goes away.
 func (s *Store) Subscribe(campaignID string) (<-chan struct{}, func()) {
-	return s.broker.subscribe(campaignID)
+	return s.broker.Subscribe(campaignID)
 }
 
 /* ---------- the write path ---------- */
@@ -280,7 +248,7 @@ func (s *Store) Roll(ctx context.Context, campaignID string, in Input) (*RollRow
 			_, _ = s.db.ExecContext(ctx, `UPDATE dice_rolls SET session_event_id = ? WHERE id = ?`, ev.ID, id)
 		}
 	}
-	s.broker.notify(campaignID)
+	s.broker.Notify(campaignID)
 	return row, nil
 }
 

@@ -53,6 +53,7 @@ import (
 // boundedness (a slot pool refills to its size; a purse can grow past its
 // declared contents) and where the sheet's numbers came from.
 const (
+	KindHP       = "hp" // hit points: size = max HP; damage/healing are transactions
 	KindSlot     = "slot"
 	KindHitDice  = "hit_dice"
 	KindFeature  = "feature"
@@ -87,10 +88,11 @@ const (
 // before pp. It is also the order golden files pin.
 var currencyOrder = map[string]int{"cp": 0, "sp": 1, "ep": 2, "gp": 3, "pp": 4}
 
-// kindRank orders the kinds: slots first (the question everyone asks), then
-// hit dice, features, items, and the purse last.
+// kindRank orders the kinds: hit points first (the board's headline
+// number), then slots (the question everyone asks next), hit dice,
+// features, items, and the purse last.
 var kindRank = map[string]int{
-	KindSlot: 0, KindHitDice: 1, KindFeature: 2, KindItem: 3, KindCurrency: 4,
+	KindHP: 0, KindSlot: 1, KindHitDice: 2, KindFeature: 3, KindItem: 4, KindCurrency: 5,
 }
 
 // Pool is one tracked thing: its kind, its sub-name within the kind ("3" for
@@ -139,13 +141,14 @@ func (p Pool) DisplayName() string {
 	return p.Name
 }
 
-// Bounded reports whether the pool's balance has a ceiling: slots, hit dice
-// and feature uses refill to a fixed size, so they can neither overspend
-// nor overfill. Items and currency are unbounded upward — a quiver gains
-// arrows, a purse gains gold — while a spend still cannot go below zero.
+// Bounded reports whether the pool's balance has a ceiling: hit points,
+// slots, hit dice and feature uses refill to a fixed size, so they can
+// neither overspend nor overfill. Items and currency are unbounded
+// upward — a quiver gains arrows, a purse gains gold — while a spend
+// still cannot go below zero.
 func (p Pool) Bounded() bool {
 	switch p.Kind {
-	case KindSlot, KindHitDice, KindFeature:
+	case KindHP, KindSlot, KindHitDice, KindFeature:
 		return true
 	default:
 		return false
@@ -171,7 +174,7 @@ func (p Pool) ResetOn(restKind string) bool {
 // Validate checks a pool definition against the grammar.
 func (p Pool) Validate() error {
 	switch p.Kind {
-	case KindSlot, KindHitDice, KindFeature, KindItem, KindCurrency:
+	case KindHP, KindSlot, KindHitDice, KindFeature, KindItem, KindCurrency:
 	default:
 		return fmt.Errorf("pool kind %q", p.Kind)
 	}
@@ -183,6 +186,9 @@ func (p Pool) Validate() error {
 		if err != nil || lvl < 1 || lvl > 9 {
 			return fmt.Errorf("slot pool %q is not a spell level 1..9", p.Name)
 		}
+	}
+	if p.Kind == KindHP && p.Name != "hp" {
+		return fmt.Errorf("an hp pool is named %q, not %q — one body, one pool", "hp", p.Name)
 	}
 	if p.Kind == KindCurrency {
 		if _, ok := currencyOrder[p.Name]; !ok {
@@ -208,6 +214,11 @@ func (p Pool) Validate() error {
 // PoolsOf derives a sheet's pool definitions — the numbers the sheet
 // actually declares, and nothing it does not:
 //
+//   - hit points, when the sheet declares a max: one hp pool sized to it,
+//     recovery manual — the 2014 long rest does not heal, it returns hit
+//     dice, so damage and healing are transactions like every other
+//     change (MAD-423 made the pool first-class so the party board can
+//     answer "how hurt is the wizard" between fights).
 //   - every slot level in the spellcasting table, recovery long — or short
 //     when the sheet's caster is pact magic: a warlock with no other
 //     spellcasting class. (A multiclass warlock's combined table cannot
@@ -223,6 +234,12 @@ func (p Pool) Validate() error {
 // same grammar unchanged.
 func PoolsOf(s sheet.Sheet) []Pool {
 	pools := make([]Pool, 0, 16)
+	if s.MaxHP > 0 {
+		pools = append(pools, Pool{
+			Kind: KindHP, Name: "hp", Label: "hit points",
+			Size: s.MaxHP, Recovery: RecoveryManual, Source: "sheet",
+		})
+	}
 	pact := pactCaster(s)
 	if s.Spellcasting != nil {
 		for lvl, n := range s.Spellcasting.Slots {

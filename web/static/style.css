@@ -4491,3 +4491,212 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.roll-curtain { top: 8px; padding: 0.4rem var(--sp-3); --die-size: 20px; }
 	.roll-curtain-total { font-size: 1.5rem; }
 }
+
+/* Party board (MAD-423) — the table surface. Legibility over features:
+   big serif numbers, one strip per member, readable at arm's length in a
+   dim room, on a phone. */
+
+.board-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-3);
+}
+
+.board-banner {
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-lg);
+	background: linear-gradient(180deg, var(--stone-800), var(--stone-900));
+	padding: var(--sp-2) var(--sp-3);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sp-1) var(--sp-3);
+}
+
+.board-round {
+	font-family: var(--font-display);
+	font-size: 1.25rem;
+	color: var(--gold-bright);
+}
+
+.board-turn { font-size: var(--fs-sm); color: var(--parchment-soft, #d8c9a8); opacity: 0.85; }
+
+.board-order {
+	flex-basis: 100%;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sp-1) var(--sp-3);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: var(--fs-xs);
+}
+
+.board-order-entry { display: inline-flex; gap: 0.35em; align-items: baseline; opacity: 0.75; }
+.board-order-entry.is-active { opacity: 1; color: var(--gold-bright); font-weight: 600; }
+.board-order-entry.is-dead { text-decoration: line-through; opacity: 0.4; }
+.board-order-entry.is-foe .board-order-name { font-style: italic; }
+.board-order-init { font-variant-numeric: tabular-nums; opacity: 0.6; }
+.board-order-mark { color: var(--danger, #d05340); font-style: normal; }
+
+.board-strips {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+	gap: var(--sp-2);
+}
+
+.board-hint { grid-column: 1 / -1; opacity: 0.6; font-size: var(--fs-sm); padding: var(--sp-3); text-align: center; }
+
+.strip {
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-lg);
+	background: linear-gradient(180deg, var(--stone-700), var(--stone-800));
+	padding: var(--sp-2) var(--sp-3);
+	display: flex;
+	flex-direction: column;
+	gap: 0.45rem;
+	min-width: 0;
+}
+
+.strip.is-down { border-color: var(--danger, #d05340); box-shadow: inset 0 0 24px rgba(208, 83, 64, 0.18); }
+.strip.is-dead { opacity: 0.45; filter: saturate(0.4); }
+.strip.is-foe-strip { border-style: dashed; }
+
+.strip-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-2); min-width: 0; }
+
+.strip-name {
+	font-size: var(--fs-md);
+	color: var(--parchment, #efe4c9);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.strip.is-present .strip-name::after { content: ""; }
+.strip-here { color: var(--good, #7bb661); margin-left: 0.3em; font-style: normal; }
+
+.strip-sub { font-size: var(--fs-xs); opacity: 0.6; white-space: nowrap; }
+
+.strip-vitals { display: flex; align-items: baseline; gap: 0.5rem; }
+
+.strip-bar {
+	position: relative;
+	flex: 1;
+	height: 12px;
+	border-radius: 999px;
+	background: var(--stone-950);
+	border: 1px solid var(--stone-line);
+	overflow: hidden;
+}
+
+.strip-bar-fill {
+	position: absolute;
+	inset: 0 auto 0 0;
+	border-radius: 999px;
+	background: linear-gradient(180deg, #7bb661, #4c7a3a);
+}
+
+.strip.is-down .strip-bar-fill,
+.strip-hp.is-zero + .strip-bar-fill { background: linear-gradient(180deg, #d05340, #8a1c1c); }
+.strip-bar-temp {
+	position: absolute;
+	inset: 0 auto 0 0;
+	height: 4px;
+	top: auto;
+	bottom: 0;
+	background: var(--gold-bright);
+	opacity: 0.9;
+}
+
+.strip-hp, .strip-word {
+	font-family: var(--font-display);
+	font-size: 2rem;
+	line-height: 1;
+	font-variant-numeric: tabular-nums;
+	color: var(--parchment, #efe4c9);
+}
+
+.strip-hp.is-low { color: #e8a13c; }
+.strip-hp.is-zero { color: #d05340; }
+
+.strip-word { font-size: 1.5rem; font-style: italic; }
+.strip-word.is-warn { color: #e8a13c; }
+.strip-word.is-low { color: #d05340; }
+
+.strip-max { font-size: var(--fs-sm); opacity: 0.65; font-variant-numeric: tabular-nums; }
+
+.strip-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+.strip-chip {
+	font-size: var(--fs-xs);
+	padding: 0.15rem 0.55rem;
+	border-radius: 999px;
+	border: 1px solid var(--stone-line);
+	background: var(--stone-600);
+	color: var(--parchment, #efe4c9);
+}
+
+.strip-chip.is-cond { border-color: #6d5a86; background: rgba(109, 90, 134, 0.25); }
+.strip-chip.is-conc { border-color: var(--gold-dim); background: rgba(201, 162, 39, 0.16); color: var(--gold-bright); }
+.strip-chip.is-warn { border-color: #8a1c1c; background: rgba(208, 83, 64, 0.2); color: #f0b9ad; }
+
+.strip-slots { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; }
+
+.strip-pips { display: inline-flex; gap: 3px; align-items: center; }
+
+.strip-pip {
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+	border: 1px solid var(--gold-dim);
+	background: transparent;
+}
+
+.strip-pip.is-full { background: var(--gold); border-color: var(--gold); }
+
+.board-side { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+.board-side-title {
+	margin: 0;
+	font-size: var(--fs-xs);
+	font-family: var(--font-pixel);
+	font-weight: 400;
+	letter-spacing: 0.06em;
+	opacity: 0.7;
+}
+
+.board-monsters { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-2); }
+
+.board-settings {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: end;
+	gap: var(--sp-2) var(--sp-3);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-lg);
+	padding: var(--sp-2) var(--sp-3);
+}
+
+.board-set { display: flex; flex-direction: column; gap: 0.25rem; font-size: var(--fs-xs); opacity: 0.85; }
+
+.board-set select {
+	border: 1px solid var(--stone-line);
+	background: var(--stone-700);
+	color: var(--parchment, #efe4c9);
+	border-radius: var(--r-md);
+	padding: 0.3rem 0.5rem;
+}
+
+.board-set-note { font-size: var(--fs-xs); opacity: 0.7; }
+
+.board-presence { margin: 0; font-size: var(--fs-xs); opacity: 0.6; }
+
+@media (max-width: 560px) {
+	.board-strips { grid-template-columns: 1fr; }
+	.strip-hp { font-size: 2.4rem; }
+	.strip-word { font-size: 1.7rem; }
+	.board-order { font-size: var(--fs-xs); }
+}

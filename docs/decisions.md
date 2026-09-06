@@ -857,3 +857,77 @@ away from its source.
 | Durations as wall-clock timestamps (expires_at) | The campaign clock is a day counter, not a wall clock — there is no wall time to stamp; an anchor day plus canonical seconds is the honest model |
 | Free-text conditions with a suggested list | The vocabulary is the game's own set; `dizzy` accepted today is a sheet no validator can trust tomorrow (MAD-383's rule, applied) |
 | Storing the SRD text on the row at apply time | A paraphrase frozen at apply drifts from the index; read-time grounding always shows what the corpus actually says |
+
+## ADR 19 — A campaign pub/sub, and board visibility built by construction
+
+**Status:** accepted · **Date:** 2026-09-06 · **Issue:** MAD-423
+
+### Context
+
+Stage 6 adds the party board — the table's live view of the party's
+mechanical state — and with it the roadmap's one real infrastructure
+need: a way for a change to land on every screen without a refresh. The
+app had two SSE surfaces by then (the chat stream, the dice feed) but no
+shared push channel, and the dice feed's broker was private to its
+store. The second question is sharper: the board's whole value is what
+it shows *other* people's characters as, and tables differ on that —
+exact HP or a health word, slots shared or private. Visibility as a
+client concern is a leak with extra steps.
+
+### Decision
+
+**One in-process broker, topics are campaigns** (`internal/pubsub`),
+grown out of the dice feed's broker and replacing it. Every mechanical
+store pings its campaign after a commit — the ledger, the effect
+engine, the combat tracker, membership and settings writes — and each
+subscriber wakes and re-queries **with its own scope**. The broker
+carries no payloads: a ping is only "look again". That is the leak
+posture — the push channel cannot widen what a reader may see, only
+make the allowed read arrive sooner — and it keeps the broker a hundred
+lines of mutex and channels instead of an authorization surface.
+Process-local is correct: one binary over embedded SQLite; every stream
+keeps a slow poll as the safety net, and identical snapshots send
+nothing, so the wire stays quiet between real changes.
+
+**Hit points join the pool grammar** (`kind=hp`, size = the sheet's
+max, recovery manual — the 2014 long rest returns hit dice, not
+health). Before this, current HP existed only on combat rows: the board
+could not answer "how hurt is the wizard" between fights, and out-of-
+combat damage had no home. The pool fixes it without a new table: the
+tracker stays the fast state during a battle (a battle now *starts*
+from the ledger's truth, not the sheet's max) and writes each
+survivor's final hp back as a visible `set` transaction on end — the
+same bridge the DM's own corrections use, one provenance rule for every
+hp number in the app.
+
+**Visibility is data on the campaign** (the settings payload's `board`
+key: `hp: exact|word`, `slots: visible|private`), and the snapshot
+builder enforces it **by construction**: a hidden field is never placed
+on the view struct, so it is absent from the JSON — never zeroed, never
+merely hidden in a client. The stores the board reads sit behind narrow
+interfaces (the `PlayerView` pattern applied to mechanics — a leaky
+read cannot be written, not just should not be), and the leak tests
+assert absence on raw wire bodies. Three standings read the same
+endpoints: the DM (every number, plus the monster side), a player (the
+config's shape, their own strip always exact — 5e players know their
+own numbers), and an observer (the config's shape, no self to claim).
+The health words are a declared vocabulary — unhurt, hurt, bloodied
+(half max or less, the game's own term), down, dead — and an
+unparseable stored config fails closed: word mode, private slots.
+
+**Presence is holding the stream open**: the users with a board stream
+on a campaign, counted once each, in-memory and ephemeral by design.
+Being at the table means having the book open — the stream starts at
+app boot like the dice curtain — not having the right window focused.
+
+### Alternatives rejected
+
+| Alternative | Why rejected |
+|---|---|
+| Websockets | Bidirectional and reconnectable for a payload that is one-way snapshots; SSE matches the stack (the chat and dice streams), survives proxies with a ping, and auto-reconnects natively |
+| A payload-carrying broker (publish the change, not the ping) | The broker becomes an authorization surface — every publisher must filter per subscriber; per-reader re-query keeps visibility in the query layer where every leak test already lives |
+| Per-surface polling (no broker) | A board that needs a refresh button is a scoreboard; the poll-only variant burns queries to discover nothing changed |
+| HP as a tracker column that survives combat | A second truth for one number: out-of-combat corrections would need tracker APIs, the ledger would never know, and Stage 9's replay could not re-derive it — the pool grammar already existed |
+| A board visibility table (columns) | The settings payload exists and is the house pattern for table-shape choices (ADR 15's payload-over-columns); a typed key with strict validation is the same guarantee with no migration |
+| Visibility filtered client-side or by zeroing fields | A zero and a missing field are indistinguishable to a curious client; absence on the wire is the only honest hiding, and the only thing the leak tests can pin |
+| Per-member visibility flags | Tables differ by culture, not by character; a campaign-level pair (hp, slots) is what a DM actually decides, and it composes with the always-exact self exception |

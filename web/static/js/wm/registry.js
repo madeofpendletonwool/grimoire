@@ -82,6 +82,12 @@ export const TOOLS = Object.freeze({
 		blurb: "The shared roller and the table's live feed",
 		load: () => import("../dice.js"),
 	},
+	board: {
+		title: "Board", icon: "shield", corpus: "dnd", accel: "b",
+		instances: "single", min: [380, 420],
+		blurb: "The party, live — hp, conditions, who's at the table",
+		load: () => import("../board.js"),
+	},
 	review: {
 		title: "Review", icon: "shield", corpus: "dnd", accel: "v",
 		instances: "single", min: [460, 360],

@@ -1035,6 +1035,51 @@
 				</div>
 			</div>
 		</section>
+		<section class="board" id="board-view" hidden aria-label="Party board">
+			<header class="study-head">
+				<h2 class="study-title" id="board-title">Board</h2>
+				<div class="camp-picker">
+					<select id="board-campaign" aria-label="Campaign"><option value="">No campaigns yet…</option></select>
+				</div>
+				<p class="study-meta" id="board-meta"></p>
+			</header>
+
+			<div class="board-body" id="board-body" hidden>
+				<div class="board-banner" id="board-banner" hidden></div>
+				<div class="board-strips" id="board-strips" aria-live="polite"></div>
+				<div class="board-side" id="board-monsters" hidden>
+					<h3 class="board-side-title">The other side</h3>
+					<div class="board-monsters" id="board-monster-rows"></div>
+				</div>
+				<form class="board-settings" id="board-settings" hidden autocomplete="off">
+					<h3 class="board-side-title">Visibility — what the table may see</h3>
+					<label class="board-set">
+						<span>hit points</span>
+						<select id="board-set-hp" aria-label="Hit point visibility">
+							<option value="exact">exact numbers</option>
+							<option value="word">a word (bloodied)</option>
+						</select>
+					</label>
+					<label class="board-set">
+						<span>spell slots</span>
+						<select id="board-set-slots" aria-label="Slot visibility">
+							<option value="visible">everyone's</option>
+							<option value="private">each player's own</option>
+						</select>
+					</label>
+					<button type="submit" class="enc-btn">Save</button>
+					<span class="board-set-note" id="board-set-note"></span>
+				</form>
+				<p class="board-presence" id="board-presence"></p>
+			</div>
+
+			<div class="camp-empty" id="board-empty" hidden>
+				<div class="camp-panel">
+					<h3 class="enc-heading">No campaign yet</h3>
+					<p class="camp-status">The board belongs to a table. Found a campaign first, or take a seat with an invite.</p>
+				</div>
+			</div>
+		</section>
 		<section class="sessions" id="review-view" hidden aria-label="Canon review queue">
 			<header class="study-head">
 				<h2 class="study-title" id="review-title">Review queue</h2>
