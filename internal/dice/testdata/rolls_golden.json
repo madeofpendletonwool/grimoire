@@ -1,0 +1,413 @@
+[
+  {
+    "seed": 20260906,
+    "nonce": 1,
+    "formula": "1d20+5",
+    "result": {
+      "formula": "1d20 + 5",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 1,
+          "sides": 20,
+          "formula": "1d20",
+          "dice": [
+            {
+              "value": 7,
+              "kept": true
+            }
+          ],
+          "subtotal": 7
+        },
+        {
+          "kind": "flat",
+          "sign": 1,
+          "formula": "5",
+          "subtotal": 5
+        }
+      ],
+      "modifier": 5,
+      "total": 12
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 2,
+    "formula": "1d20+5",
+    "mode": "advantage",
+    "result": {
+      "formula": "2d20kh1 + 5",
+      "mode": "advantage",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 2,
+          "sides": 20,
+          "keep": 1,
+          "formula": "2d20kh1",
+          "dice": [
+            {
+              "value": 11,
+              "kept": true
+            },
+            {
+              "value": 9,
+              "kept": false
+            }
+          ],
+          "subtotal": 11
+        },
+        {
+          "kind": "flat",
+          "sign": 1,
+          "formula": "5",
+          "subtotal": 5
+        }
+      ],
+      "modifier": 5,
+      "total": 16
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 3,
+    "formula": "1d20+3",
+    "mode": "disadvantage",
+    "result": {
+      "formula": "2d20kl1 + 3",
+      "mode": "disadvantage",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 2,
+          "sides": 20,
+          "keep": 1,
+          "keep_low": true,
+          "formula": "2d20kl1",
+          "dice": [
+            {
+              "value": 5,
+              "kept": true
+            },
+            {
+              "value": 13,
+              "kept": false
+            }
+          ],
+          "subtotal": 5
+        },
+        {
+          "kind": "flat",
+          "sign": 1,
+          "formula": "3",
+          "subtotal": 3
+        }
+      ],
+      "modifier": 3,
+      "total": 8
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 4,
+    "formula": "2d6+3",
+    "result": {
+      "formula": "2d6 + 3",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 2,
+          "sides": 6,
+          "formula": "2d6",
+          "dice": [
+            {
+              "value": 2,
+              "kept": true
+            },
+            {
+              "value": 6,
+              "kept": true
+            }
+          ],
+          "subtotal": 8
+        },
+        {
+          "kind": "flat",
+          "sign": 1,
+          "formula": "3",
+          "subtotal": 3
+        }
+      ],
+      "modifier": 3,
+      "total": 11
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 5,
+    "formula": "4d6kh3",
+    "result": {
+      "formula": "4d6kh3",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 4,
+          "sides": 6,
+          "keep": 3,
+          "formula": "4d6kh3",
+          "dice": [
+            {
+              "value": 5,
+              "kept": true
+            },
+            {
+              "value": 3,
+              "kept": true
+            },
+            {
+              "value": 2,
+              "kept": false
+            },
+            {
+              "value": 6,
+              "kept": true
+            }
+          ],
+          "subtotal": 14
+        }
+      ],
+      "modifier": 0,
+      "total": 14
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 6,
+    "formula": "8d6",
+    "result": {
+      "formula": "8d6",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 8,
+          "sides": 6,
+          "formula": "8d6",
+          "dice": [
+            {
+              "value": 5,
+              "kept": true
+            },
+            {
+              "value": 3,
+              "kept": true
+            },
+            {
+              "value": 1,
+              "kept": true
+            },
+            {
+              "value": 4,
+              "kept": true
+            },
+            {
+              "value": 4,
+              "kept": true
+            },
+            {
+              "value": 3,
+              "kept": true
+            },
+            {
+              "value": 5,
+              "kept": true
+            },
+            {
+              "value": 4,
+              "kept": true
+            }
+          ],
+          "subtotal": 29
+        }
+      ],
+      "modifier": 0,
+      "total": 29
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 7,
+    "formula": "1d12-2",
+    "result": {
+      "formula": "1d12 - 2",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 1,
+          "sides": 12,
+          "formula": "1d12",
+          "dice": [
+            {
+              "value": 6,
+              "kept": true
+            }
+          ],
+          "subtotal": 6
+        },
+        {
+          "kind": "flat",
+          "sign": -1,
+          "formula": "2",
+          "subtotal": 2
+        }
+      ],
+      "modifier": -2,
+      "total": 4
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 8,
+    "formula": "10",
+    "result": {
+      "formula": "10",
+      "terms": [
+        {
+          "kind": "flat",
+          "sign": 1,
+          "formula": "10",
+          "subtotal": 10
+        }
+      ],
+      "modifier": 10,
+      "total": 10
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 9,
+    "formula": "1d100",
+    "result": {
+      "formula": "1d100",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 1,
+          "sides": 100,
+          "formula": "1d100",
+          "dice": [
+            {
+              "value": 27,
+              "kept": true
+            }
+          ],
+          "subtotal": 27
+        }
+      ],
+      "modifier": 0,
+      "total": 27
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 10,
+    "formula": "2d20kh1+5",
+    "result": {
+      "formula": "2d20kh1 + 5",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 2,
+          "sides": 20,
+          "keep": 1,
+          "formula": "2d20kh1",
+          "dice": [
+            {
+              "value": 10,
+              "kept": false
+            },
+            {
+              "value": 12,
+              "kept": true
+            }
+          ],
+          "subtotal": 12
+        },
+        {
+          "kind": "flat",
+          "sign": 1,
+          "formula": "5",
+          "subtotal": 5
+        }
+      ],
+      "modifier": 5,
+      "total": 17
+    }
+  },
+  {
+    "seed": 20260906,
+    "nonce": 11,
+    "formula": "3d8+2d6+4",
+    "result": {
+      "formula": "3d8 + 2d6 + 4",
+      "terms": [
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 3,
+          "sides": 8,
+          "formula": "3d8",
+          "dice": [
+            {
+              "value": 3,
+              "kept": true
+            },
+            {
+              "value": 7,
+              "kept": true
+            },
+            {
+              "value": 2,
+              "kept": true
+            }
+          ],
+          "subtotal": 12
+        },
+        {
+          "kind": "dice",
+          "sign": 1,
+          "count": 2,
+          "sides": 6,
+          "formula": "2d6",
+          "dice": [
+            {
+              "value": 6,
+              "kept": true
+            },
+            {
+              "value": 3,
+              "kept": true
+            }
+          ],
+          "subtotal": 9
+        },
+        {
+          "kind": "flat",
+          "sign": 1,
+          "formula": "4",
+          "subtotal": 4
+        }
+      ],
+      "modifier": 4,
+      "total": 25
+    }
+  }
+]

@@ -742,3 +742,57 @@ transaction.
 | Hit dice as `long` recovery with a half-size reset | Wrong per the 2014 PHB (they return *up to* half, minimum one); the explicit regain transaction keeps the grammar pure and the number correct |
 | Per-feature rest rules (a `resets_on` table per feature) | The recovery grammar is the one rule; pact magic is just a `short` slot pool, and a special case per feature is the maintenance burden the grammar exists to avoid |
 | Hooking dawn recovery into every clock advance | Would couple the campaign store to the ledger for a vocabulary nothing in the 2014 core uses; dawns reset on the rest that crosses them, and other advances take an explicit, visible transaction |
+
+---
+
+## ADR 17 — Dice are facts with visibility, on a counter-based RNG
+
+**Status:** accepted · **Date:** 2026-09-06 · **Issue:** MAD-420
+
+### Context
+
+Stage 3 of the mechanical layer adds the dice roller — the most-touched
+surface in mid-play and the one place where a number appears out of thin
+air in front of the whole table. Two design questions: what a roll *is*
+(an ephemeral widget event, or a record), and how a roll can be
+reproduced (for tests now, for Stage 9's session replay later).
+
+### Decision
+
+**A roll is a stored fact with visibility**, in the knowledge layer's own
+vocabulary: `public` rolls feed the shared party stream; `secret` rolls
+are DM-only, and the feed's SQL filters them out of every player-scoped
+read — the leak tests assert the absence, the `PlayerView` pattern applied
+to numbers. Every roll carries provenance (who, as whom, the formula, the
+natural dice, the modifiers, the total, a declared context vocabulary)
+and, while a session is live, mirrors into the session log as a kind
+`roll` event — the export prints it, later stages replay it. A campaign
+with no live sitting still gets its roll; the roller never demands
+ceremony.
+
+**The RNG is counter-based, not stream-based.** Each campaign owns a
+64-bit seed minted once (`dice_seeds`); each roll's per-campaign seq
+doubles as the nonce; `splitmix64(seed ^ splitmix64(nonce))` seeds the
+value stream, so `(seed, nonce, formula)` reproduces the dice exactly —
+pinned by golden files, re-derived in store tests. A roll never draws
+from a shared long-lived stream: replaying roll #7 must not depend on
+rolls #1–6. The rolled values are stored too, because the feed should
+render without re-deriving and the stored bytes are the replay's oracle.
+
+Players roll public as their bound character (both enforced server-side,
+403 otherwise); the DM may roll secret as anyone. Advantage and
+disadvantage are a mode the engine applies to a formula carrying exactly
+one plain d20 term (`1d20+5` → `2d20kh1+5`) — not syntax, so the parser's
+grammar stays sums-and-keeps and `4d6kh3` is advantage's honest spelling
+for stat rolls.
+
+### Alternatives rejected
+
+| Alternative | Why rejected |
+|---|---|
+| A client-side roller that posts totals | No provenance, no shared feed, no replay; a number nobody can trust is not a fact |
+| A shared sequential RNG stream advanced per roll | Replay of roll N depends on the rolls before it; one lost roll desynchronizes every later one — the counter-based derivation is independent per roll |
+| Storing only (seed, nonce) and re-deriving dice on read | Re-derivation on every render couples the feed to engine versioning; the stored result is the oracle and the derivation is the proof they agree |
+| Advantage as parser syntax (`2d20kh1` required) | Every table says "roll with advantage"; refusing `1d20+5 adv` to force the keep-clause spelling serves the grammar, not the game |
+| Rolls refused without a live session | A roller that demands ceremony before it rolls does not get used; sessionless rolls stay campaign-scoped facts, and the log mirrors the moment a sitting is live |
+| Roll visibility decided client-side | Same rule as every visibility in Grimoire: the server's query is the gate; the UI only renders what arrived |

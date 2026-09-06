@@ -10,6 +10,7 @@ import { $, el, clear, isNarrow } from "./dom.js";
 import { api, streamCampaignAnswer } from "./api.js";
 import { renderAnswer, renderCitations } from "./render.js";
 import { reviewFor } from "./review.js";
+import { parseRollCommand, performRoll, rollCard } from "./dice.js";
 
 let campaigns = [];
 let campaignID = null; // { id, my_role }
@@ -298,12 +299,44 @@ function onSubmit(e) {
 	const input = $("cchat-input");
 	const text = input.value.trim();
 	if (!text || streaming) return;
+	// The composer is where slash commands already live, and /r is one of
+	// them (MAD-420): a roll goes to the dice engine, not the model — no
+	// thread required, players included.
+	const rollCmd = parseRollCommand(text);
+	if (rollCmd) {
+		input.value = "";
+		runRollCommand(rollCmd);
+		return;
+	}
 	if (!thread) {
 		renderMeta("Start a thread first.", true);
 		return;
 	}
 	input.value = "";
 	ask(text);
+}
+
+// runRollCommand performs the roll and lays the card in the transcript —
+// an ephemeral rendering of a persisted fact: the roll itself lives in
+// the shared feed and the session log, not the chat thread.
+async function runRollCommand(cmd) {
+	const box = $("cchat-transcript");
+	if ($("cchat-status")) $("cchat-status").remove();
+	box.append(userMessage(`/r ${cmd.formula}`));
+	const pending = el("div", { class: "cchat-msg is-pending" },
+		el("div", { class: "cchat-mark", text: "the dice" }),
+		el("p", { class: "camp-status cchat-thinking", text: "Rolling…" }));
+	box.append(pending);
+	scrollTranscript();
+	try {
+		const roll = await performRoll(campaignID, cmd.formula, { detail: cmd.rest });
+		pending.replaceWith(el("div", { class: "cchat-msg" },
+			el("div", { class: "cchat-mark", text: "the dice" }),
+			rollCard(roll)));
+	} catch (err) {
+		clear(pending).append(el("p", { class: "camp-status warn", text: err.message }));
+	}
+	scrollTranscript();
 }
 
 async function ask(question) {

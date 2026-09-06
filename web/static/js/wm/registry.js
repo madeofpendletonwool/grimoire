@@ -76,6 +76,12 @@ export const TOOLS = Object.freeze({
 		blurb: "What was actually played, with citable spans",
 		load: () => import("../sessions.js"),
 	},
+	dice: {
+		title: "Dice", icon: "dice", corpus: "dnd", accel: "i",
+		instances: "single", min: [420, 460],
+		blurb: "The shared roller and the table's live feed",
+		load: () => import("../dice.js"),
+	},
 	review: {
 		title: "Review", icon: "shield", corpus: "dnd", accel: "v",
 		instances: "single", min: [460, 360],

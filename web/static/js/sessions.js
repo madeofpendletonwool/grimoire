@@ -9,6 +9,7 @@
 
 import { $, el, clear, isNarrow } from "./dom.js";
 import { api } from "./api.js";
+import { miniDice } from "./dice.js";
 import { state } from "./state.js";
 
 let campaignID = null;   // the campaign whose sessions are showing
@@ -30,6 +31,7 @@ const EVENT_KINDS = {
 	note: "note",
 	discovery: "discovery",
 	encounter: "encounter",
+	roll: "roll",
 };
 
 function wire() {
@@ -422,10 +424,19 @@ async function loadEvents() {
 }
 
 function eventRow(ev) {
-	const extras = ev.payload && Object.keys(ev.payload).length
-		? el("ul", { class: "sess-event-payload" },
-			...Object.entries(ev.payload).map(([k, v]) => el("li", { text: `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}` })))
-		: null;
+	// A roll event renders as the roll it was — the dice themselves, not
+	// the engine's JSON (MAD-420). Everything else keeps the payload list.
+	const extras = ev.kind === "roll" && ev.payload && Array.isArray(ev.payload.dice)
+		? el("div", { class: "sess-event-roll" },
+			miniDice(ev.payload.dice),
+			el("b", { class: "dice-row-total", text: String(ev.payload.total ?? "") }),
+			ev.payload.visibility === "secret"
+				? el("i", { class: "dice-row-lock", text: "secret" })
+				: null)
+		: ev.payload && Object.keys(ev.payload).length
+			? el("ul", { class: "sess-event-payload" },
+				...Object.entries(ev.payload).map(([k, v]) => el("li", { text: `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}` })))
+			: null;
 	const at = ev.created_at ? new Date(ev.created_at).toLocaleTimeString() : "";
 	return el("article", { class: "sess-event" },
 		el("header", { class: "sess-event-head" },

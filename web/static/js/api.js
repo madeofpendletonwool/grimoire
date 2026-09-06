@@ -310,6 +310,19 @@ export const api = {
 	characterSheet: (cid, eid) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/characters/${encodeURIComponent(eid)}/sheet`).then(json),
 
+	// Dice (MAD-420): roll, and read the shared feed. The stream is an
+	// EventSource the dice module owns — cookie-authenticated like every
+	// other read.
+	diceRoll: (cid, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rolls`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	diceFeed: (cid, after = 0, limit = 50) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/rolls?after=${after}&limit=${limit}`).then(json),
+
 	characterSheetPut: (cid, eid, sheet) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/characters/${encodeURIComponent(eid)}/sheet`, {
 			method: "PUT",
