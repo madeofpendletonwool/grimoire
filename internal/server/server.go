@@ -22,6 +22,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/carddb"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
+	"github.com/madeofpendletonwool/grimoire/internal/combat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
 	"github.com/madeofpendletonwool/grimoire/internal/dice"
@@ -128,6 +129,12 @@ type Server struct {
 	// clock. Wired with WithEffects (needs the campaign store and the
 	// index for SRD grounding); nil disables the effect endpoints.
 	effectEngine *effects.Store
+	// The combat tracker (MAD-422): the whole battle as one state
+	// machine over sheets and statblocks. Wired with WithCombat (needs
+	// the campaign, session and dice stores, plus the effect engine and
+	// the statblock resolver for the full automations); nil disables
+	// the combat endpoints.
+	combats *combat.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -317,6 +324,25 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/effects/advance", s.handleEffectsAdvance)
 	mux.HandleFunc("POST /api/campaigns/{id}/effects/{fxid}/end", s.handleEndEffect)
 	mux.HandleFunc("GET /api/campaigns/{id}/characters/{eid}/effects", s.handleCharacterEffects)
+	// The combat tracker (MAD-422): the whole battle as one state
+	// machine — pcs from sheets, monsters and companions from
+	// statblocks, every change journaled and mirrored into the session
+	// log. The tracker is the DM's screen: every route is the DM
+	// perspective. The literal paths win over {cid} beside them.
+	mux.HandleFunc("GET /api/campaigns/{id}/combat", s.handleActiveCombat)
+	mux.HandleFunc("POST /api/campaigns/{id}/combat", s.handleStartCombat)
+	mux.HandleFunc("GET /api/campaigns/{id}/combats", s.handleListCombats)
+	mux.HandleFunc("GET /api/campaigns/{id}/combats/{cid}", s.handleGetCombat)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/next", s.handleCombatNextTurn)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/end", s.handleEndCombat)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/damage", s.handleCombatDamage)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/heal", s.handleCombatHeal)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/temp-hp", s.handleCombatTempHP)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/death-save", s.handleCombatDeathSave)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/reaction", s.handleCombatReaction)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/legendary", s.handleCombatLegendary)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions", s.handleCombatApplyCondition)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions/{condid}/end", s.handleCombatEndCondition)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts", s.handleCampaignFacts)
 	mux.HandleFunc("POST /api/campaigns/{id}/facts", s.handleCreateCampaignFact)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts/{fid}", s.handleCampaignFact)
