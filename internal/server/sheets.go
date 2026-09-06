@@ -34,14 +34,17 @@ import (
 
 // sheetRead is the GET body: the typed sheet when there is one, the marker
 // when there is not. Problems carries payload-block problems the way the
-// party table does — reported, never fatal.
+// party table does — reported, never fatal. QuickRolls (MAD-420) rides
+// along: the roll bar's one-tap formulas, derived server-side so no
+// surface re-derives proficiency bonuses of its own.
 type sheetRead struct {
-	EntityID   string          `json:"entity_id"`
-	Name       string          `json:"name"`
-	Status     string          `json:"status"`
-	Structured bool            `json:"structured"`
-	Sheet      json.RawMessage `json:"sheet,omitempty"`
-	Problems   []string        `json:"problems,omitempty"`
+	EntityID   string            `json:"entity_id"`
+	Name       string            `json:"name"`
+	Status     string            `json:"status"`
+	Structured bool              `json:"structured"`
+	Sheet      json.RawMessage   `json:"sheet,omitempty"`
+	QuickRolls []sheet.QuickRoll `json:"quick_rolls,omitempty"`
+	Problems   []string          `json:"problems,omitempty"`
 }
 
 func (s *Server) handleGetCharacterSheet(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +81,7 @@ func (s *Server) handleGetCharacterSheet(w http.ResponseWriter, r *http.Request)
 		if blob, err := json.Marshal(read.Sheet); err == nil {
 			body.Sheet = blob
 		}
+		body.QuickRolls = sheet.QuickRolls(read.Sheet)
 	}
 	writeJSON(w, http.StatusOK, body)
 }
@@ -97,6 +101,7 @@ func sheetReadOf(e *campaign.Entity) sheetRead {
 		if blob, err := json.Marshal(s); err == nil {
 			body.Sheet = blob
 		}
+		body.QuickRolls = sheet.QuickRolls(s)
 	}
 	return body
 }

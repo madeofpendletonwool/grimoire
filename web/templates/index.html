@@ -146,6 +146,11 @@
 		</div>
 	</div>
 
+	<!-- The party-wide roll moment (MAD-420): a public roll landing anywhere
+	     drops this curtain from the top of the app for everyone watching the
+	     campaign — the anticipation the table shares. -->
+	<div class="roll-curtain" id="roll-curtain" hidden></div>
+
 	<script type="module" src="/static/js/app.js"></script>
 
 	<!-- ---------- Surface stash ----------
@@ -957,11 +962,76 @@
 			</div>
 
 			<!-- The empty state: nothing to ask until a campaign exists. -->
-			<div class="camp-empty" id="cchat-empty" hidden>
+ 			<div class="camp-empty" id="cchat-empty" hidden>
+ 				<div class="camp-panel">
+ 					<h3 class="enc-heading">No campaign yet</h3>
+ 					<p class="camp-status">The campaign Grimoire answers from a campaign's living record — what its people know, not what a model guesses. Found a campaign first, or take a seat with an invite.</p>
+ 					<button type="button" class="enc-btn" id="cchat-go-campaign">Open the campaign world</button>
+ 				</div>
+ 			</div>
+ 		</section>
+		<section class="dice" id="dice-view" hidden aria-label="Dice">
+			<header class="study-head">
+				<h2 class="study-title" id="dice-title">Dice</h2>
+				<div class="camp-picker">
+					<select id="dice-campaign" aria-label="Campaign"><option value="">No campaigns yet…</option></select>
+				</div>
+				<p class="study-meta" id="dice-meta"></p>
+			</header>
+
+			<div class="dice-body" id="dice-body" hidden>
+				<div class="dice-stage" id="dice-stage" aria-live="polite">
+					<p class="dice-stage-hint">The table's dice land here.</p>
+				</div>
+
+				<form class="dice-bar" id="dice-bar" autocomplete="off">
+					<input id="dice-formula" class="enc-field dice-formula" type="text" spellcheck="false"
+						placeholder="2d6+3 — or 4d6kh3, 2d20kl1…" aria-label="Dice formula">
+					<div class="dice-modes" role="group" aria-label="Roll mode">
+						<button type="button" class="dice-mode" id="dice-adv" data-mode="advantage" aria-pressed="false"
+							title="Advantage — the d20 rolls twice, keeps the high">adv</button>
+						<button type="button" class="dice-mode" id="dice-dis" data-mode="disadvantage" aria-pressed="false"
+							title="Disadvantage — the d20 rolls twice, keeps the low">dis</button>
+						<button type="button" class="dice-mode" id="dice-secret" data-secret="1" aria-pressed="false" hidden
+							title="Secret — the DM sees it, the table never does">secret</button>
+					</div>
+					<button type="submit" class="enc-btn primary dice-roll-btn" id="dice-roll">Roll</button>
+				</form>
+
+				<div class="dice-quick">
+					<div class="dice-denoms" id="dice-denoms" role="group" aria-label="Quick dice">
+						<button type="button" class="die-btn" data-die="d4"><i>d4</i></button>
+						<button type="button" class="die-btn" data-die="d6"><i>d6</i></button>
+						<button type="button" class="die-btn" data-die="d8"><i>d8</i></button>
+						<button type="button" class="die-btn" data-die="d10"><i>d10</i></button>
+						<button type="button" class="die-btn" data-die="d12"><i>d12</i></button>
+						<button type="button" class="die-btn" data-die="d20"><i>d20</i></button>
+						<button type="button" class="die-btn" data-die="d100"><i>d100</i></button>
+					</div>
+					<div class="dice-context">
+						<select id="dice-context" class="dice-context-kind" aria-label="What the roll is for">
+							<option value="other">just dice</option>
+							<option value="attack">attack</option>
+							<option value="save">save</option>
+							<option value="check">check</option>
+							<option value="damage">damage</option>
+							<option value="initiative">initiative</option>
+							<option value="table">table</option>
+						</select>
+						<input id="dice-detail" class="enc-field dice-detail" type="text"
+							placeholder="what for — “Fireball at the goblins”" aria-label="Roll detail">
+					</div>
+				</div>
+
+				<div class="dice-quickrolls" id="dice-quickrolls" hidden></div>
+
+				<div class="dice-feed" id="dice-feed" aria-label="The shared roll feed"></div>
+			</div>
+
+			<div class="camp-empty" id="dice-empty" hidden>
 				<div class="camp-panel">
 					<h3 class="enc-heading">No campaign yet</h3>
-					<p class="camp-status">The campaign Grimoire answers from a campaign's living record — what its people know, not what a model guesses. Found a campaign first, or take a seat with an invite.</p>
-					<button type="button" class="enc-btn" id="cchat-go-campaign">Open the campaign world</button>
+					<p class="camp-status">The shared feed belongs to a table — rolls land where the campaign can see them. Found a campaign first, or take a seat with an invite.</p>
 				</div>
 			</div>
 		</section>

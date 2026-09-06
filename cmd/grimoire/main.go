@@ -79,6 +79,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
+	"github.com/madeofpendletonwool/grimoire/internal/dice"
 	"github.com/madeofpendletonwool/grimoire/internal/downtime"
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/embeddings"
@@ -1587,6 +1588,14 @@ func runServe() error {
 	}
 	canonEngine = canonEngine.WithRestFinalizer(ledgerEngine)
 
+	// The dice engine (MAD-420): rolls with provenance, the shared feed
+	// and the live stream. It mirrors rolls into the session log, so it
+	// rides on the campaign and session stores.
+	diceStore, err := dice.New(store.DB(), campaigns, gameSessions)
+	if err != nil {
+		return err
+	}
+
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
 		func(ctx context.Context) error { return buildIndex(ctx, store) })
@@ -1603,6 +1612,7 @@ func runServe() error {
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)
 	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine).WithJourneys(journeyEngine).WithLedger(ledgerEngine)
+	srv = srv.WithDice(diceStore)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {

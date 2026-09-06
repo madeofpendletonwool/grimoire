@@ -24,6 +24,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
+	"github.com/madeofpendletonwool/grimoire/internal/dice"
 	"github.com/madeofpendletonwool/grimoire/internal/downtime"
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/encounter"
@@ -117,6 +118,10 @@ type Server struct {
 	// typed sheets. Wired with WithLedger (needs the campaign store and the
 	// canon engine); nil disables the resource endpoints.
 	ledgers *ledger.Store
+	// The dice engine's store (MAD-420): rolls with provenance and the
+	// shared feed. Wired with WithDice (needs the campaign and session
+	// stores); nil disables the roll endpoints.
+	dice *dice.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -291,6 +296,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/characters/{eid}/resources/{pid}/transactions", s.handleResourceTransaction)
 	mux.HandleFunc("POST /api/campaigns/{id}/rests", s.handleCampaignRest)
 	mux.HandleFunc("POST /api/campaigns/{id}/rests/propose", s.handleCampaignRestPropose)
+	mux.HandleFunc("POST /api/campaigns/{id}/rolls", s.handleRollDice)
+	mux.HandleFunc("GET /api/campaigns/{id}/rolls", s.handleRollFeed)
+	mux.HandleFunc("GET /api/campaigns/{id}/rolls/stream", s.handleRollStream)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts", s.handleCampaignFacts)
 	mux.HandleFunc("POST /api/campaigns/{id}/facts", s.handleCreateCampaignFact)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts/{fid}", s.handleCampaignFact)

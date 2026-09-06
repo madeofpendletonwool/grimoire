@@ -88,18 +88,30 @@ func (s *Store) ExportMarkdown(ctx context.Context, sessionID string) (string, e
 		if head == "" {
 			head = strings.ToUpper(ev.Kind[:1]) + ev.Kind[1:]
 		}
-		fmt.Fprintf(&b, "**#%d %s** — %s\n\n", ev.Seq, ev.Kind, head)
+		fmt.Fprintf(&b, "**#%d %s** — %s", ev.Seq, ev.Kind, head)
+		// A roll's payload is the engine's structured result — printed in
+		// the summary's notation already, so it never dumps as raw JSON.
+		// Secret rolls keep their marker in the DM's own export.
+		if ev.Kind == EventRoll {
+			if vis, _ := ev.Payload["visibility"].(string); vis == "secret" {
+				b.WriteString(" · _secret_")
+			}
+		}
+		b.WriteString("\n\n")
 		if ev.Detail != "" {
 			for _, line := range strings.Split(strings.TrimRight(ev.Detail, "\n"), "\n") {
 				fmt.Fprintf(&b, "> %s\n", line)
 			}
 			b.WriteString("\n")
 		}
-		for _, k := range payloadKeys(ev.Payload) {
-			fmt.Fprintf(&b, "- %s: %v\n", k, ev.Payload[k])
-		}
-		if len(payloadKeys(ev.Payload)) > 0 {
-			b.WriteString("\n")
+		if ev.Kind != EventRoll {
+			keys := payloadKeys(ev.Payload)
+			for _, k := range keys {
+				fmt.Fprintf(&b, "- %s: %v\n", k, ev.Payload[k])
+			}
+			if len(keys) > 0 {
+				b.WriteString("\n")
+			}
 		}
 		fmt.Fprintf(&b, "_%s_\n\n", ev.CreatedAt.Format("15:04:05 MST"))
 	}

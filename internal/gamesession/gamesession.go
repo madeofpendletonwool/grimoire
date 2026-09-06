@@ -74,18 +74,20 @@ var validStatus = map[string]bool{
 	StatusPlanned: true, StatusLive: true, StatusDone: true,
 }
 
-// Event kinds. The ruling log from MAD-286 is one kind here.
+// Event kinds. The ruling log from MAD-286 is one kind here; the dice
+// roller's mirror (MAD-420) is another.
 const (
 	EventQA        = "qa"
 	EventRuling    = "ruling"
 	EventNote      = "note"
 	EventDiscovery = "discovery"
 	EventEncounter = "encounter"
+	EventRoll      = "roll"
 )
 
 var validEvents = map[string]bool{
 	EventQA: true, EventRuling: true, EventNote: true,
-	EventDiscovery: true, EventEncounter: true,
+	EventDiscovery: true, EventEncounter: true, EventRoll: true,
 }
 
 /* ---------- the store ---------- */
