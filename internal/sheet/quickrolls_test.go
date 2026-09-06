@@ -32,14 +32,14 @@ func TestQuickRollsDeriveFromTheSheet(t *testing.T) {
 
 	// PB 3 at rogue 5: DEX 17 (+3) saves +3 = 1d20+6; checks without PB.
 	want := map[string]string{
-		"STR check -1":   "1d20-1",
-		"DEX check +3":   "1d20+3",
-		"WIS check +0":   "1d20+0",
-		"Initiative +3":  "1d20+3",
-		"DEX save +6":    "1d20+6",
-		"INT save +4":    "1d20+4", // INT 12 (+1) + PB 3
-		"Stealth +6":     "1d20+6", // DEX +3 + PB 3
-		"Perception +3":  "1d20+3", // WIS +0 + PB 3
+		"STR check -1":    "1d20-1",
+		"DEX check +3":    "1d20+3",
+		"WIS check +0":    "1d20+0",
+		"Initiative +3":   "1d20+3",
+		"DEX save +6":     "1d20+6",
+		"INT save +4":     "1d20+4", // INT 12 (+1) + PB 3
+		"Stealth +6":      "1d20+6", // DEX +3 + PB 3
+		"Perception +3":   "1d20+3", // WIS +0 + PB 3
 		"Spell attack +5": "1d20+5",
 	}
 	for label, formula := range want {
