@@ -75,7 +75,8 @@ var validStatus = map[string]bool{
 }
 
 // Event kinds. The ruling log from MAD-286 is one kind here; the dice
-// roller's mirror (MAD-420) is another.
+// roller's mirror (MAD-420) is another; the combat tracker's stream
+// (MAD-422) is the densest of the three.
 const (
 	EventQA        = "qa"
 	EventRuling    = "ruling"
@@ -83,11 +84,12 @@ const (
 	EventDiscovery = "discovery"
 	EventEncounter = "encounter"
 	EventRoll      = "roll"
+	EventCombat    = "combat"
 )
 
 var validEvents = map[string]bool{
 	EventQA: true, EventRuling: true, EventNote: true,
-	EventDiscovery: true, EventEncounter: true, EventRoll: true,
+	EventDiscovery: true, EventEncounter: true, EventRoll: true, EventCombat: true,
 }
 
 /* ---------- the store ---------- */

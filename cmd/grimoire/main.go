@@ -77,6 +77,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/carddb"
 	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/chat"
+	"github.com/madeofpendletonwool/grimoire/internal/combat"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
 	"github.com/madeofpendletonwool/grimoire/internal/dice"
@@ -1605,6 +1606,18 @@ func runServe() error {
 		return err
 	}
 
+	// The combat tracker (MAD-422): the whole battle as one state
+	// machine — pcs from sheets, monsters and companions from the
+	// bestiary mirror with the campaign's homebrew leading, initiative
+	// through the dice engine, durations through the effect engine.
+	combatEngine, err := combat.New(store.DB(), campaigns, gameSessions, diceStore)
+	if err != nil {
+		return err
+	}
+	combatEngine = combatEngine.WithEffects(effectEngine).WithResolver(statblockLookup{
+		catalog: bestiary, homebrew: encounter.NewHomebrewStore(store.DB()),
+	})
+
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
 		func(ctx context.Context) error { return buildIndex(ctx, store) })
@@ -1621,7 +1634,7 @@ func runServe() error {
 	srv = srv.WithCanon(canonEngine)
 	srv = srv.WithStory(stories)
 	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine).WithJourneys(journeyEngine).WithLedger(ledgerEngine)
-	srv = srv.WithDice(diceStore).WithEffects(effectEngine)
+	srv = srv.WithDice(diceStore).WithEffects(effectEngine).WithCombat(combatEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {
@@ -1690,6 +1703,25 @@ func (h homebrewLintModel) ModelName() string { return h.m.ModelName() }
 func (h homebrewLintModel) Complete(ctx context.Context, system, user string) (homebrew.Completion, error) {
 	c, err := h.m.Complete(ctx, system, user)
 	return homebrew.Completion(c), err
+}
+
+// statblockLookup adapts the bestiary mirror and the homebrew shelf
+// onto the combat tracker's resolver: the DM's campaign homebrew first
+// (the design that is more specific about their table), the SRD mirror
+// second — the catalog's own precedence, one call.
+type statblockLookup struct {
+	catalog  *encounter.Catalog
+	homebrew *encounter.HomebrewStore
+}
+
+func (l statblockLookup) ResolveStatblock(ctx context.Context, owner, campaignID, name string) (encounter.Creature, bool) {
+	var hb *encounter.Overlay
+	if l.homebrew != nil {
+		if list, err := l.homebrew.Overlay(ctx, owner, campaignID); err == nil {
+			hb = encounter.NewOverlay(list)
+		}
+	}
+	return l.catalog.Lookup(name, hb)
 }
 
 // runHomebrewLint lints homebrew records the way `grimoire canon check`
