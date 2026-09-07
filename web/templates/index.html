@@ -1051,26 +1051,35 @@
 					<h3 class="board-side-title">The other side</h3>
 					<div class="board-monsters" id="board-monster-rows"></div>
 				</div>
-				<form class="board-settings" id="board-settings" hidden autocomplete="off">
-					<h3 class="board-side-title">Visibility — what the table may see</h3>
-					<label class="board-set">
-						<span>hit points</span>
-						<select id="board-set-hp" aria-label="Hit point visibility">
-							<option value="exact">exact numbers</option>
-							<option value="word">a word (bloodied)</option>
-						</select>
-					</label>
-					<label class="board-set">
-						<span>spell slots</span>
-						<select id="board-set-slots" aria-label="Slot visibility">
-							<option value="visible">everyone's</option>
-							<option value="private">each player's own</option>
-						</select>
-					</label>
-					<button type="submit" class="enc-btn">Save</button>
-					<span class="board-set-note" id="board-set-note"></span>
-				</form>
-				<p class="board-presence" id="board-presence"></p>
+			<form class="board-settings" id="board-settings" hidden autocomplete="off">
+				<h3 class="board-side-title">Visibility — what the table may see</h3>
+				<label class="board-set">
+					<span>hit points</span>
+					<select id="board-set-hp" aria-label="Hit point visibility">
+						<option value="exact">exact numbers</option>
+						<option value="word">a word (bloodied)</option>
+					</select>
+				</label>
+				<label class="board-set">
+					<span>spell slots</span>
+					<select id="board-set-slots" aria-label="Slot visibility">
+						<option value="visible">everyone's</option>
+						<option value="private">each player's own</option>
+					</select>
+				</label>
+				<button type="submit" class="enc-btn">Save</button>
+				<span class="board-set-note" id="board-set-note"></span>
+			</form>
+			<div class="board-settings" id="board-tablescreen" hidden>
+				<h3 class="board-side-title">Table screen — the room's page</h3>
+				<p class="board-tablescreen-note">One URL for the TV or projector: the board as the table sees it,
+					the battle, and the dice — nothing a player could not already see. Reveal a foe's hit points
+					from its row under "The other side".</p>
+				<button type="button" class="enc-btn" id="board-screen-create">Open a screen link</button>
+				<span class="board-set-note" id="board-screen-note"></span>
+				<ul class="board-screen-list" id="board-screen-list"></ul>
+			</div>
+			<p class="board-presence" id="board-presence"></p>
 			</div>
 
 			<div class="camp-empty" id="board-empty" hidden>

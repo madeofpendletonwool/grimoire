@@ -497,3 +497,27 @@ func (s *Server) handleCombatEndCondition(w http.ResponseWriter, r *http.Request
 		return map[string]any{"combatant": toCombatantView(out.Combatant, -2), "summary": out.Summary}, nil
 	})
 }
+
+/* ---------- the reveal (MAD-425) ---------- */
+
+// handleCombatReveal sets one foe's exposure on the table screen: off
+// (the DM's numbers stay the DM's), hp, or word. Presentation, not
+// mechanics — but it rides the same DM gate and journal as every other
+// act on the battle.
+func (s *Server) handleCombatReveal(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %v", err))
+		return
+	}
+	s.combatantAction(w, r, func(store *combat.Store) (any, error) {
+		out, err := store.Reveal(r.Context(), r.PathValue("id"), r.PathValue("cid"), r.PathValue("ctid"),
+			req.Mode, userID(r))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"combatant": toCombatantView(out.Combatant, -2), "summary": out.Summary}, nil
+	})
+}

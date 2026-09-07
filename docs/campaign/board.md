@@ -36,6 +36,10 @@ changes.
 | round / turn / order | the active combat, names and positions only |
 | the monster side | the DM's read — every number |
 
+The monster side stays the DM's alone on the board itself; the room's
+projector ([the table screen](table-screen.md), MAD-425) is where a
+revealed foe's bars go, under the DM's per-monster choice.
+
 **Hit points are a pool now** (`kind=hp`, size = the sheet's max,
 recovery manual — the 2014 long rest returns hit dice, not health). A
 battle starts from the ledger's truth, not the sheet's max, and a

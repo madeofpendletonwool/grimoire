@@ -1,0 +1,331 @@
+/* The table screen (MAD-425) — the room's page. The design problem is
+   legibility, not decoration: a dark room, a couch's distance, one
+   glance. Near-black stone, parchment ink, gold for whose move it is,
+   and a type scale measured in viewport units so a TV and a projected
+   wall both read. The app's tokens (style.css) supply the palette; the
+   scale is this sheet's own — nothing here churns the app's sheets. */
+
+.table-body {
+	overflow: auto;
+	background: var(--stone-950);
+	color: var(--parchment);
+}
+
+.table-screen {
+	min-height: 100vh;
+	max-width: 110rem;
+	margin: 0 auto;
+	padding: clamp(0.75rem, 2vh, 2rem) clamp(1rem, 3vw, 3rem);
+	display: flex;
+	flex-direction: column;
+	gap: clamp(0.5rem, 1.5vh, 1.25rem);
+}
+
+/* ---------- the head ---------- */
+
+.table-head {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-4);
+	border-bottom: 1px solid var(--stone-line);
+	padding-bottom: var(--sp-2);
+}
+
+.table-brand {
+	font-family: var(--font-display);
+	font-weight: 700;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	font-size: clamp(0.8rem, 1.4vw, 1.1rem);
+	color: var(--gold);
+}
+
+.table-campaign {
+	font-family: var(--font-prose);
+	font-size: clamp(1rem, 1.8vw, 1.5rem);
+	color: var(--ink-soft);
+}
+
+/* ---------- the banner: whose move it is ---------- */
+
+.table-banner {
+	text-align: center;
+	padding: clamp(0.5rem, 2vh, 1.5rem) 0;
+}
+
+.table-turn-line {
+	display: flex;
+	justify-content: center;
+	align-items: baseline;
+	gap: clamp(0.75rem, 2vw, 2rem);
+	flex-wrap: wrap;
+}
+
+.table-round {
+	font-family: var(--font-pixel);
+	font-size: clamp(1rem, 2.2vw, 1.75rem);
+	color: var(--gold-bright);
+	letter-spacing: 0.08em;
+}
+
+.table-turn {
+	font-family: var(--font-display);
+	font-weight: 700;
+	font-size: clamp(2.5rem, 7vw, 6rem);
+	line-height: 1.05;
+	color: var(--parchment);
+	text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
+}
+
+.table-order {
+	list-style: none;
+	margin: clamp(0.4rem, 1.2vh, 1rem) 0 0;
+	padding: 0;
+	display: flex;
+	justify-content: center;
+	flex-wrap: wrap;
+	gap: clamp(0.5rem, 1.5vw, 1.5rem);
+	font-family: var(--font-prose);
+	font-size: clamp(1rem, 2vw, 1.75rem);
+}
+
+.table-order-entry { display: inline-flex; gap: 0.4em; align-items: baseline; opacity: 0.6; }
+.table-order-entry.is-active { opacity: 1; color: var(--gold-bright); font-weight: 700; }
+.table-order-entry.is-dead { text-decoration: line-through; opacity: 0.3; }
+.table-order-entry.is-foe .table-order-name { font-style: italic; }
+.table-order-init { font-family: var(--font-pixel); font-size: 0.7em; opacity: 0.65; }
+.table-order-mark { color: #d05340; font-style: normal; font-size: 0.7em; }
+
+.table-peace {
+	text-align: center;
+	font-family: var(--font-prose);
+	font-style: italic;
+	font-size: clamp(1.25rem, 2.6vw, 2.25rem);
+	color: var(--ink-soft);
+	margin: clamp(1rem, 4vh, 3rem) 0;
+}
+
+/* ---------- the columns ---------- */
+
+.table-columns {
+	display: grid;
+	grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+	gap: clamp(0.75rem, 2vw, 2rem);
+	align-items: start;
+	flex: 1;
+}
+
+@media (max-width: 55rem) {
+	.table-columns { grid-template-columns: minmax(0, 1fr); }
+}
+
+.table-side { display: flex; flex-direction: column; gap: clamp(0.75rem, 2vw, 2rem); }
+
+.table-side-title {
+	margin: 0 0 var(--sp-3);
+	font-family: var(--font-pixel);
+	font-weight: 400;
+	font-size: clamp(0.8rem, 1.4vw, 1.05rem);
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--gold-dim);
+}
+
+/* ---------- the strips ---------- */
+
+.table-party {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+	gap: clamp(0.5rem, 1.5vw, 1.25rem);
+	align-content: start;
+}
+
+.table-foes { display: flex; flex-direction: column; gap: clamp(0.5rem, 1.5vw, 1rem); }
+
+.tstrip {
+	background: var(--stone-800);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-md);
+	padding: clamp(0.5rem, 1.4vh, 1rem) clamp(0.75rem, 1.4vw, 1.25rem);
+}
+
+.tstrip.is-foe { background: var(--stone-900); }
+
+.tstrip-name {
+	margin: 0 0 clamp(0.25rem, 0.8vh, 0.6rem);
+	font-family: var(--font-prose);
+	font-weight: 700;
+	font-size: clamp(1.3rem, 2.6vw, 2.25rem);
+	line-height: 1.15;
+	overflow-wrap: anywhere;
+}
+
+.tstrip.is-dead .tstrip-name { text-decoration: line-through; opacity: 0.45; }
+
+.tstrip-vitals {
+	display: flex;
+	align-items: baseline;
+	gap: clamp(0.4rem, 1vw, 0.75rem);
+}
+
+.tstrip-bar {
+	flex: 1;
+	align-self: center;
+	height: clamp(0.5rem, 1.4vh, 0.9rem);
+	background: var(--stone-600);
+	border-radius: var(--r-pill);
+	overflow: hidden;
+	display: block;
+	position: relative;
+}
+
+.tstrip-bar-fill {
+	display: block;
+	height: 100%;
+	background: linear-gradient(180deg, var(--gold-bright), var(--gold-dim));
+	border-radius: inherit;
+	transition: width 0.4s ease;
+}
+
+.tstrip-bar-fill.is-low { background: linear-gradient(180deg, #e8a13c, #9c6a1e); }
+.tstrip-bar-fill.is-zero { background: linear-gradient(180deg, #d05340, #8a1c1c); }
+
+.tstrip-bar-temp {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 100%;
+	margin-left: 2px;
+	background: rgba(126, 176, 214, 0.8);
+	border-radius: var(--r-pill);
+	transition: width 0.4s ease;
+}
+
+.tstrip-hp {
+	font-family: var(--font-pixel);
+	font-size: clamp(1.8rem, 4vw, 3.5rem);
+	line-height: 1;
+	color: var(--parchment);
+}
+
+.tstrip-hp.is-low { color: #e8a13c; }
+.tstrip-hp.is-zero { color: #d05340; }
+
+.tstrip-max {
+	font-family: var(--font-prose);
+	font-size: clamp(1rem, 2vw, 1.75rem);
+	color: var(--ink-soft);
+}
+
+.tstrip-word {
+	font-family: var(--font-display);
+	font-size: clamp(1.6rem, 3.6vw, 3rem);
+	line-height: 1.1;
+	color: var(--parchment);
+}
+
+.tstrip-word.is-low { color: #e8a13c; }
+.tstrip-word.is-zero { color: #d05340; }
+
+.tstrip-chips {
+	margin-top: var(--sp-2);
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sp-2);
+}
+
+.tchip {
+	font-family: var(--font-prose);
+	font-size: clamp(0.9rem, 1.6vw, 1.3rem);
+	color: var(--ink-soft);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-pill);
+	padding: 0.05em 0.6em;
+}
+
+.tchip.is-conc { color: var(--gold-bright); border-color: var(--gold-dim); }
+.tchip.is-warn { color: #e8a13c; border-color: #9c6a1e; }
+
+.table-hint {
+	grid-column: 1 / -1;
+	font-family: var(--font-prose);
+	font-style: italic;
+	color: var(--ink-soft);
+	font-size: clamp(1rem, 2vw, 1.5rem);
+}
+
+/* ---------- the dice ---------- */
+
+.table-rolls {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+}
+
+.troll {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-3);
+	background: var(--stone-800);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-md);
+	padding: var(--sp-2) var(--sp-3);
+	opacity: 0.75;
+}
+
+/* the newest throw is the one the room just heard — it leads */
+.troll:last-child {
+	opacity: 1;
+	border-color: var(--gold-dim);
+	background: var(--stone-700);
+}
+
+.troll-who {
+	font-family: var(--font-prose);
+	font-size: clamp(1rem, 1.8vw, 1.5rem);
+	flex: 1;
+	overflow-wrap: anywhere;
+}
+
+.troll-notation {
+	font-family: var(--font-pixel);
+	font-size: clamp(0.85rem, 1.5vw, 1.2rem);
+	color: var(--ink-soft);
+}
+
+.troll-total {
+	font-family: var(--font-pixel);
+	font-size: clamp(1.6rem, 3.2vw, 2.75rem);
+	line-height: 1;
+	color: var(--parchment);
+}
+
+.troll.is-crit .troll-total { color: var(--gold-bright); }
+.troll.is-fumble .troll-total { color: #d05340; }
+
+/* ---------- the closed screen ---------- */
+
+.table-closed {
+	justify-content: center;
+	text-align: center;
+	gap: var(--sp-4);
+}
+
+.table-closed .table-head { justify-content: center; border-bottom: 0; }
+
+.table-closed-title {
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: clamp(2rem, 5vw, 4rem);
+	color: var(--parchment);
+}
+
+.table-closed-note {
+	margin: 0;
+	font-family: var(--font-prose);
+	font-size: clamp(1.1rem, 2.2vw, 1.75rem);
+	color: var(--ink-soft);
+}

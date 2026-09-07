@@ -89,6 +89,25 @@ const (
 // rolling 20 or under — the crossing the turn engine watches for.
 const LairInitiative = 20
 
+// Reveal modes — the DM's per-monster choice of what the table screen
+// (MAD-425) may read. RevealOff is every battle's default: the monster's
+// numbers are the DM's alone. RevealHP and RevealWord put one foe's hit
+// points on the room's screen, as numbers or as the table's health word.
+const (
+	RevealOff  = ""     // hidden — the projector shows the name and nothing else
+	RevealHP   = "hp"   // exact hit points
+	RevealWord = "word" // the health word (bloodied)
+)
+
+// ValidRevealMode reports whether m is one of the reveal kinds.
+func ValidRevealMode(m string) bool {
+	switch m {
+	case RevealOff, RevealHP, RevealWord:
+		return true
+	}
+	return false
+}
+
 // ValidSaveResult reports whether r is one of the death-save kinds.
 func ValidSaveResult(r string) bool {
 	switch r {
@@ -260,6 +279,7 @@ type Combatant struct {
 	ReactionSpent  bool        `json:"reaction_spent"`
 	LegendaryUsed  int         `json:"legendary_used"`
 	Conditions     []Condition `json:"conditions,omitempty"`
+	Reveal         string      `json:"reveal,omitempty"` // the table screen's exposure, foes only (MAD-425)
 	Position       int         `json:"position"`
 	CreatedAt      time.Time   `json:"-"`
 	UpdatedAt      time.Time   `json:"-"`

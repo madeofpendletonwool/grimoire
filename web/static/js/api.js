@@ -336,6 +336,28 @@ export const api = {
 			body: JSON.stringify(body),
 		}).then(json),
 
+	// The table screen (MAD-425): the projector links the DM mints and
+	// revokes. The public page itself is token-only — no session, no api
+	// client, the painter module owns its stream.
+	tableScreenList: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/table-screen`).then(json),
+
+	tableScreenMint: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/table-screen`, { method: "POST" }).then(json),
+
+	tableScreenRevoke: (cid, token) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/table-screen/${encodeURIComponent(token)}`,
+			{ method: "DELETE" }).then(json),
+
+	// The per-monster reveal: what the room's screen may read of one foe.
+	combatReveal: (cid, combatID, ctid, mode) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combats/${encodeURIComponent(combatID)}` +
+			`/combatants/${encodeURIComponent(ctid)}/reveal`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ mode }),
+		}).then(json),
+
 	characterSheetPut: (cid, eid, sheet) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/characters/${encodeURIComponent(eid)}/sheet`, {
 			method: "PUT",
