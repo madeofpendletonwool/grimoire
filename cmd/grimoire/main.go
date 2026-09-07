@@ -106,6 +106,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/sim"
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
+	"github.com/madeofpendletonwool/grimoire/internal/table"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/internal/uistate"
 )
@@ -1647,6 +1648,17 @@ func runServe() error {
 	}
 	boardStore.WithBroker(campaignBroker)
 
+	// The table screen (MAD-425): the room's public page — the board's
+	// observer shape, the tracker's revealed foes, the dice engine's
+	// public feed — behind a share-style token the DM mints and revokes.
+	// The dice window is the public-only adapter: the screen's reads
+	// have no dm flag to pass.
+	tableScreen, err := table.New(store.DB(), campaigns, boardStore, combatEngine, table.PublicRolls(diceStore))
+	if err != nil {
+		return err
+	}
+	tableScreen.WithBroker(campaignBroker)
+
 	// The leveling store (MAD-424): XP awards off the encounter builder's
 	// own budgets, level-ups staged behind the review gate, and the
 	// post-session reconciliation pass. It reads the ledger's fold and
@@ -1677,6 +1689,7 @@ func runServe() error {
 	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine).WithJourneys(journeyEngine).WithLedger(ledgerEngine)
 	srv = srv.WithDice(diceStore).WithEffects(effectEngine).WithCombat(combatEngine)
 	srv = srv.WithBoard(boardStore)
+	srv = srv.WithTable(tableScreen)
 	srv = srv.WithLeveling(levelingEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())

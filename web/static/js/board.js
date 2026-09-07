@@ -217,6 +217,22 @@ function renderMonsters(board) {
 		const head = el("div", { class: "strip-head" });
 		head.append(el("span", { class: "strip-name" }, el("b", { text: mo.name })));
 		if (mo.ac) head.append(el("span", { class: "strip-sub", text: `AC ${mo.ac}` }));
+		// What the room may read of this foe (MAD-425): hidden, hit
+		// points, or the health word — the projector's bars.
+		const reveal = el("button", {
+			class: "strip-reveal" + (mo.reveal ? " is-on" : ""),
+			type: "button",
+			text: revealLabel(mo.reveal),
+			title: "What the table screen shows the room — click to change",
+		});
+		reveal.addEventListener("click", async () => {
+			try {
+				await api.combatReveal(campaignID, mo.combat_id, mo.id, nextReveal(mo.reveal));
+			} catch (err) {
+				$("board-set-note").textContent = err.message;
+			}
+		});
+		head.append(reveal);
 		row.append(head);
 		const vitals = el("div", { class: "strip-vitals" });
 		const bar = el("span", { class: "strip-bar" });
@@ -233,15 +249,92 @@ function renderMonsters(board) {
 	}
 }
 
+function revealLabel(mode) {
+	if (mode === "hp") return "room sees hp";
+	if (mode === "word") return "room sees a word";
+	return "hidden from the room";
+}
+
+function nextReveal(mode) {
+	if (mode === "") return "hp";
+	if (mode === "hp") return "word";
+	return "";
+}
+
 function renderSettings(board) {
 	const form = $("board-settings");
+	const screens = $("board-tablescreen");
 	if (!board.dm) {
 		form.hidden = true;
+		screens.hidden = true;
 		return;
 	}
 	form.hidden = false;
+	screens.hidden = false;
 	$("board-set-hp").value = (board.config && board.config.hp) || "exact";
 	$("board-set-slots").value = (board.config && board.config.slots) || "visible";
+	if (screensCampaign !== campaignID) loadTableScreens();
+}
+
+/* ---------- the table screen links (MAD-425) ---------- */
+
+let screensCampaign = null;
+
+async function loadTableScreens() {
+	const cid = campaignID;
+	let data;
+	try {
+		data = await api.tableScreenList(cid);
+	} catch (err) {
+		return; // the section simply stays empty — the board works without it
+	}
+	if (cid !== campaignID) return;
+	screensCampaign = cid;
+	const list = clear($("board-screen-list"));
+	for (const sc of data.table_screens || []) {
+		const li = el("li", { class: "board-screen" + (sc.revoked_at ? " is-closed" : "") });
+		const link = el("a", {
+			class: "board-screen-url",
+			text: sc.url || `/t/${sc.token}`,
+			attrs: { href: sc.url || `/t/${sc.token}`, target: "_blank", rel: "noopener" },
+		});
+		li.append(link);
+		if (sc.last_seen) li.append(el("span", { class: "board-screen-seen", text: `seen ${new Date(sc.last_seen).toLocaleString()}` }));
+		if (!sc.revoked_at) {
+			const close = el("button", { class: "board-screen-close", type: "button", text: "close" });
+			close.addEventListener("click", async () => {
+				try {
+					await api.tableScreenRevoke(cid, sc.token);
+					loadTableScreens();
+				} catch (err) {
+					$("board-screen-note").textContent = err.message;
+				}
+			});
+			li.append(close);
+		} else {
+			li.append(el("span", { class: "board-screen-seen", text: "closed" }));
+		}
+		list.append(li);
+	}
+	if (!list.childElementCount) {
+		list.append(el("li", { class: "board-screen-seen", text: "No screen links yet." }));
+	}
+}
+
+async function mintTableScreen() {
+	let data;
+	try {
+		data = await api.tableScreenMint(campaignID);
+	} catch (err) {
+		$("board-screen-note").textContent = err.message;
+		return;
+	}
+	$("board-screen-note").textContent = "opened — cast the URL to the room's screen";
+	setTimeout(() => ($("board-screen-note").textContent = ""), 4000);
+	loadTableScreens();
+	if (data && data.url) {
+		try { await navigator.clipboard.writeText(new URL(data.url, window.location.origin).href); } catch (_) { /* clipboard is a courtesy */ }
+	}
 }
 
 function renderPresence(board) {
@@ -259,6 +352,7 @@ function wire() {
 		const id = $("board-campaign").value;
 		if (!id || id === campaignID) return;
 		campaignID = id;
+		screensCampaign = null;
 		localStorage.setItem("grimoire-board-campaign", id);
 		await loadBoard();
 	});
@@ -275,6 +369,7 @@ function wire() {
 			$("board-set-note").textContent = err.message;
 		}
 	});
+	$("board-screen-create").addEventListener("click", mintTableScreen);
 }
 
 async function loadCampaigns() {

@@ -964,6 +964,45 @@ func (s *Store) EndCondition(ctx context.Context, campaignID, combatID, combatan
 	return &ConditionResult{Combatant: after, Condition: cond, Summary: summary}, nil
 }
 
+/* ---------- the reveal (MAD-425) ---------- */
+
+// Reveal sets one foe's exposure on the table screen: hidden, exact hit
+// points, or the health word. It is the DM's presentation choice, not a
+// mechanical change — no number moves — but it lands in the journal
+// beside every other DM act on the battle, and the notify wakes the
+// table screen's streams so the room's view changes live. PCs and
+// companions are refused: their hit points are the party's own numbers,
+// governed by the board's visibility config, not the DM's per-monster
+// toggle.
+func (s *Store) Reveal(ctx context.Context, campaignID, combatID, combatantID, mode, actor string) (*ChangeResult, error) {
+	if !ValidRevealMode(mode) {
+		return nil, fmt.Errorf("%w: reveal mode %q is not one of off, hp, word", campaign.ErrInvalid, mode)
+	}
+	combat, c, err := s.loadCombatant(ctx, campaignID, combatID, combatantID)
+	if err != nil {
+		return nil, err
+	}
+	if combat.Status != StatusActive {
+		return nil, fmt.Errorf("%w: this combat has ended", campaign.ErrInvalid)
+	}
+	if c.Side != SideFoe {
+		return nil, fmt.Errorf("%w: only the other side's numbers are the DM's to reveal", campaign.ErrInvalid)
+	}
+	c.Reveal = mode
+	now := s.now()
+	summary := fmt.Sprintf("%s's numbers are the DM's alone", c.Name)
+	if mode == RevealHP {
+		summary = fmt.Sprintf("the table sees %s's hit points", c.Name)
+	} else if mode == RevealWord {
+		summary = fmt.Sprintf("the table sees how %s looks", c.Name)
+	}
+	payload := map[string]any{"reveal": mode}
+	if err := s.writeCombatant(ctx, combat, c, "reveal", 0, summary, payload, actor, now); err != nil {
+		return nil, err
+	}
+	return &ChangeResult{Combatant: *c, Summary: summary}, nil
+}
+
 /* ---------- the turn engine ---------- */
 
 // TurnPrompt is one thing the incoming turn asks of the table: a
@@ -1243,7 +1282,7 @@ func scanCombat(row interface{ Scan(...any) error }, c *Combat) error {
 const combatantCols = `SELECT id, combat_id, COALESCE(entity_id, ''), name, side, kind, statblock,
                        initiative, init_bonus, init_formula, ac, max_hp, hp_reduction, hp, temp_hp,
                        downed, stable, dead, death_successes, death_failures, reaction_spent,
-                       legendary_used, conditions, position, created_at, updated_at`
+                       legendary_used, conditions, reveal, position, created_at, updated_at`
 
 func scanCombatant(row interface{ Scan(...any) error }) (Combatant, error) {
 	var (
@@ -1256,7 +1295,7 @@ func scanCombatant(row interface{ Scan(...any) error }) (Combatant, error) {
 	if err := row.Scan(&c.ID, &c.CombatID, &c.EntityID, &c.Name, &c.Side, &c.Kind, &statblockJSON,
 		&c.Initiative, &c.Snapshot.InitBonus, &c.InitFormula, &c.AC, &c.MaxHP, &c.HPReduction,
 		&c.HP, &c.TempHP, &downed, &stable, &dead, &c.DeathSuccesses, &c.DeathFailures,
-		&reaction, &c.LegendaryUsed, &condsJSON, &c.Position, &created, &updated); err != nil {
+		&reaction, &c.LegendaryUsed, &condsJSON, &c.Reveal, &c.Position, &created, &updated); err != nil {
 		return Combatant{}, err
 	}
 	c.Downed, c.Stable, c.Dead, c.ReactionSpent = downed == 1, stable == 1, dead == 1, reaction == 1
@@ -1287,12 +1326,12 @@ func insertCombatant(ctx context.Context, tx *sql.Tx, c Combatant, now time.Time
 		INSERT INTO combatants (id, combat_id, entity_id, name, side, kind, statblock,
 		                        initiative, init_bonus, init_formula, ac, max_hp, hp_reduction, hp, temp_hp,
 		                        downed, stable, dead, death_successes, death_failures, reaction_spent,
-		                        legendary_used, conditions, position, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                        legendary_used, conditions, reveal, position, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, c.CombatID, nullString(c.EntityID), c.Name, c.Side, c.Kind, string(snap),
 		c.Initiative, c.Snapshot.InitBonus, c.InitFormula, c.AC, c.MaxHP, c.HPReduction, c.HP, c.TempHP,
 		boolInt(c.Downed), boolInt(c.Stable), boolInt(c.Dead), c.DeathSuccesses, c.DeathFailures,
-		boolInt(c.ReactionSpent), c.LegendaryUsed, string(conds), c.Position,
+		boolInt(c.ReactionSpent), c.LegendaryUsed, string(conds), c.Reveal, c.Position,
 		now.UnixMilli(), now.UnixMilli()); err != nil {
 		return fmt.Errorf("insert combatant: %w", err)
 	}
@@ -1308,12 +1347,12 @@ func updateCombatant(ctx context.Context, tx *sql.Tx, c Combatant, now time.Time
 		UPDATE combatants SET statblock = ?, initiative = ?, ac = ?, max_hp = ?, hp_reduction = ?,
 		                      hp = ?, temp_hp = ?, downed = ?, stable = ?, dead = ?,
 		                      death_successes = ?, death_failures = ?, reaction_spent = ?,
-		                      legendary_used = ?, conditions = ?, updated_at = ?
+		                      legendary_used = ?, conditions = ?, reveal = ?, updated_at = ?
 		 WHERE id = ? AND combat_id = ?`,
 		mustJSON(c.Snapshot), c.Initiative, c.AC, c.MaxHP, c.HPReduction,
 		c.HP, c.TempHP, boolInt(c.Downed), boolInt(c.Stable), boolInt(c.Dead),
 		c.DeathSuccesses, c.DeathFailures, boolInt(c.ReactionSpent),
-		c.LegendaryUsed, string(conds), now.UnixMilli(), c.ID, c.CombatID); err != nil {
+		c.LegendaryUsed, string(conds), c.Reveal, now.UnixMilli(), c.ID, c.CombatID); err != nil {
 		return fmt.Errorf("update combatant: %w", err)
 	}
 	return nil

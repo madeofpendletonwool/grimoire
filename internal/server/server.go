@@ -47,6 +47,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/sim"
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
+	"github.com/madeofpendletonwool/grimoire/internal/table"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/internal/uistate"
 	"github.com/madeofpendletonwool/grimoire/web"
@@ -141,6 +142,11 @@ type Server struct {
 	// The party board (MAD-423): the campaign pub/sub's first reader.
 	// nil disables the board endpoints.
 	board *board.Store
+	// The table screen (MAD-425): the room's public page over the same
+	// push — token-gated like the share page, fed by the board's
+	// observer shape and the DM's per-monster reveals. Wired with
+	// WithTable; nil disables the screen endpoints.
+	table *table.Store
 	// The leveling store (MAD-424): XP awards, gated level-ups and the
 	// reconciliation pass. Wired with WithLeveling; nil disables the
 	// leveling endpoints.
@@ -364,9 +370,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/legendary", s.handleCombatLegendary)
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions", s.handleCombatApplyCondition)
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions/{condid}/end", s.handleCombatEndCondition)
+	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/reveal", s.handleCombatReveal)
 	mux.HandleFunc("GET /api/campaigns/{id}/board", s.handleBoardSnapshot)
 	mux.HandleFunc("GET /api/campaigns/{id}/board/stream", s.handleBoardStream)
 	mux.HandleFunc("PUT /api/campaigns/{id}/board/settings", s.handleBoardSettings)
+	// The table screen (MAD-425, stage 8 of MAD-417): the room's public
+	// page. The DM mints and revokes the projector links; the public
+	// routes live outside /api — the share page's rule, the token is
+	// the whole access model — and read only what the observer shape
+	// and the DM's reveals allow.
+	mux.HandleFunc("POST /api/campaigns/{id}/table-screen", s.handleTableScreenMint)
+	mux.HandleFunc("GET /api/campaigns/{id}/table-screen", s.handleTableScreenList)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/table-screen/{token}", s.handleTableScreenRevoke)
+	mux.HandleFunc("GET /t/{token}", s.handleTablePage)
+	mux.HandleFunc("GET /t/{token}/board", s.handleTableBoard)
+	mux.HandleFunc("GET /t/{token}/stream", s.handleTableStream)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts", s.handleCampaignFacts)
 	mux.HandleFunc("POST /api/campaigns/{id}/facts", s.handleCreateCampaignFact)
 	mux.HandleFunc("GET /api/campaigns/{id}/facts/{fid}", s.handleCampaignFact)

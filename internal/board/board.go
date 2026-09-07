@@ -234,7 +234,14 @@ type CombatView struct {
 }
 
 // MonsterView is one foe on the DM's board — the monster side, exact.
+// ID and CombatID ride along for the table screen's reveal toggle
+// (MAD-425): which combatant row, in which battle. Reveal says what
+// (if anything) the room may read of it. This view is the DM's alone —
+// the public shape is the table screen's own, built from the reveal
+// flag and never from here.
 type MonsterView struct {
+	ID         string          `json:"id"`
+	CombatID   string          `json:"combat_id"`
 	Name       string          `json:"name"`
 	AC         int             `json:"ac,omitempty"`
 	HP         int             `json:"hp"`
@@ -242,6 +249,7 @@ type MonsterView struct {
 	TempHP     int             `json:"temp_hp,omitempty"`
 	Down       bool            `json:"down,omitempty"`
 	Dead       bool            `json:"dead,omitempty"`
+	Reveal     string          `json:"reveal,omitempty"`
 	Conditions []ConditionView `json:"conditions,omitempty"`
 }
 
@@ -343,9 +351,9 @@ func (s *Store) Snapshot(ctx context.Context, campaignID string, viewer Standing
 			}
 			if viewer.DM && c.Side == combat.SideFoe {
 				snap.Monsters = append(snap.Monsters, MonsterView{
-					Name: c.Name, AC: c.AC, HP: c.HP, MaxHP: c.EffectiveMax(),
+					ID: c.ID, CombatID: fight.ID, Name: c.Name, AC: c.AC, HP: c.HP, MaxHP: c.EffectiveMax(),
 					TempHP: c.TempHP, Down: c.Downed && !c.Dead, Dead: c.Dead,
-					Conditions: combatConditions(c),
+					Reveal: c.Reveal, Conditions: combatConditions(c),
 				})
 			}
 		}

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<meta name="color-scheme" content="dark">
+	{{if eq .State "ok"}}<meta name="robots" content="noindex">{{end}}
+	<title>{{if eq .State "ok"}}The table — Grimoire{{else}}Grimoire{{end}}</title>
+	<link rel="stylesheet" href="/static/fonts.css">
+	<link rel="stylesheet" href="/static/style.css">
+	<link rel="stylesheet" href="/static/table.css">
+	<link rel="icon" type="image/png" href="/static/assets/favicon-32.png">
+</head>
+<body class="table-body" data-token="{{.Token}}">
+	{{if eq .State "ok"}}
+	<!-- The room's screen: one page, no session, no script but the
+	     painter. The token in the URL is the whole access model, and
+	     the server already decided what the room may see. -->
+	<main class="table-screen">
+		<header class="table-head">
+			<span class="table-brand">Grimoire</span>
+			<span class="table-campaign" id="table-campaign"></span>
+		</header>
+
+		<section class="table-banner" id="table-banner" hidden aria-live="polite"></section>
+		<p class="table-peace" id="table-peace">The table is quiet.</p>
+
+		<div class="table-columns">
+			<section class="table-party" id="table-party" aria-label="The party"></section>
+			<section class="table-side">
+				<section class="table-foes" id="table-foes" hidden aria-label="The other side"></section>
+				<section class="table-dice" id="table-dice" aria-label="The dice"></section>
+			</section>
+		</div>
+	</main>
+	<script type="module" src="/static/js/table.js"></script>
+	{{else if eq .State "gone"}}
+	<main class="table-screen table-closed">
+		<header class="table-head">
+			<span class="table-brand">Grimoire</span>
+		</header>
+		<h1 class="table-closed-title">This screen has been closed.</h1>
+		<p class="table-closed-note">The keeper who opened it to the room has revoked the link.</p>
+	</main>
+	{{else}}
+	<main class="table-screen table-closed">
+		<header class="table-head">
+			<span class="table-brand">Grimoire</span>
+		</header>
+		<h1 class="table-closed-title">No such screen.</h1>
+		<p class="table-closed-note">This link does not open anything onto this table.</p>
+	</main>
+	{{end}}
+</body>
+</html>

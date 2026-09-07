@@ -4692,6 +4692,61 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 
 .board-set-note { font-size: var(--fs-xs); opacity: 0.7; }
 
+/* The table screen's DM corner (MAD-425): minted projector links and
+   the per-monster reveal toggle. */
+.board-tablescreen-note {
+	flex-basis: 100%;
+	margin: 0;
+	font-size: var(--fs-xs);
+	opacity: 0.7;
+}
+
+.board-screen-list {
+	flex-basis: 100%;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-1);
+}
+
+.board-screen { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); }
+.board-screen.is-closed { opacity: 0.5; }
+
+.board-screen-url {
+	color: var(--gold-bright, #ffd071);
+	overflow-wrap: anywhere;
+}
+
+.board-screen-seen { opacity: 0.6; }
+
+.board-screen-close {
+	border: 1px solid var(--stone-line);
+	background: var(--stone-700);
+	color: inherit;
+	border-radius: var(--r-sm);
+	padding: 0.1rem 0.5rem;
+	font-size: var(--fs-xs);
+	cursor: pointer;
+}
+
+.strip-reveal {
+	margin-left: auto;
+	border: 1px solid var(--stone-line);
+	background: var(--stone-700);
+	color: var(--parchment-soft, #d8c9a8);
+	border-radius: var(--r-pill);
+	padding: 0.1rem 0.6rem;
+	font-size: var(--fs-xs);
+	cursor: pointer;
+}
+
+.strip-reveal.is-on {
+	border-color: var(--gold-dim, #8a7024);
+	color: var(--gold-bright, #ffd071);
+}
+
 .board-presence { margin: 0; font-size: var(--fs-xs); opacity: 0.6; }
 
 @media (max-width: 560px) {

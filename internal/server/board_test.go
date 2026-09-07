@@ -30,6 +30,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
+	"github.com/madeofpendletonwool/grimoire/internal/table"
 )
 
 // newBoardServer wires the full mechanical stack the way runServe does:
@@ -81,7 +82,7 @@ func newBoardServer(t *testing.T) (*Server, *fixture) {
 	if err != nil {
 		t.Fatalf("open combat store: %v", err)
 	}
-	combatEngine = combatEngine.WithEffects(effectEngine).WithHitPoints(ledgerEngine)
+	combatEngine = combatEngine.WithEffects(effectEngine).WithHitPoints(ledgerEngine).WithResolver(catalogShelf{})
 
 	broker := pubsub.New()
 	campaigns.WithBroker(broker)
@@ -96,6 +97,15 @@ func newBoardServer(t *testing.T) (*Server, *fixture) {
 	}
 	boardStore.WithBroker(broker)
 
+	// The table screen (MAD-425) over the same stack, wired the way
+	// runServe does: the board's observer shape, the tracker's
+	// reveals, the dice engine through the public-only adapter.
+	tableScreen, err := table.New(store.DB(), campaigns, boardStore, combatEngine, table.PublicRolls(diceStore))
+	if err != nil {
+		t.Fatalf("open table screen store: %v", err)
+	}
+	tableScreen.WithBroker(broker)
+
 	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, nil, Auth{Users: users}, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
@@ -104,7 +114,7 @@ func newBoardServer(t *testing.T) (*Server, *fixture) {
 		WithCampaigns(campaigns, knowledgeStore).
 		WithDice(diceStore).WithEffects(effectEngine).
 		WithLedger(ledgerEngine).WithCombat(combatEngine).
-		WithBoard(boardStore)
+		WithBoard(boardStore).WithTable(tableScreen)
 	f := buildFixture(t, s)
 
 	// A typed sheet on the fixture pc, through the real surface — the

@@ -76,6 +76,7 @@ POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/reaction        {spent?
 POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/legendary       {ability, cost?} (DM)
 POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions      {name, rounds} (statblock combatants) (DM)
 POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions/{condid}/end   end one (DM)
+POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/reveal          {mode: off|hp|word} — the table screen's exposure, foes only (DM)
 ```
 
 The tracker is the DM's screen: every route is the DM perspective. The
