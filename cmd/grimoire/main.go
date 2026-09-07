@@ -100,6 +100,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
+	"github.com/madeofpendletonwool/grimoire/internal/replay"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/server"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
@@ -1659,6 +1660,16 @@ func runServe() error {
 	}
 	tableScreen.WithBroker(campaignBroker)
 
+	// The session replay (MAD-426): the mechanical event log, played
+	// back — a read-only derivation over the tracker's journal and the
+	// session log, so it owns no tables and pings no topics. Every
+	// frame is the fold re-run; the checksum asserts the fold against
+	// the recorded rows.
+	replayEngine, err := replay.New(combatEngine, gameSessions)
+	if err != nil {
+		return err
+	}
+
 	// The leveling store (MAD-424): XP awards off the encounter builder's
 	// own budgets, level-ups staged behind the review gate, and the
 	// post-session reconciliation pass. It reads the ledger's fold and
@@ -1690,6 +1701,7 @@ func runServe() error {
 	srv = srv.WithDice(diceStore).WithEffects(effectEngine).WithCombat(combatEngine)
 	srv = srv.WithBoard(boardStore)
 	srv = srv.WithTable(tableScreen)
+	srv = srv.WithReplay(replayEngine)
 	srv = srv.WithLeveling(levelingEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
