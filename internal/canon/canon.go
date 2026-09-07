@@ -256,6 +256,16 @@ type Store struct {
 	// 'rest', plus the rests row's status flip. Wired with
 	// WithRestFinalizer; internal/ledger implements it.
 	restFinalizer RestFinalizer
+	// levelUpFinalizer, when wired, completes a decided level-up batch
+	// (MAD-424) — the recomputed diff applied to the sheet, plus the
+	// level_ups row's status flip. Wired with WithLevelUpFinalizer;
+	// internal/leveling implements it.
+	levelUpFinalizer LevelUpFinalizer
+	// reconcileFinalizer, when wired, completes a decided reconciliation
+	// batch (MAD-424) — the ledger 'set' per out-of-bounds pool and the
+	// sheet XP correction per drifted total. Wired with
+	// WithReconcileFinalizer; internal/leveling implements it.
+	reconcileFinalizer ReconcileFinalizer
 }
 
 // New builds a canon store on an open, migrated database handle with the

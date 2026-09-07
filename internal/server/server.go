@@ -40,6 +40,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/journey"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/ledger"
+	"github.com/madeofpendletonwool/grimoire/internal/leveling"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
@@ -140,6 +141,10 @@ type Server struct {
 	// The party board (MAD-423): the campaign pub/sub's first reader.
 	// nil disables the board endpoints.
 	board *board.Store
+	// The leveling store (MAD-424): XP awards, gated level-ups and the
+	// reconciliation pass. Wired with WithLeveling; nil disables the
+	// leveling endpoints.
+	leveling *leveling.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -314,6 +319,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/characters/{eid}/resources/{pid}/transactions", s.handleResourceTransaction)
 	mux.HandleFunc("POST /api/campaigns/{id}/rests", s.handleCampaignRest)
 	mux.HandleFunc("POST /api/campaigns/{id}/rests/propose", s.handleCampaignRestPropose)
+	// The leveling surface (MAD-424, stage 7 of MAD-417): the mode, XP
+	// awards off the encounter builder's own budgets, level-ups staged
+	// behind the review gate, and the post-session reconciliation pass.
+	// DM-only, decided at the batch surface like every other proposal.
+	mux.HandleFunc("GET /api/campaigns/{id}/leveling", s.handleLevelingRead)
+	mux.HandleFunc("PUT /api/campaigns/{id}/leveling/settings", s.handleLevelingSettings)
+	mux.HandleFunc("POST /api/campaigns/{id}/encounters/{eid}/award", s.handleEncounterAward)
+	mux.HandleFunc("GET /api/campaigns/{id}/awards", s.handleAwards)
+	mux.HandleFunc("POST /api/campaigns/{id}/level-ups/propose", s.handleLevelUpPropose)
+	mux.HandleFunc("GET /api/campaigns/{id}/level-ups", s.handleLevelUps)
+	mux.HandleFunc("POST /api/campaigns/{id}/reconcile", s.handleReconcile)
 	mux.HandleFunc("POST /api/campaigns/{id}/rolls", s.handleRollDice)
 	mux.HandleFunc("GET /api/campaigns/{id}/rolls", s.handleRollFeed)
 	mux.HandleFunc("GET /api/campaigns/{id}/rolls/stream", s.handleRollStream)

@@ -274,6 +274,42 @@ func (s *Store) WithRestFinalizer(f RestFinalizer) *Store {
 	return s
 }
 
+// LevelUpFinalizer completes a decided level-up batch (MAD-424): the sheet
+// write a level-up batch cannot carry itself — the recomputed diff applied
+// for every character whose item was accepted, plus the level_ups row's
+// status flip. Implemented by internal/leveling's store and wired with
+// WithLevelUpFinalizer; the same idempotency contract as the rest
+// finalizer: nothing applies until the gate decides, and a re-run is a
+// no-op.
+type LevelUpFinalizer interface {
+	FinalizeLevelUpBatch(ctx context.Context, batch *Batch) error
+}
+
+// WithLevelUpFinalizer wires the level-up completion. Without it level-up
+// batches are still decidable — their events are ordinary batch items —
+// but no sheet ever levels.
+func (s *Store) WithLevelUpFinalizer(f LevelUpFinalizer) *Store {
+	s.levelUpFinalizer = f
+	return s
+}
+
+// ReconcileFinalizer completes a decided reconciliation batch (MAD-424):
+// the corrections a reconciliation batch proposes — a ledger 'set' per
+// out-of-bounds pool, a sheet XP correction per drifted total — for every
+// accepted item. Implemented by internal/leveling's store and wired with
+// WithReconcileFinalizer. Idempotent by construction: every correction
+// writes an absolute value.
+type ReconcileFinalizer interface {
+	FinalizeReconcileBatch(ctx context.Context, batch *Batch) error
+}
+
+// WithReconcileFinalizer wires the reconciliation completion. Without it
+// reconcile batches are still decidable, but no correction ever lands.
+func (s *Store) WithReconcileFinalizer(f ReconcileFinalizer) *Store {
+	s.reconcileFinalizer = f
+	return s
+}
+
 /* ---------- building the queue ---------- */
 
 // BuildQueue creates queue items for every finding the three upstream passes

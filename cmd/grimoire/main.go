@@ -96,6 +96,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/journey"
 	"github.com/madeofpendletonwool/grimoire/internal/knowledge"
 	"github.com/madeofpendletonwool/grimoire/internal/ledger"
+	"github.com/madeofpendletonwool/grimoire/internal/leveling"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
@@ -1646,6 +1647,18 @@ func runServe() error {
 	}
 	boardStore.WithBroker(campaignBroker)
 
+	// The leveling store (MAD-424): XP awards off the encounter builder's
+	// own budgets, level-ups staged behind the review gate, and the
+	// post-session reconciliation pass. It reads the ledger's fold and
+	// completes decided batches as the canon store's level-up and
+	// reconcile finalizer.
+	levelingEngine, err := leveling.New(store.DB(), campaigns, canonEngine, ledgerEngine)
+	if err != nil {
+		return err
+	}
+	canonEngine = canonEngine.WithLevelUpFinalizer(levelingEngine).WithReconcileFinalizer(levelingEngine)
+	levelingEngine.WithBroker(campaignBroker)
+
 	srv, err := server.New(store, chatClient, cardsService(), rulingsService(), cardDict, chats, answers, studies,
 		server.Auth{Users: users, OpenRegistration: openRegistration()},
 		func(ctx context.Context) error { return buildIndex(ctx, store) })
@@ -1664,6 +1677,7 @@ func runServe() error {
 	srv = srv.WithSim(simEngine).WithDowntime(downtimeEngine).WithJourneys(journeyEngine).WithLedger(ledgerEngine)
 	srv = srv.WithDice(diceStore).WithEffects(effectEngine).WithCombat(combatEngine)
 	srv = srv.WithBoard(boardStore)
+	srv = srv.WithLeveling(levelingEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	if cardStore != nil {
