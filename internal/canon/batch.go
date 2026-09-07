@@ -85,6 +85,8 @@ const (
 	BatchSourceItem        = "item"
 	BatchSourceLoot        = "loot"
 	BatchSourceRest        = "rest"
+	BatchSourceLevelUp     = "level_up"
+	BatchSourceReconcile   = "reconcile"
 )
 
 // batchSources is the validated source vocabulary.
@@ -94,7 +96,7 @@ var batchSources = map[string]bool{
 	BatchSourceDowntime: true, BatchSourceQuest: true, BatchSourceLocation: true,
 	BatchSourceDungeon: true, BatchSourceRumor: true, BatchSourceJourney: true,
 	BatchSourceMonster: true, BatchSourceItem: true, BatchSourceLoot: true,
-	BatchSourceRest: true,
+	BatchSourceRest: true, BatchSourceLevelUp: true, BatchSourceReconcile: true,
 }
 
 /* ---------- the stored shape ---------- */
@@ -811,6 +813,18 @@ func (s *Store) finishDecide(ctx context.Context, campaignID string, batch *Batc
 			if s.restFinalizer != nil {
 				if err := s.restFinalizer.FinalizeRestBatch(ctx, out.Batch); err != nil {
 					return nil, fmt.Errorf("finish rest batch %s: %w", out.Batch.ID, err)
+				}
+			}
+		case BatchSourceLevelUp:
+			if s.levelUpFinalizer != nil {
+				if err := s.levelUpFinalizer.FinalizeLevelUpBatch(ctx, out.Batch); err != nil {
+					return nil, fmt.Errorf("finish level-up batch %s: %w", out.Batch.ID, err)
+				}
+			}
+		case BatchSourceReconcile:
+			if s.reconcileFinalizer != nil {
+				if err := s.reconcileFinalizer.FinalizeReconcileBatch(ctx, out.Batch); err != nil {
+					return nil, fmt.Errorf("finish reconcile batch %s: %w", out.Batch.ID, err)
 				}
 			}
 		}

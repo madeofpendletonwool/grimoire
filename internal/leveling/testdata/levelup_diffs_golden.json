@@ -1,0 +1,115 @@
+[
+  {
+    "name": "single-class wizard 4 -\u003e 5",
+    "mode": "xp",
+    "sheet": {
+      "race": "elf",
+      "xp": 7000,
+      "abilities": {
+        "dex": 12,
+        "con": 16,
+        "int": 17
+      },
+      "max_hp": 32,
+      "classes": [
+        {
+          "class": "wizard",
+          "level": 4
+        }
+      ],
+      "spellcasting": {
+        "ability": "int",
+        "dc": 13,
+        "attack_bonus": 5,
+        "slots": {
+          "1": 4,
+          "2": 3
+        }
+      }
+    },
+    "class": "wizard",
+    "entity": "golden-wizard",
+    "diff": {
+      "entity": "golden-wizard",
+      "name": "single-class wizard 4 -\u003e 5",
+      "class": "wizard",
+      "from_class_level": 4,
+      "to_class_level": 5,
+      "from_total_level": 4,
+      "to_total_level": 5,
+      "new_class": false,
+      "slots": [
+        {
+          "level": 3,
+          "from": 0,
+          "to": 2
+        }
+      ],
+      "hit_die": 6,
+      "hp_from": 32,
+      "hp_gain": 7,
+      "hp_total": 39,
+      "con_mod": 3,
+      "con_declared": true,
+      "xp_before": 7000,
+      "xp_for_next": 14000,
+      "mode": "xp"
+    }
+  },
+  {
+    "name": "multiclass fighter 8 adds wizard 1",
+    "mode": "xp",
+    "sheet": {
+      "race": "human",
+      "xp": 40000,
+      "abilities": {
+        "str": 18,
+        "con": 14,
+        "int": 15
+      },
+      "max_hp": 79,
+      "classes": [
+        {
+          "class": "fighter",
+          "level": 8
+        }
+      ]
+    },
+    "class": "wizard",
+    "entity": "golden-multiclass",
+    "diff": {
+      "entity": "golden-multiclass",
+      "name": "multiclass fighter 8 adds wizard 1",
+      "class": "wizard",
+      "from_class_level": 0,
+      "to_class_level": 1,
+      "from_total_level": 8,
+      "to_total_level": 9,
+      "new_class": true,
+      "new_features": [
+        "Arcane Recovery",
+        "Spellcasting"
+      ],
+      "new_saves": [
+        "int",
+        "wis"
+      ],
+      "slots": [
+        {
+          "level": 1,
+          "from": 0,
+          "to": 2
+        }
+      ],
+      "hit_die": 6,
+      "hp_from": 79,
+      "hp_gain": 6,
+      "hp_total": 85,
+      "con_mod": 2,
+      "con_declared": true,
+      "xp_before": 40000,
+      "xp_for_next": 64000,
+      "mode": "xp"
+    }
+  }
+]
