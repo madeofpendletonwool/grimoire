@@ -82,6 +82,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
 	"github.com/madeofpendletonwool/grimoire/internal/dice"
+	"github.com/madeofpendletonwool/grimoire/internal/director"
 	"github.com/madeofpendletonwool/grimoire/internal/downtime"
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/effects"
@@ -1615,13 +1616,16 @@ func runServe() error {
 	// machine — pcs from sheets, monsters and companions from the
 	// bestiary mirror with the campaign's homebrew leading, initiative
 	// through the dice engine, durations through the effect engine.
+	// The statblock lookup is hoisted so the director resolves the
+	// same shelf the tracker started the fight from.
+	lookup := statblockLookup{
+		catalog: bestiary, homebrew: encounter.NewHomebrewStore(store.DB()),
+	}
 	combatEngine, err := combat.New(store.DB(), campaigns, gameSessions, diceStore)
 	if err != nil {
 		return err
 	}
-	combatEngine = combatEngine.WithEffects(effectEngine).WithResolver(statblockLookup{
-		catalog: bestiary, homebrew: encounter.NewHomebrewStore(store.DB()),
-	})
+	combatEngine = combatEngine.WithEffects(effectEngine).WithResolver(lookup)
 
 	// The campaign pub/sub (MAD-423): one broker, topics are campaigns.
 	// Every mechanical store pings it after a commit; the dice feed and
@@ -1670,6 +1674,14 @@ func runServe() error {
 		return err
 	}
 
+	// The state-aware encounter director (MAD-427): advisory monster
+	// tactics grounded in the live battle — the statblocks the tracker
+	// resolves plus the ledger's, effects engine's and tracker's own
+	// state, every suggestion gated onto a cited basis. Reads only:
+	// the engine holds read windows and a model, nothing else.
+	directorEngine := director.New(combatEngine, lookup, ledgerEngine, effectEngine,
+		directorModel{m: canon.NewLLMModel(chatClient)})
+
 	// The leveling store (MAD-424): XP awards off the encounter builder's
 	// own budgets, level-ups staged behind the review gate, and the
 	// post-session reconciliation pass. It reads the ledger's fold and
@@ -1702,6 +1714,7 @@ func runServe() error {
 	srv = srv.WithBoard(boardStore)
 	srv = srv.WithTable(tableScreen)
 	srv = srv.WithReplay(replayEngine)
+	srv = srv.WithDirector(directorEngine)
 	srv = srv.WithLeveling(levelingEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
@@ -1771,6 +1784,18 @@ func (h homebrewLintModel) ModelName() string { return h.m.ModelName() }
 func (h homebrewLintModel) Complete(ctx context.Context, system, user string) (homebrew.Completion, error) {
 	c, err := h.m.Complete(ctx, system, user)
 	return homebrew.Completion(c), err
+}
+
+// directorModel adapts the canon engine's model client onto the
+// director's, so the advisory pass shares the chat configuration when
+// one is set — and answers 503 before the call when none is.
+type directorModel struct{ m canon.ModelClient }
+
+func (d directorModel) ModelName() string { return d.m.ModelName() }
+
+func (d directorModel) Complete(ctx context.Context, system, user string) (director.Completion, error) {
+	c, err := d.m.Complete(ctx, system, user)
+	return director.Completion{Text: c.Text, InputTokens: c.InputTokens, OutputTokens: c.OutputTokens}, err
 }
 
 // statblockLookup adapts the bestiary mirror and the homebrew shelf
