@@ -27,6 +27,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/deck"
 	"github.com/madeofpendletonwool/grimoire/internal/dice"
+	"github.com/madeofpendletonwool/grimoire/internal/director"
 	"github.com/madeofpendletonwool/grimoire/internal/downtime"
 	"github.com/madeofpendletonwool/grimoire/internal/edhrec"
 	"github.com/madeofpendletonwool/grimoire/internal/effects"
@@ -154,6 +155,13 @@ type Server struct {
 	// and session stores; wired with WithReplay, nil disables the
 	// replay endpoints.
 	replay *replay.Store
+	// The state-aware encounter director (MAD-427): advisory monster
+	// tactics grounded in the live battle — the statblocks the fight
+	// was built from plus the tracker's, ledger's and effects
+	// engine's state, every suggestion gated onto a cited basis.
+	// Reads only; wired with WithDirector, nil disables the director
+	// endpoint.
+	director *director.Service
 	// The leveling store (MAD-424): XP awards, gated level-ups and the
 	// reconciliation pass. Wired with WithLeveling; nil disables the
 	// leveling endpoints.
@@ -378,6 +386,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions", s.handleCombatApplyCondition)
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions/{condid}/end", s.handleCombatEndCondition)
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/reveal", s.handleCombatReveal)
+	// The state-aware encounter director (MAD-427, stage 10 of
+	// MAD-417): advisory suggestions for the active battle, every one
+	// gated onto a cited basis — statblock text or live state. DM-only,
+	// opt-in per request, and it writes nothing.
+	mux.HandleFunc("POST /api/campaigns/{id}/combat/director", s.handleCombatDirector)
 
 	// The session replay (MAD-426, stage 9 of MAD-417): the mechanical
 	// event log, played back — one battle's journal with its derived
