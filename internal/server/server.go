@@ -42,6 +42,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/ledger"
 	"github.com/madeofpendletonwool/grimoire/internal/leveling"
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
+	"github.com/madeofpendletonwool/grimoire/internal/replay"
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
 	"github.com/madeofpendletonwool/grimoire/internal/sim"
@@ -147,6 +148,12 @@ type Server struct {
 	// observer shape and the DM's per-monster reveals. Wired with
 	// WithTable; nil disables the screen endpoints.
 	table *table.Store
+	// The session replay (MAD-426): the mechanical event log, played
+	// back — the journal folded to any point, the checksum asserted
+	// against the recorded rows. Read-only derivation over the combat
+	// and session stores; wired with WithReplay, nil disables the
+	// replay endpoints.
+	replay *replay.Store
 	// The leveling store (MAD-424): XP awards, gated level-ups and the
 	// reconciliation pass. Wired with WithLeveling; nil disables the
 	// leveling endpoints.
@@ -371,6 +378,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions", s.handleCombatApplyCondition)
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/conditions/{condid}/end", s.handleCombatEndCondition)
 	mux.HandleFunc("POST /api/campaigns/{id}/combats/{cid}/combatants/{ctid}/reveal", s.handleCombatReveal)
+
+	// The session replay (MAD-426, stage 9 of MAD-417): the mechanical
+	// event log, played back — one battle's journal with its derived
+	// frames, and the session's whole replayable timeline. The DM's
+	// screen, read-only.
+	mux.HandleFunc("GET /api/campaigns/{id}/combats/{cid}/replay", s.handleCombatReplay)
+	mux.HandleFunc("GET /api/campaigns/{id}/combats/{cid}/replay/state", s.handleCombatReplayState)
 	mux.HandleFunc("GET /api/campaigns/{id}/board", s.handleBoardSnapshot)
 	mux.HandleFunc("GET /api/campaigns/{id}/board/stream", s.handleBoardStream)
 	mux.HandleFunc("PUT /api/campaigns/{id}/board/settings", s.handleBoardSettings)
@@ -521,6 +535,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/events", s.handleListEvents)
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/events", s.handleAddEvent)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/export", s.handleExportSession)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/replay", s.handleSessionReplay)
 	// The optional audio→transcript hook (MAD-320): upload a recording, poll
 	// the job, land a transcript source. DM only; 503 when unconfigured.
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/transcriptions", s.handleStartTranscription)

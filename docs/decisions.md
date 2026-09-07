@@ -931,3 +931,89 @@ app boot like the dice curtain — not having the right window focused.
 | A board visibility table (columns) | The settings payload exists and is the house pattern for table-shape choices (ADR 15's payload-over-columns); a typed key with strict validation is the same guarantee with no migration |
 | Visibility filtered client-side or by zeroing fields | A zero and a missing field are indistinguishable to a curious client; absence on the wire is the only honest hiding, and the only thing the leak tests can pin |
 | Per-member visibility flags | Tables differ by culture, not by character; a campaign-level pair (hp, slots) is what a DM actually decides, and it composes with the always-exact self exception |
+
+## ADR 20 — Replay is a derivation, never stored state
+
+**Status:** accepted · **Date:** 2026-09-07 · **Issue:** MAD-426
+
+### Context
+
+Stage 9 closes the mechanical layer's loop: play the event log back.
+The tracker (stage 5) journals every mechanical event and the dice
+engine (stage 3) makes every roll reproducible from `(seed, nonce,
+formula)` — so the data to replay already exists. The question is what
+replay adds: snapshots of intermediate states, a playback table, a
+timeline of its own — or nothing but a reader. The roadmap's own rule
+pointed one way (never-stored balances, the reason ADR 19 put hit
+points in the pool grammar), and the acceptance criterion sharpened
+it: replaying a logged fight must reproduce the recorded end-state
+*exactly* — a checksum assertion, not a vibe.
+
+### Decision
+
+**Replay owns no tables and stores nothing.** It is a fold:
+`internal/replay` re-runs `internal/combat`'s pure grammar over the
+combat journal, row by row, seeded from the lineup's frozen fields —
+the mutable state resets, and a pc's opening hp anchors on the
+journal's own `before` at their first hp row (a combatant no row ever
+touched was never overwritten, so their row *is* the opening state).
+The state at journal row N is a function of the lineup and the first
+N rows; scrubbing is folding again, in memory, every position the same
+cost. The end-state is canonical JSON hashed with sha256 and asserted
+against the recorded combatant rows — mid-battle and after the end —
+and every journal row that records an absolute it produced (the hp
+after a hit, the death-save ledger) is asserted while folding. Drift
+is an error that names the row, never a patch-up: a replay that
+quietly absorbed an inconsistent journal would make the checksum mean
+nothing.
+
+**The recap is generated, not written.** The session export's "The
+fights" section renders from the same journal — the table's own
+one-line accounts grouped by round, the final standing from the rows —
+beside the narrative log. Nothing new is stored to describe what
+already happened.
+
+**The surface is the DM's, read-only.** Three GET routes — a battle's
+journal with its checksum, a frame at any scrub position, a session's
+timeline with its fights indexed — over narrow windows onto the combat
+and session stores, the standing every mechanical reader takes.
+Replay derives; it never writes, so there is nothing to ping the
+broker about and nothing to reconcile.
+
+### Why
+
+A stored replay is a second truth: it drifts from the journal the
+first time either is corrected, it needs its own migration and its own
+writes on every mechanical path, and it still cannot answer "what did
+the table see at round 3" without a timeline of snapshots nobody
+wants to keep. A fold answers every point for free, is checkable
+against the rows it must reproduce (the checksum), and failed loudly
+where the journal disagrees with the grammar that wrote it — turning
+"the log is the truth" from a slogan into an invariant the tests hold.
+
+### Consequences
+
+- Scrub cost is O(journal length) per position — one in-memory fold
+  over rows already loaded; a fight is hundreds of rows, so every
+  position is effectively instant. A future memoization (keyed
+  checkpoint frames inside the fold) can be added without a schema,
+  because the fold stays the definition.
+- A journal kind the fold does not know is an error, not a skip: when
+  the tracker grows a new mechanical act, replay must learn it —
+  deliberately, in the open.
+- Drift is possible only if something writes the journal or the rows
+  out-of-band; when it happens, the API says which row and which
+  field, and the checksum reports it until the data is repaired.
+- The pc's opening hp comes from the journal's own anchor, so fights
+  logged before stage 9 fold exactly the same as fights logged after:
+  there is no format change to backfill.
+
+### Alternatives rejected
+
+| Option | Why not |
+|---|---|
+| Stored playback snapshots (a frame table written during play) | A second truth to keep in sync on every write path; intermediate state is free to derive, so the table buys nothing the fold doesn't already answer |
+| Replay by re-rolling the dice from seeds | The rolls are already journaled results — re-rolling re-derives numbers the table actually saw only if every path is bit-identical; the journal is the oracle, seeds are the provenance |
+| Patching drift to the nearest consistent state | A quiet fix makes the checksum meaningless; an inconsistent journal is data corruption and should be reported, not absorbed |
+| Reusing the combat store directly (no new package) | The fold needs to be pure over journal rows for the checksum and golden tests; the store's methods validate and write — wrong shape for a reader |
+| A player-facing replay surface | Every player-visible number passes the visibility config (ADR 19); the first replay ships as the DM's screen, and a narrowed standing can be added later behind the same construction |

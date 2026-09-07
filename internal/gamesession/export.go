@@ -12,7 +12,8 @@ import (
 )
 
 // ExportMarkdown renders a session — header, sources with their verbatim
-// content, and the event log in play order — as one Markdown document.
+// content, the event log in play order, and the fights recap — as one
+// Markdown document.
 func (s *Store) ExportMarkdown(ctx context.Context, sessionID string) (string, error) {
 	ses, err := s.GetSession(ctx, sessionID)
 	if err != nil {
@@ -114,6 +115,15 @@ func (s *Store) ExportMarkdown(ctx context.Context, sessionID string) (string, e
 			}
 		}
 		fmt.Fprintf(&b, "_%s_\n\n", ev.CreatedAt.Format("15:04:05 MST"))
+	}
+
+	// The fights: the mechanical recap beside the narrative one — how
+	// each battle actually went, from the same journal the replay
+	// folds (MAD-426). A session with no fights carries no section.
+	if recap, err := s.fightsMarkdown(ctx, sessionID, events); err != nil {
+		return "", err
+	} else if recap != "" {
+		b.WriteString("\n" + recap)
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n", nil
 }
