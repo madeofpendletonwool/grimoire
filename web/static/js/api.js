@@ -349,6 +349,76 @@ export const api = {
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/table-screen/${encodeURIComponent(token)}`,
 			{ method: "DELETE" }).then(json),
 
+	// The combat tracker (MAD-422, the surface MAD-487): the DM's screen.
+	// Every route is the DM perspective — reads, the turn engine, and the
+	// mid-play writes all resolve the caller's standing server-side. The
+	// per-monster reveal is combatReveal below.
+	combatActive: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combat`).then(json),
+
+	combatStart: (cid, input) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combat`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(input),
+		}).then(json),
+
+	combatList: (cid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combats`).then(json),
+
+	combatGet: (cid, combatID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combats/${encodeURIComponent(combatID)}`).then(json),
+
+	combatNext: (cid, combatID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combats/${encodeURIComponent(combatID)}/next`, {
+			method: "POST",
+		}).then(json),
+
+	combatEnd: (cid, combatID, reason) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combats/${encodeURIComponent(combatID)}/end`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ reason: reason || "" }),
+		}).then(json),
+
+	combatantPost: (cid, combatID, ctid, action, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combats/${encodeURIComponent(combatID)}` +
+			`/combatants/${encodeURIComponent(ctid)}/${action}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body || {}),
+		}).then(json),
+
+	combatDamage: (cid, combatID, ctid, amount, damageType, note, reduceMax, sourceID) =>
+		api.combatantPost(cid, combatID, ctid, "damage", {
+			amount, damage_type: damageType || "", note: note || "",
+			reduce_max: !!reduceMax, source_id: sourceID || "",
+		}),
+
+	combatHeal: (cid, combatID, ctid, amount, note) =>
+		api.combatantPost(cid, combatID, ctid, "heal", { amount, note: note || "" }),
+
+	combatTempHP: (cid, combatID, ctid, amount, note) =>
+		api.combatantPost(cid, combatID, ctid, "temp-hp", { amount, note: note || "" }),
+
+	combatDeathSave: (cid, combatID, ctid, result) =>
+		api.combatantPost(cid, combatID, ctid, "death-save", { result }),
+
+	combatReaction: (cid, combatID, ctid, spent) =>
+		api.combatantPost(cid, combatID, ctid, "reaction", { spent }),
+
+	combatLegendary: (cid, combatID, ctid, ability, cost) =>
+		api.combatantPost(cid, combatID, ctid, "legendary", { ability: ability || "", cost: cost || 1 }),
+
+	combatCondition: (cid, combatID, ctid, name, rounds) =>
+		api.combatantPost(cid, combatID, ctid, "conditions", { name, rounds }),
+
+	combatConditionEnd: (cid, combatID, ctid, condID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combats/${encodeURIComponent(combatID)}` +
+			`/combatants/${encodeURIComponent(ctid)}/conditions/${encodeURIComponent(condID)}/end`, {
+			method: "POST",
+		}).then(json),
+
 	// The per-monster reveal: what the room's screen may read of one foe.
 	combatReveal: (cid, combatID, ctid, mode) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combats/${encodeURIComponent(combatID)}` +
@@ -357,6 +427,15 @@ export const api = {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ mode }),
 		}).then(json),
+
+	// The condition vocabulary the tracker's apply control offers — the
+	// same fifteen the effects engine enforces.
+	effectVocabulary: (cid, signal) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/effects/vocabulary`, { signal }).then(json),
+
+	// The campaign's own saved encounters — the lineup builder's fast path.
+	campaignEncounters: (cid, signal) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/encounters`, { signal }).then(json),
 
 	characterSheetPut: (cid, eid, sheet) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/characters/${encodeURIComponent(eid)}/sheet`, {

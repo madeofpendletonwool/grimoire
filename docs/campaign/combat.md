@@ -87,6 +87,47 @@ included. Monsters resolve by name through the campaign's shelf —
 homebrew first, the SRD mirror second — and letter themselves the way
 the table does: two goblins are Goblin A and Goblin B.
 
+## The DM's screen (the window)
+
+The **Combat** window is that surface — the whole battle run from one
+tool (`web/static/js/combat.js`, one registry entry in
+`wm/registry.js`). It has two states:
+
+- **The lineup builder.** The party arrives from the campaign's
+  declared party block — checkboxes, with members carrying no structured
+  sheet marked as such (the engine takes them at their word and warns in
+  the start response). The other side comes from a saved campaign
+  encounter (its roster loads whole) or the bestiary search, the same
+  picker the encounter builder uses; companions are statblocks under
+  their own name. The fight can be linked to a live session — pick one,
+  pick a planned session (it goes live with the fight), or create one
+  and go live in the same press — so the journal mirrors where the table
+  reads it.
+- **The battle.** One merged initiative order, the acting combatant
+  marked and glowing; one **Next turn** button whose response *is* the
+  prompt surface — recharge rolls, death saves, the lair reminder at
+  count 20, and whatever the round wore away (conditions and effects)
+  are shown as they arrive, never recomputed. Damage lands from the
+  acting combatant by default so the campaign stats can attribute it.
+  Each combatant row carries the mid-play verbs: the one-tap damage box
+  (amount, optional type, Enter to hit; heal and temp hp beside it),
+  death saves for a dying pc, the reaction toggle, condition apply and
+  end for statblock-backed rows, legendary spend, the reveal toggle and
+  a statblock peek for the other side. A **Journal** tab reads the
+  append-only log the engine already writes; **End the fight** closes
+  with a reason.
+
+The window refreshes on the board stream's snapshot frames — every
+committed combat write pings the campaign topic — and after each of its
+own writes, so the board, the table screen and the tracker always read
+the same state. No second source of truth is introduced anywhere: the
+window holds a fetched combat and response bodies, nothing it derives
+on its own.
+
+The design constraint from MAD-318, verbatim: at the table, latency and
+legibility beat features — readable at arm's length in a dim room, and
+the damage box is a one-tap affair, not a form.
+
 ## Where the code lives
 
 - `internal/combat/combat.go` — the pure state machine: the snapshot
@@ -95,6 +136,8 @@ the table does: two goblins are Goblin A and Goblin B.
 - `internal/combat/store.go` — the rows: start through the dice engine,
   the turn engine with both duration engines wired, the journal and the
   session mirror.
+- `web/static/js/combat.js` + `web/static/js/combatvm.js` — the window
+  and its DOM-free view model (the derivations `jstest/` keeps honest).
 - Migration `0033_combat_tracker.sql` — `combats` (one active per
   campaign), `combatants`, `combat_log`, and the `combat` session-event
   kind (the same twelve-step CHECK rebuild 0031 used).

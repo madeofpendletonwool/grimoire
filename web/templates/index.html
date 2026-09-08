@@ -1089,6 +1089,101 @@
 				</div>
 			</div>
 		</section>
+		<section class="combat" id="combat-view" hidden aria-label="Combat tracker">
+			<header class="study-head">
+				<h2 class="study-title" id="combat-title">Combat</h2>
+				<div class="camp-picker">
+					<select id="cbt-campaign" aria-label="Campaign"><option value="">No campaigns yet…</option></select>
+				</div>
+				<p class="study-meta" id="cbt-meta"></p>
+			</header>
+
+			<div class="cbt-body" id="cbt-body" hidden>
+				<!-- The lineup builder: party from the sheets, the other side from
+				     a saved encounter or the bestiary, the fight linked to a live
+				     session. -->
+				<div class="cbt-setup" id="cbt-setup">
+					<div class="cbt-setup-cols" id="cbt-setup-lines">
+						<div class="cbt-panel">
+							<h3 class="cbt-heading">The party</h3>
+							<div class="cbt-party" id="cbt-party"></div>
+						</div>
+						<div class="cbt-panel">
+							<h3 class="cbt-heading">The other side</h3>
+							<label class="cbt-encounter-pick" for="cbt-encounter">
+								<span>Saved encounter</span>
+								<select id="cbt-encounter" aria-label="Saved encounter"></select>
+							</label>
+							<form class="cbt-search" id="cbt-search" autocomplete="off">
+								<input id="cbt-search-input" class="cbt-field" type="search" placeholder="Search the bestiary…"
+									aria-label="Search monsters">
+								<button type="submit" class="cbt-btn" aria-label="Search">Find</button>
+							</form>
+							<div class="cbt-results" id="cbt-results" role="listbox" aria-label="Monster results"></div>
+							<div class="cbt-lines" id="cbt-monsters"></div>
+						</div>
+						<div class="cbt-panel">
+							<h3 class="cbt-heading">Companions</h3>
+							<form class="cbt-search" id="cbt-comp-search" autocomplete="off">
+								<input id="cbt-comp-search-input" class="cbt-field" type="search" placeholder="Wolf, panther, sidekick…"
+									aria-label="Search companion statblocks">
+							</form>
+							<input id="cbt-comp-name" class="cbt-field cbt-comp-name" type="text" maxlength="60"
+								placeholder="Its name — “Whiskers” (optional)" aria-label="Companion name">
+							<div class="cbt-results" id="cbt-comp-results" role="listbox" aria-label="Companion results"></div>
+							<div class="cbt-lines" id="cbt-companions"></div>
+						</div>
+					</div>
+					<div class="cbt-panel cbt-start-row">
+						<h3 class="cbt-heading">The fight</h3>
+						<label class="cbt-encounter-pick" for="cbt-session">
+							<span>Session</span>
+							<select id="cbt-session" aria-label="The session the fight logs into"></select>
+						</label>
+						<form class="cbt-start-form" id="cbt-start-form" autocomplete="off">
+							<input id="cbt-name" class="cbt-field cbt-name" type="text" maxlength="120"
+								placeholder="Name the fight (optional)" aria-label="Combat name">
+							<button type="submit" class="cbt-btn primary" id="cbt-start">Roll initiative</button>
+						</form>
+						<p class="cbt-note" id="cbt-setup-note"></p>
+					</div>
+				</div>
+
+				<!-- The battle: the DM's screen. Latency and legibility beat
+				     features — big numbers, one Next, one-tap damage. -->
+				<div class="cbt-battle" id="cbt-battle" hidden>
+					<header class="cbt-strip">
+						<b class="cbt-round" id="cbt-round">Round 1</b>
+						<span class="cbt-turn" id="cbt-turn"></span>
+						<span class="cbt-alive" id="cbt-alive"></span>
+						<span class="cbt-strip-ctl">
+							<button type="button" class="cbt-btn primary cbt-next" id="cbt-next">Next turn</button>
+							<button type="button" class="cbt-btn cbt-end" id="cbt-end">End the fight</button>
+							<button type="button" class="cbt-btn cbt-new" id="cbt-new" hidden>New battle</button>
+						</span>
+					</header>
+					<div class="cbt-tabs" role="tablist" aria-label="Battle views">
+						<button type="button" class="cbt-tab is-on" id="cbt-tab-battle" role="tab">Battle</button>
+						<button type="button" class="cbt-tab" id="cbt-tab-journal" role="tab">Journal</button>
+					</div>
+					<div class="cbt-battle-main" id="cbt-battle-main">
+						<div class="cbt-prompts" id="cbt-prompts" hidden aria-live="polite"></div>
+						<p class="cbt-note" id="cbt-note" aria-live="polite"></p>
+						<div class="cbt-order" id="cbt-order"></div>
+					</div>
+					<div class="cbt-journal" id="cbt-journal" hidden aria-label="Combat journal"></div>
+				</div>
+			</div>
+
+			<div class="camp-empty" id="cbt-empty" hidden>
+				<div class="camp-panel">
+					<h3 class="enc-heading">No campaign yet</h3>
+					<p class="camp-status">The tracker is the DM's screen — it needs a table. Found a campaign first, or take a seat with an invite.</p>
+				</div>
+			</div>
+
+			<datalist id="cbt-damage-types"></datalist>
+		</section>
 		<section class="sessions" id="review-view" hidden aria-label="Canon review queue">
 			<header class="study-head">
 				<h2 class="study-title" id="review-title">Review queue</h2>
