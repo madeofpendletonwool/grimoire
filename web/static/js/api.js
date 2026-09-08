@@ -909,6 +909,11 @@ export const api = {
 	story: (campaignID) =>
 		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/story`).then(json),
 
+	// The DM screen's live context (MAD-485): the live session the clock
+	// runs on and the active scenes with their cast. DM-only read.
+	campaignLive: (campaignID) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/live`).then(json),
+
 	storyShapes: () => fetch("/api/story/shapes").then(json),
 
 	storyPace: (from, to, acts) =>

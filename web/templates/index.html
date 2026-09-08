@@ -1089,6 +1089,72 @@
 				</div>
 			</div>
 		</section>
+		<section class="screen" id="screen-view" hidden aria-label="DM screen">
+			<header class="study-head">
+				<h2 class="study-title" id="scr-title">Screen</h2>
+				<div class="camp-picker">
+					<select id="scr-campaign" aria-label="Campaign"><option value="">No campaigns yet…</option></select>
+				</div>
+				<p class="study-meta" id="scr-meta"></p>
+			</header>
+
+			<div class="scr-body" id="scr-body" hidden>
+				<!-- The clock: the live session and the time since it went
+				     live. The tick is client-side over started_at. -->
+				<div class="scr-clock" id="scr-clock" hidden>
+					<b class="scr-time" id="scr-time">0:00</b>
+					<span class="scr-session" id="scr-session"></span>
+				</div>
+				<form class="scr-golive" id="scr-golive" hidden autocomplete="off">
+					<select id="scr-golive-session" aria-label="The session to run"></select>
+					<button type="submit" class="enc-btn" id="scr-golive-btn">Go live</button>
+					<span class="scr-golive-note" id="scr-golive-note"></span>
+				</form>
+
+				<!-- The current scene: read-only live context. The Planner
+				     owns the writes; the screen shows where we are. -->
+				<div class="scr-scene">
+					<h3 class="scr-heading">The scene</h3>
+					<article class="scr-scene-card" id="scr-scene-card" hidden></article>
+					<p class="scr-hint" id="scr-scene-empty" hidden>No scene is active — set one moving in the Planner and it lands here.</p>
+					<div class="scr-scene-tabs" id="scr-scene-tabs"></div>
+				</div>
+
+				<!-- NPCs on stage: the scene's cast as chips; a chip opens
+				     the entity in the drawer without leaving play mode. -->
+				<div class="scr-cast-wrap">
+					<h3 class="scr-heading">On stage</h3>
+					<div class="scr-cast" id="scr-cast"></div>
+				</div>
+
+				<!-- The scratch pad: kind "note" events against the live
+				     session — the mid-play "don't forget" parking lot. -->
+				<form class="scr-notes" id="scr-notes" autocomplete="off">
+					<h3 class="scr-heading">Notes</h3>
+					<div class="scr-notes-row">
+						<input id="scr-note-input" class="scr-note-field" maxlength="240"
+							placeholder="Don't forget…" aria-label="A note to park">
+						<button type="submit" class="enc-btn" id="scr-note-park">Park it</button>
+					</div>
+					<p class="scr-note-note" id="scr-note-note"></p>
+					<ul class="scr-note-list" id="scr-note-list"></ul>
+				</form>
+
+				<!-- The Ask Grimoire box: MAD-486 (Stage 5) fills this
+				     mount; the screen keeps the place warm. -->
+				<div class="scr-copilot" id="scr-copilot">
+					<h3 class="scr-heading">Ask Grimoire</h3>
+					<p class="scr-copilot-hint" id="scr-copilot-hint">The session copilot lands here — ask the table a question, get an answer in character.</p>
+				</div>
+			</div>
+
+			<div class="camp-empty" id="scr-empty" hidden>
+				<div class="camp-panel">
+					<h3 class="enc-heading" id="scr-empty-title">No campaign yet</h3>
+					<p class="camp-status" id="scr-empty-text">The screen belongs to a table. Found a campaign first, or take a seat with an invite.</p>
+				</div>
+			</div>
+		</section>
 		<section class="combat" id="combat-view" hidden aria-label="Combat tracker">
 			<header class="study-head">
 				<h2 class="study-title" id="combat-title">Combat</h2>

@@ -38,9 +38,16 @@ const tabbed = (...kids) => T.tabs(kids, 0);
 const PRESETS = {
 	dnd: [
 		{ slot: 1, name: "Prep", build: () => row(leaf("planner"), tabbed(leaf("campaign"), leaf("cchat"))) },
-		// At the table (MAD-318): the tracker dominates, the party board
-		// and the dice sit beside it, sessions and the builder tab behind.
-		{ slot: 2, name: "At the table", build: () => row(leaf("combat"), tabbed(leaf("board"), leaf("dice"), leaf("sessions"), leaf("encounter"))) },
+		// At the table (MAD-318): play mode. The screen strip carries the
+		// scene, the clock, the notes and the copilot mount; the tracker
+		// dominates; vitals and the rest sit behind the board's tab.
+		// One Alt+2, nothing rearranged.
+		{ slot: 2, name: "At the table", build: () =>
+			T.split("row", [
+				leaf("screen"),
+				leaf("combat"),
+				tabbed(leaf("board"), leaf("dice"), leaf("sessions"), leaf("encounter")),
+			], [0.24, 0.42, 0.34]) },
 		{ slot: 3, name: "Canon", build: () => row(leaf("review"), leaf("sessions")) },
 		{ slot: 4, name: "Study", build: () => row(leaf("reader"), leaf("study")) },
 	],
