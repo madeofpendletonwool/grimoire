@@ -13,11 +13,12 @@
 // scope, and a player opening this tool sees the screen's empty state.
 
 import { $, el, clear, debounce } from "./dom.js";
-import { api } from "./api.js";
+import { api, streamCopilotAnswer } from "./api.js";
 import { openEntity } from "./drawer.js";
 import {
 	currentScene, sceneMeta, castChips, elapsedLabel, noteLines,
 	actingCombatant, capturePayload, entityRefs,
+	streamVisible, splitAnswer, revealCards,
 } from "./screenvm.js";
 
 let campaigns = [];
@@ -81,7 +82,10 @@ async function loadAll() {
 	pickable = null;
 	notes = [];
 	capBattle = null;
+	lastNpcID = "";
 	closeCapture();
+	clear($("scr-ask-log"));
+	$("scr-ask-note").textContent = "";
 	await loadLive();
 }
 
@@ -469,10 +473,192 @@ async function onCaptureSubmit(e) {
 }
 
 function onProposeToggle() {
-	$("scr-cap-fact").hidden = !$("scr-cap-propose").checked;
+	$("scr-cap-propose").hidden = !$("scr-cap-propose").checked;
 	if ($("scr-cap-propose").checked && !$("scr-cap-statement").value) {
 		$("scr-cap-statement").value = $("scr-cap-summary").value.trim();
 	}
+}
+
+/* ---------- the session copilot (MAD-486) ---------- */
+
+// The Ask Grimoire box: type, stream, read. Each turn is one question
+// bubble and one answer block — the REACTION for the DM, the voice big
+// enough to read aloud — with a release card per suggested clue:
+// Accept as canon | Modify | Discard. The few-seconds constraint is the
+// whole design: one input, one button, everything else one tap.
+
+let askBusy = false;
+
+// The live context the copilot grounds from, tolerating a read that has
+// not landed (or failed) — the box still asks, just with less context.
+function askScene() {
+	return currentScene((live && live.scenes) || [], live && live.session && live.session.id, pickedSceneID);
+}
+
+async function onAskSubmit(e) {
+	e.preventDefault();
+	if (askBusy || !campaignID) return;
+	const input = $("scr-ask-input");
+	const question = input.value.trim();
+	if (!question) return;
+	input.value = "";
+	askBusy = true;
+	$("scr-ask-btn").disabled = true;
+	$("scr-ask-note").textContent = "";
+
+	const turn = el("div", { class: "scr-ask-turn" },
+		el("p", { class: "scr-ask-q", text: question }),
+		el("div", { class: "scr-ask-a" },
+			el("p", { class: "scr-ask-stream", text: "…" }),
+		),
+	);
+	$("scr-ask-log").append(turn);
+	turn.scrollIntoView({ block: "nearest" });
+	const streamEl = turn.querySelector(".scr-ask-stream");
+	const answerHost = turn.querySelector(".scr-ask-a");
+	let streamed = "";
+
+	try {
+		await streamCopilotAnswer(campaignID, question, pickedSceneID, {
+			onMeta(meta) {
+				lastNpcID = (meta && meta.npc && meta.npc.id) || "";
+				const bits = [];
+				if (meta && meta.npc && meta.npc.name) bits.push(`as ${meta.npc.name}`);
+				else if (meta && meta.scene && meta.scene.name) bits.push(meta.scene.name);
+				if (meta && meta.session && meta.session.name) bits.push(meta.session.name);
+				if (bits.length) turn.setAttribute("data-context", bits.join(" · "));
+			},
+			onDelta(text) {
+				streamed += text;
+				streamEl.textContent = streamVisible(streamed) || "…";
+			},
+			onDone(payload) {
+				renderAnswer(answerHost, payload || {}, question);
+			},
+			onError(message) {
+				renderAnswer(answerHost, { answer: streamed.trim() }, question);
+				$("scr-ask-note").textContent = message;
+			},
+		});
+	} catch (err) {
+		$("scr-ask-note").textContent = err.message;
+	}
+	askBusy = false;
+	$("scr-ask-btn").disabled = false;
+}
+
+// The finished answer: the reaction small, the voice big, the release
+// cards under it. The last turn's context (npc, scene) rides the accept.
+function renderAnswer(host, payload, question) {
+	const parts = splitAnswer(payload.answer || "");
+	const scene = askScene();
+	const npcID = lastNpcID || "";
+	const cards = revealCards(payload.reveals || []);
+	clear(host).append(
+		parts.reaction ? el("p", { class: "scr-ask-reaction", text: parts.reaction }) : null,
+		el("p", { class: "scr-ask-voice", text: parts.voice || "(no answer)" }),
+		cards.length ? el("div", { class: "scr-ask-releases" },
+			...cards.map((rv) => releaseCard(rv, { question, npcID, sceneID: scene ? scene.id : "" }))) : null,
+	);
+	host.scrollIntoView({ block: "nearest" });
+}
+
+// The npc id the last meta frame named — the accept needs it when the
+// answer had a voice. Set by onMeta, read by renderAnswer.
+let lastNpcID = "";
+
+// One suggested release: Accept as canon stages it through the review
+// queue and logs the discovery; Modify edits then accepts; Discard drops
+// it where it stands.
+function releaseCard(rv, ctx) {
+	const note = el("span", { class: "scr-ask-rel-note", text: "" });
+	const statementEl = el("p", { class: "scr-ask-rel-statement", text: rv.statement });
+	const card = el("div", { class: "scr-ask-release" },
+		statementEl,
+		rv.rationale ? el("p", { class: "scr-ask-rel-rationale", text: rv.rationale }) : null,
+		el("div", { class: "scr-ask-rel-actions" },
+			el("button", {
+				class: "enc-btn scr-ask-accept", text: "Accept as canon",
+				attrs: { type: "button" },
+				on: { click: () => acceptRelease(card, note, ctx) },
+			}),
+			el("button", {
+				class: "enc-btn scr-ask-modify", text: "Modify",
+				attrs: { type: "button" },
+				on: { click: () => modifyRelease(card, statementEl, note, ctx) },
+			}),
+			el("button", {
+				class: "enc-btn scr-ask-discard", text: "Discard",
+				attrs: { type: "button" },
+				on: { click: () => { card.remove(); } },
+			}),
+		),
+		note,
+	);
+	return card;
+}
+
+async function acceptRelease(card, note, ctx, statementOverride) {
+	const statement = statementOverride !== undefined ? statementOverride
+		: card.querySelector(".scr-ask-rel-statement").textContent.trim();
+	if (!statement) return;
+	note.textContent = "Staging…";
+	try {
+		const body = {
+			statement,
+			rationale: (card.querySelector(".scr-ask-rel-rationale") || {}).textContent || "",
+			question: ctx.question,
+			scene_id: ctx.sceneID,
+		};
+		if (ctx.npcID) body.npc_id = ctx.npcID;
+		else {
+			const subject = await subjectForRelease();
+			if (!subject) {
+				note.textContent = "A subject entity is required — pick nothing, nothing stages.";
+				return;
+			}
+			body.subject = subject;
+		}
+		const res = await api.copilotRelease(campaignID, body);
+		const dup = res.staged && res.staged.already_queued;
+		note.textContent = dup
+			? "Already in the review queue — Review decides."
+			: "Queued for review — Review decides.";
+		card.querySelector(".scr-ask-rel-actions")?.remove();
+	} catch (err) {
+		note.textContent = err.message;
+	}
+}
+
+// A voiceless release needs a subject entity: the scene's focus first,
+// then the first cast member, then the first linked entity — the obvious
+// subject without a picker mid-play.
+async function subjectForRelease() {
+	if (!entities.length) {
+		try {
+			const ents = await api.campaignEntities(campaignID);
+			entities = ents.entities || [];
+		} catch (_) { /* nothing to offer */ }
+	}
+	const refs = entityRefs(askScene(), null, entities);
+	return refs.length ? refs[0].id : (entities[0] && entities[0].id) || "";
+}
+
+// Modify swaps the statement for an input, then accepts the edit.
+function modifyRelease(card, statementEl, note, ctx) {
+	const edit = el("input", {
+		class: "scr-ask-field scr-ask-rel-edit",
+		attrs: { type: "text", maxlength: "500", value: statementEl.textContent.trim(),
+			"aria-label": "The edited statement" },
+	});
+	statementEl.replaceWith(edit);
+	edit.focus();
+	edit.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			acceptRelease(card, note, ctx, edit.value.trim());
+		}
+	});
 }
 
 /** The ticking half of the clock — one label, repainted each second. */
@@ -531,6 +717,7 @@ function wire() {
 	$("scr-cap-form").addEventListener("submit", onCaptureSubmit);
 	$("scr-cap-propose").addEventListener("change", onProposeToggle);
 	$("scr-cap-summary").addEventListener("input", matchPrior);
+	$("scr-ask-form").addEventListener("submit", onAskSubmit);
 }
 
 /* ---------- the window-manager contract ---------- */

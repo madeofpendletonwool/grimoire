@@ -635,6 +635,15 @@ func (s *Server) Handler() http.Handler {
 	// live session and the active scenes, one DM-only read. The screen
 	// strip composes it beside the tracker and the board.
 	mux.HandleFunc("GET /api/campaigns/{id}/live", s.handleCampaignLive)
+	// The session copilot (MAD-486, stage 5 of MAD-318): the Ask Grimoire
+	// box. The ask grounds in the live table — scene, fight, events,
+	// party — braided with the npcask record when the question names an
+	// NPC on stage, aware of which clues are already discovered, and
+	// streams like campaign chat. The release is its only write: the
+	// discovery event (the Stage 4 anchor) plus a review-queue item,
+	// never a direct fact. DM-only, both routes.
+	mux.HandleFunc("POST /api/campaigns/{id}/ask", s.handleCopilotAsk)
+	mux.HandleFunc("POST /api/campaigns/{id}/ask/release", s.handleCopilotRelease)
 	// The narrative spine (MAD-360): acts, scenes, cast, secrets, outcomes
 	// and session plans, plus the whole-spine read the planner view loads.
 	// DM-only end to end — the plan is DM material, secrets included.

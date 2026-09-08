@@ -856,6 +856,16 @@ export const api = {
 			body: JSON.stringify(body),
 		}).then(json),
 
+	// The session copilot's release (MAD-486): the DM's accept of a
+	// suggested clue. Logs the discovery event against the live session
+	// and stages the review item — the queue stays the only gate.
+	copilotRelease: (campaignID, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/ask/release`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
 	// The canon review queue (MAD-310): the DM's human gate. Build refreshes
 	// the queue from the three upstream passes; decide accepts, modifies or
 	// dismisses one open item; export downloads the applied changes.
@@ -1211,6 +1221,16 @@ export function streamCampaignAnswer(cid, chatID, question, handlers, signal) {
 	return postSSE(
 		`/api/campaigns/${encodeURIComponent(cid)}/chats/${encodeURIComponent(chatID)}/messages`,
 		{ question }, handlers, signal);
+}
+
+/** Ask the session copilot a question and consume the answer as SSE: meta
+ *  carries the live context it grounded in (session, scene, the voice on
+ *  stage, the clue lists); done carries the clean answer plus any
+ *  suggested clue releases. The scene id is the DM's picked scene, when
+ *  they tapped one. */
+export function streamCopilotAnswer(cid, question, sceneID, handlers, signal) {
+	return postSSE(`/api/campaigns/${encodeURIComponent(cid)}/ask`,
+		{ question, scene_id: sceneID || "" }, handlers, signal);
 }
 
 /** Post a board + sequence to the resolver and consume the trace as SSE. */

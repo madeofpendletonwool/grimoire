@@ -174,3 +174,47 @@ export function capturePayload(scene, combat, acting, entities) {
 	if (refs.length) payload.entities = refs;
 	return payload;
 }
+
+/* ---------- the session copilot (MAD-486) ---------- */
+
+/**
+ * What the streaming bubble shows of the answer so far. The reveals
+ * contract asks the model to close with a ```json fence; the DM should
+ * never watch raw JSON crawl in as dialogue, so everything from the
+ * fence's first appearance is held back. The done frame then swaps in the
+ * clean answer, so the mask only ever costs a beat of typing.
+ */
+export function streamVisible(text) {
+	const i = (text || "").indexOf("```json");
+	return i >= 0 ? text.slice(0, i) : text || "";
+}
+
+/**
+ * The finished answer split for reading: the DM-facing REACTION and the
+ * speakable IN-VOICE, their labels stripped. An answer without the marker
+ * (table mode, a plain copilot reply) renders whole as the voice — the
+ * speakable part is the part the table needs first.
+ */
+export function splitAnswer(answer) {
+	const text = (answer || "").trim();
+	const m = text.match(/(?:^|\n)\s*IN-VOICE\s*[—:-]*\s*/);
+	if (!m) return { reaction: "", voice: text };
+	const reaction = text.slice(0, m.index)
+		.replace(/^\s*REACTION\s*[—:-]*\s*/, "")
+		.trim();
+	return { reaction, voice: text.slice(m.index + m[0].length).trim() };
+}
+
+/**
+ * The release cards a done frame's reveals become: one card per
+ * invention, empty statements dropped, ids stable for the round-trip.
+ */
+export function revealCards(reveals, offset = 0) {
+	return (reveals || [])
+		.map((rv, i) => ({
+			id: `${offset + i}`,
+			statement: (rv && rv.statement || "").trim(),
+			rationale: (rv && rv.rationale || "").trim(),
+		}))
+		.filter((rv) => rv.statement);
+}

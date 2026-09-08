@@ -303,8 +303,16 @@ An answer that invented nothing ends with an empty reveals list.`)
 // npcUserMessage assembles the final prompt turn: the mind, then the record,
 // then the question. This is the exact text the model receives — the
 // function the leak assertions in the tests read, so it stays pure and
-// testable.
+// testable. The mind and record halves are their own sections because the
+// session copilot (MAD-486) embeds both inside its own live-table framing.
 func npcUserMessage(g *npcGrounding, question string) string {
+	return npcMindSection(g) + npcRecordSection(g) +
+		fmt.Sprintf("\nQuestion for %s: %s\n", g.npc.Name, question)
+}
+
+// npcMindSection is the NPC's interior: the structured agent fields plus
+// their own declared faction allegiances.
+func npcMindSection(g *npcGrounding) string {
 	name := g.npc.Name
 	var b strings.Builder
 
@@ -354,7 +362,15 @@ func npcUserMessage(g *npcGrounding, question string) string {
 			b.WriteString(line + "\n")
 		}
 	}
+	return b.String()
+}
 
+// npcRecordSection is everything the NPC's awareness covers, spelled at the
+// npc:<id> scope: facts (secrets marked), dealings, relationships, witnessed
+// events. What it does not contain, the NPC does not know.
+func npcRecordSection(g *npcGrounding) string {
+	name := g.npc.Name
+	var b strings.Builder
 	fmt.Fprintf(&b, "\n=== WHAT %s KNOWS — the whole record at this perspective ===\n", strings.ToUpper(name))
 	if g.empty {
 		b.WriteString("(nothing — no fact, entity or event is known at this perspective yet)\n")
@@ -390,8 +406,6 @@ func npcUserMessage(g *npcGrounding, question string) string {
 			fmt.Fprintf(&b, "  - %s\n", ev.Summary)
 		}
 	}
-
-	fmt.Fprintf(&b, "\nQuestion for %s: %s\n", name, question)
 	return b.String()
 }
 
