@@ -47,6 +47,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/rulings"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
 	"github.com/madeofpendletonwool/grimoire/internal/sim"
+	"github.com/madeofpendletonwool/grimoire/internal/stats"
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/table"
@@ -162,6 +163,11 @@ type Server struct {
 	// Reads only; wired with WithDirector, nil disables the director
 	// endpoint.
 	director *director.Service
+	// The campaign stats fold (MAD-428): the endcap view over the logs
+	// the earlier stages wrote — rolls, the combat journal, the ledger's
+	// inspiration spends. Read-only derivation; wired with WithStats,
+	// nil disables the stats endpoint.
+	stats *stats.Store
 	// The leveling store (MAD-424): XP awards, gated level-ups and the
 	// reconciliation pass. Wired with WithLeveling; nil disables the
 	// leveling endpoints.
@@ -352,6 +358,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{id}/level-ups", s.handleLevelUps)
 	mux.HandleFunc("POST /api/campaigns/{id}/reconcile", s.handleReconcile)
 	mux.HandleFunc("POST /api/campaigns/{id}/rolls", s.handleRollDice)
+	mux.HandleFunc("GET /api/campaigns/{id}/stats", s.handleCampaignStats)
+	mux.HandleFunc("POST /api/campaigns/{id}/characters/{eid}/inspiration", s.handleAwardInspiration)
 	mux.HandleFunc("GET /api/campaigns/{id}/rolls", s.handleRollFeed)
 	mux.HandleFunc("GET /api/campaigns/{id}/rolls/stream", s.handleRollStream)
 	// The duration and condition engine (MAD-421): every ongoing effect

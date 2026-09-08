@@ -106,6 +106,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/server"
 	"github.com/madeofpendletonwool/grimoire/internal/share"
 	"github.com/madeofpendletonwool/grimoire/internal/sim"
+	"github.com/madeofpendletonwool/grimoire/internal/stats"
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/table"
@@ -1515,7 +1516,8 @@ func runServe() error {
 
 	// The session layer rides on the campaign store: the session tables
 	// exist only through the migrations, so the store opens straight
-	// onto the migrated handle.
+	// onto the migrated handle. Its export carries the numbers section
+	// (MAD-428) once the stats fold is wired below.
 	gameSessions, err := gamesession.New(store.DB())
 	if err != nil {
 		return err
@@ -1682,6 +1684,17 @@ func runServe() error {
 	directorEngine := director.New(combatEngine, lookup, ledgerEngine, effectEngine,
 		directorModel{m: canon.NewLLMModel(chatClient)})
 
+	// The campaign stats fold (MAD-428): the endcap view over the logs
+	// every mechanical stage wrote — rolls, the combat journal, the
+	// ledger's inspiration spends — derived, never stored. It owns no
+	// tables and pings no topics; the session export borrows its
+	// renderer for "The numbers".
+	statsEngine, err := stats.New(store.DB())
+	if err != nil {
+		return err
+	}
+	gameSessions = gameSessions.WithStats(statsEngine)
+
 	// The leveling store (MAD-424): XP awards off the encounter builder's
 	// own budgets, level-ups staged behind the review gate, and the
 	// post-session reconciliation pass. It reads the ledger's fold and
@@ -1715,6 +1728,7 @@ func runServe() error {
 	srv = srv.WithTable(tableScreen)
 	srv = srv.WithReplay(replayEngine)
 	srv = srv.WithDirector(directorEngine)
+	srv = srv.WithStats(statsEngine)
 	srv = srv.WithLeveling(levelingEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())

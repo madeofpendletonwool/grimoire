@@ -684,8 +684,11 @@ type ChangeResult struct {
 }
 
 // Damage applies one hit, persists it, and journals it. reduceMax is the
-// vampire's bite — the max HP wears by the damage that landed.
-func (s *Store) Damage(ctx context.Context, campaignID, combatID, combatantID string, amount int, dtype, note string, reduceMax bool, actor string) (*ChangeResult, error) {
+// vampire's bite — the max HP wears by the damage that landed. sourceID
+// names the combatant the hit came from (MAD-428): optional, journaled
+// flat into the payload — source name, combatant id, entity id — so the
+// campaign stats can attribute damage dealt without parsing prose.
+func (s *Store) Damage(ctx context.Context, campaignID, combatID, combatantID string, amount int, dtype, note string, reduceMax bool, sourceID, actor string) (*ChangeResult, error) {
 	combat, c, err := s.loadCombatant(ctx, campaignID, combatID, combatantID)
 	if err != nil {
 		return nil, err
@@ -701,6 +704,13 @@ func (s *Store) Damage(ctx context.Context, campaignID, combatID, combatantID st
 	payload := map[string]any{
 		"asked": outcome.Asked, "effective": outcome.Effective,
 		"before": outcome.Before, "after": outcome.After,
+	}
+	if src := s.combatantIn(ctx, combatID, strings.TrimSpace(sourceID)); src != nil {
+		payload["source"] = src.Name
+		payload["source_id"] = src.ID
+		if src.EntityID != "" {
+			payload["source_entity"] = src.EntityID
+		}
 	}
 	if outcome.Type != "" {
 		payload["damage_type"] = outcome.Type
@@ -728,6 +738,9 @@ func (s *Store) Damage(ctx context.Context, campaignID, combatID, combatantID st
 		payload["note"] = note
 	}
 	summary := outcome.Summary(after)
+	if src := payload["source"]; src != nil {
+		summary += fmt.Sprintf(" from %s", src)
+	}
 	if note != "" {
 		summary += " — " + note
 	}
@@ -737,6 +750,22 @@ func (s *Store) Damage(ctx context.Context, campaignID, combatID, combatantID st
 	out := &ChangeResult{Combatant: after, Outcome: outcome, Summary: summary}
 	out.Concentration = s.concentrationPrompts(ctx, campaignID, &after, outcome.Effective)
 	return out, nil
+}
+
+// combatantIn loads one combatant of this battle by row id, nil when the
+// id names nothing here — an unknown source is no source, not an error.
+func (s *Store) combatantIn(ctx context.Context, combatID, combatantID string) *Combatant {
+	if combatantID == "" {
+		return nil
+	}
+	row := s.db.QueryRowContext(ctx,
+		combatantCols+` FROM combatants WHERE id = ? AND combat_id = ?`,
+		combatantID, combatID)
+	c, err := scanCombatant(row)
+	if err != nil {
+		return nil
+	}
+	return &c
 }
 
 // Heal applies healing, persists it, and journals it.

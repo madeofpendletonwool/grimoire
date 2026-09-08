@@ -22,8 +22,8 @@ mechanical layer (MAD-419); the storage decision is
 
 One grammar, no special cases. Pact magic is not a feature with a bespoke
 rule — it is a slot pool whose recovery happens to be `short`. Inspiration
-and DM-invented meta-currencies (a later stage) will register through the
-same grammar unchanged.
+and DM-invented meta-currencies register through the same grammar
+unchanged — [stage 11](table-meta.md) shipped exactly that.
 
 *Bounded* pools (slots, hit dice, feature uses) can neither overspend nor
 fill past their size; *unbounded* ones (a quiver, a purse) may grow past

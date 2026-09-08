@@ -353,6 +353,7 @@ func (s *Server) handleCombatDamage(w http.ResponseWriter, r *http.Request) {
 		Type      string `json:"damage_type"`
 		Note      string `json:"note"`
 		ReduceMax bool   `json:"reduce_max"`
+		SourceID  string `json:"source_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %v", err))
@@ -360,7 +361,7 @@ func (s *Server) handleCombatDamage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.combatantAction(w, r, func(store *combat.Store) (any, error) {
 		out, err := store.Damage(r.Context(), r.PathValue("id"), r.PathValue("cid"), r.PathValue("ctid"),
-			req.Amount, req.Type, req.Note, req.ReduceMax, userID(r))
+			req.Amount, req.Type, req.Note, req.ReduceMax, req.SourceID, userID(r))
 		if err != nil {
 			return nil, err
 		}

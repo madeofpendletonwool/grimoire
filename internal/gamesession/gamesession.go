@@ -98,7 +98,27 @@ var validEvents = map[string]bool{
 // The schema must already be applied (migrate.Up runs before anything
 // serves).
 type Store struct {
-	db *sql.DB
+	db    *sql.DB
+	stats StatsRenderer
+}
+
+// StatsRenderer renders a session's "The numbers" markdown section
+// (MAD-428) — the campaign stats fold, session-scoped. The stats
+// package satisfies it; the interface lives here so the export can
+// carry the section without importing its engine.
+type StatsRenderer interface {
+	// SessionMarkdown renders the session's numbers section, "" when
+	// the sitting has nothing to say.
+	SessionMarkdown(ctx context.Context, sessionID string) (string, error)
+}
+
+// WithStats wires the numbers section into the export. Optional: a
+// store without it exports exactly what it always did.
+func (s *Store) WithStats(r StatsRenderer) *Store {
+	if r != nil {
+		s.stats = r
+	}
+	return s
 }
 
 // New builds a session store on an open, migrated database handle.

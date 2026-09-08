@@ -407,7 +407,7 @@ func TestSnapshotCombatAndMonsters(t *testing.T) {
 			wizID = c.ID
 		}
 	}
-	if _, err := h.combats.Damage(ctx, h.campaign, res.Combat.ID, wizID, 26, "slashing", "goblin", false, "dm"); err != nil {
+	if _, err := h.combats.Damage(ctx, h.campaign, res.Combat.ID, wizID, 26, "slashing", "goblin", false, "", "dm"); err != nil {
 		t.Fatalf("damage velren: %v", err)
 	}
 
@@ -573,3 +573,53 @@ var _ Users = userNames{}
 
 // guard the unused-import set the harness's sql handle needs.
 var _ = func() *sql.DB { return nil }
+
+/* ---------- inspiration ---------- */
+
+// TestSnapshotInspirationMark (MAD-428): who holds inspiration is table
+// knowledge — a number-free mark every standing sees, word mode
+// included, spent the moment the pool empties.
+func TestSnapshotInspirationMark(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	setConfig(t, h, Config{HP: HPWord, Slots: SlotsPrivate})
+
+	snap, err := h.board.Snapshot(ctx, h.campaign, PlayerStanding(h.fighter))
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	for _, m := range snap.Members {
+		if m.Inspired {
+			t.Fatalf("nobody has been awarded inspiration yet: %+v", m)
+		}
+	}
+
+	if _, _, err := h.ledgers.AwardInspiration(ctx, h.campaign, h.wizard, "", "dm"); err != nil {
+		t.Fatalf("award: %v", err)
+	}
+	snap, err = h.board.Snapshot(ctx, h.campaign, PlayerStanding(h.fighter))
+	if err != nil {
+		t.Fatalf("snapshot after award: %v", err)
+	}
+	for _, m := range snap.Members {
+		if m.CharacterID == h.wizard && !m.Inspired {
+			t.Fatalf("the wizard holds inspiration the board cannot see: %+v", m)
+		}
+		if m.CharacterID == h.fighter && m.Inspired {
+			t.Fatalf("the fighter was never awarded: %+v", m)
+		}
+	}
+
+	if _, err := h.ledgers.TrySpendInspiration(ctx, h.campaign, h.wizard, "", "p1"); err != nil {
+		t.Fatalf("spend: %v", err)
+	}
+	snap, err = h.board.Snapshot(ctx, h.campaign, DMStanding())
+	if err != nil {
+		t.Fatalf("snapshot after spend: %v", err)
+	}
+	for _, m := range snap.Members {
+		if m.CharacterID == h.wizard && m.Inspired {
+			t.Fatalf("spent inspiration still shows: %+v", m)
+		}
+	}
+}
