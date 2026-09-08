@@ -838,6 +838,24 @@ export const api = {
 	listEvents: (campaignID, sessionID) =>
 		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}/events`).then(json),
 
+	// In-play capture (MAD-483): the ruling matcher read on its own, so the
+	// DM screen can surface "how did we rule this before?" while the DM is
+	// still typing — before anything is logged.
+	rulingMatches: (campaignID, sessionID, q) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}` +
+			`/ruling-matches?q=${encodeURIComponent(q)}`).then(json),
+
+	// The loop from a logged discovery to the knowledge graph: stages one
+	// proposed_fact item from the event, prefilled by the caller. Nothing
+	// writes a fact directly — the review queue decides.
+	proposeEventFact: (campaignID, sessionID, eventID, body) =>
+		fetch(`/api/campaigns/${encodeURIComponent(campaignID)}/sessions/${encodeURIComponent(sessionID)}` +
+			`/events/${encodeURIComponent(eventID)}/propose-fact`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
 	// The canon review queue (MAD-310): the DM's human gate. Build refreshes
 	// the queue from the three upstream passes; decide accepts, modifies or
 	// dismisses one open item; export downloads the applied changes.

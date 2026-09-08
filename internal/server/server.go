@@ -555,6 +555,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/span", s.handleResolveSpan)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/events", s.handleListEvents)
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/events", s.handleAddEvent)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/ruling-matches", s.handleRulingMatches)
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/events/{eid}/propose-fact", s.handleProposeEventFact)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/export", s.handleExportSession)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/replay", s.handleSessionReplay)
 	// The optional audio→transcript hook (MAD-320): upload a recording, poll

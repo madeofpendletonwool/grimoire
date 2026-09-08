@@ -87,6 +87,9 @@ const (
 	BatchSourceRest        = "rest"
 	BatchSourceLevelUp     = "level_up"
 	BatchSourceReconcile   = "reconcile"
+	// In-play capture (MAD-483): a DM-authored discovery promoted from the
+	// session log, not a generator's output — a single-item batch.
+	BatchSourceSessionCapture = "session_capture"
 )
 
 // batchSources is the validated source vocabulary.
@@ -97,6 +100,7 @@ var batchSources = map[string]bool{
 	BatchSourceDungeon: true, BatchSourceRumor: true, BatchSourceJourney: true,
 	BatchSourceMonster: true, BatchSourceItem: true, BatchSourceLoot: true,
 	BatchSourceRest: true, BatchSourceLevelUp: true, BatchSourceReconcile: true,
+	BatchSourceSessionCapture: true,
 }
 
 /* ---------- the stored shape ---------- */

@@ -107,3 +107,70 @@ export function noteLines(events, limit = 8) {
 		.filter((n) => n.text);
 	return notes.reverse().slice(0, limit);
 }
+
+/**
+ * In-play capture (MAD-483): the payload a logged discovery or ruling
+ * carries so the post-session canon run has anchors, not just a
+ * transcript. Three derivations feed it — the scene, the fight, and the
+ * entity refs — each null when its context is not live.
+ */
+export function sceneContext(scene) {
+	if (!scene) return null;
+	return { scene_id: scene.id, scene_name: scene.name };
+}
+
+/** The acting combatant of a battle read, null when nobody holds the turn. */
+export function actingCombatant(order = []) {
+	return (order || []).find((c) => c && c.is_turn) || null;
+}
+
+/**
+ * The combat context: which fight, and who held the turn when the DM
+ * captured — "log this kill" rides on this. Monsters carry no entity id
+ * and are referenced by name; that is still context.
+ */
+export function combatContext(combat, acting) {
+	if (!combat || !acting) return null;
+	return {
+		combat_id: combat.id,
+		combatant: { id: acting.id, name: acting.name, entity_id: acting.entity_id || "" },
+	};
+}
+
+/**
+ * The entity refs a capture links: the scene's cast (focus first — they
+ * are the scene), then the acting combatant's entity when it has one,
+ * deduped and resolved to names. Unknown entities still link by id; an
+ * unresolvable anchor beats a silent blank.
+ */
+export function entityRefs(scene, acting, entities = []) {
+	const seen = new Map();
+	const push = (id, source) => {
+		if (id && !seen.has(id)) seen.set(id, source);
+	};
+	const cast = scene ? scene.cast || [] : [];
+	for (const c of cast) if (c.role === "focus") push(c.entity_id, "focus");
+	for (const c of cast) if (c.role !== "focus") push(c.entity_id, "cast");
+	if (acting && acting.entity_id) push(acting.entity_id, "combat");
+	const byID = new Map((entities || []).map((e) => [e.id, e]));
+	return [...seen].map(([id, source]) => {
+		const ent = byID.get(id);
+		return { id, name: (ent && ent.name) || id.slice(0, 8), source };
+	});
+}
+
+/**
+ * The capture payload itself: scene and combat context plus the linked
+ * entity refs, each block dropped when its context is not live. Session
+ * context is the event's own row — the payload names the rest.
+ */
+export function capturePayload(scene, combat, acting, entities) {
+	const payload = {};
+	const sc = sceneContext(scene);
+	if (sc) payload.scene = sc;
+	const cc = combatContext(combat, acting);
+	if (cc) payload.combat = cc;
+	const refs = entityRefs(scene, acting, entities);
+	if (refs.length) payload.entities = refs;
+	return payload;
+}

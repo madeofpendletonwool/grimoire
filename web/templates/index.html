@@ -1120,15 +1120,68 @@
 					<div class="scr-scene-tabs" id="scr-scene-tabs"></div>
 				</div>
 
-				<!-- NPCs on stage: the scene's cast as chips; a chip opens
-				     the entity in the drawer without leaving play mode. -->
-				<div class="scr-cast-wrap">
-					<h3 class="scr-heading">On stage</h3>
-					<div class="scr-cast" id="scr-cast"></div>
-				</div>
+			<!-- NPCs on stage: the scene's cast as chips; a chip opens
+			     the entity in the drawer without leaving play mode. -->
+			<div class="scr-cast-wrap">
+				<h3 class="scr-heading">On stage</h3>
+				<div class="scr-cast" id="scr-cast"></div>
+			</div>
 
-				<!-- The scratch pad: kind "note" events against the live
-				     session — the mid-play "don't forget" parking lot. -->
+			<!-- In-play capture (MAD-483): discoveries and rulings, a
+			     few-second affair. One tap opens the form prefilled with
+			     the live context — scene, fight, cast refs — and a
+			     discovery can propose a fact into the review queue. -->
+			<div class="scr-capture" id="scr-capture">
+				<h3 class="scr-heading">Capture</h3>
+				<div class="scr-capture-row" id="scr-capture-row">
+					<button type="button" class="enc-btn scr-capture-btn" id="scr-disc-btn">+ Discovery</button>
+					<button type="button" class="enc-btn scr-capture-btn" id="scr-rule-btn">Log ruling</button>
+				</div>
+				<p class="scr-hint" id="scr-capture-hint" hidden></p>
+				<form class="scr-cap-form" id="scr-cap-form" hidden autocomplete="off">
+					<b class="scr-cap-kind" id="scr-cap-kind">discovery</b>
+					<input id="scr-cap-summary" class="scr-cap-field" maxlength="240"
+						placeholder="One line — what happened" aria-label="The one-line summary">
+					<textarea id="scr-cap-detail" class="scr-cap-detail" rows="2"
+						placeholder="Detail (optional)" aria-label="The detail"></textarea>
+					<div class="scr-cap-links" id="scr-cap-links"></div>
+					<div class="scr-cap-prior" id="scr-cap-prior" hidden></div>
+					<label class="scr-cap-propose" id="scr-cap-propose-label" hidden>
+						<input type="checkbox" id="scr-cap-propose">
+						Also propose as fact
+					</label>
+					<div class="scr-cap-fact" id="scr-cap-fact" hidden>
+						<label class="scr-cap-slot" for="scr-cap-subject">
+							<span>about</span>
+							<select id="scr-cap-subject" aria-label="The fact's subject entity"></select>
+						</label>
+						<label class="scr-cap-slot" for="scr-cap-statement">
+							<span>statement</span>
+							<input id="scr-cap-statement" class="scr-cap-field" maxlength="500"
+								placeholder="The fact as it should stand in canon">
+						</label>
+						<label class="scr-cap-slot" for="scr-cap-predicate">
+							<span>predicate</span>
+							<input id="scr-cap-predicate" class="scr-cap-field" maxlength="60" value="discovered">
+						</label>
+						<label class="scr-cap-slot" for="scr-cap-visibility">
+							<span>visibility</span>
+							<select id="scr-cap-visibility" aria-label="Fact visibility">
+								<option value="public">public</option>
+								<option value="secret">secret</option>
+							</select>
+						</label>
+					</div>
+					<div class="scr-cap-actions">
+						<button type="submit" class="enc-btn" id="scr-cap-save">Log it</button>
+						<button type="button" class="enc-btn scr-cap-cancel" id="scr-cap-cancel">Cancel</button>
+					</div>
+					<p class="scr-cap-note" id="scr-cap-note"></p>
+				</form>
+			</div>
+
+			<!-- The scratch pad: kind "note" events against the live
+			     session — the mid-play "don't forget" parking lot. -->
 				<form class="scr-notes" id="scr-notes" autocomplete="off">
 					<h3 class="scr-heading">Notes</h3>
 					<div class="scr-notes-row">

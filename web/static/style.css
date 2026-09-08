@@ -5380,6 +5380,125 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	letter-spacing: 0.04em;
 }
 
+/* in-play capture (MAD-483) — discoveries and rulings, a few-second
+   affair. Big buttons, one line, the context chips that ride along. */
+
+.scr-capture { display: flex; flex-direction: column; gap: 0.4rem; }
+
+.scr-capture-row { display: flex; gap: var(--sp-2); }
+
+.scr-capture-btn { flex: 1; font-size: var(--fs-lg); padding: 0.5rem 0.6rem; }
+
+.scr-cap-form {
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-lg);
+	background: linear-gradient(180deg, var(--stone-700), var(--stone-800));
+	padding: var(--sp-3);
+	display: flex;
+	flex-direction: column;
+	gap: 0.45rem;
+}
+
+.scr-cap-kind {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--gold-bright, #ffd071);
+}
+
+.scr-cap-field,
+.scr-cap-detail {
+	border: 1px solid var(--stone-line);
+	background: var(--stone-700);
+	color: var(--parchment, #efe4c9);
+	border-radius: var(--r-md);
+	padding: 0.4rem 0.55rem;
+	font-size: var(--fs-md);
+	font-family: inherit;
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.scr-cap-detail { resize: vertical; min-height: 2.4rem; }
+
+.scr-cap-links { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+
+.scr-cap-link {
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-lg);
+	padding: 0.18rem 0.6rem;
+	font-size: var(--fs-sm);
+	color: var(--parchment-soft, #d8c9a8);
+	opacity: 0.85;
+}
+
+.scr-cap-link.is-focus,
+.scr-cap-link.is-combat { border-color: var(--gold-dim, #8a7024); }
+
+.scr-cap-prior {
+	border-left: 3px solid var(--gold-dim, #8a7024);
+	padding: 0.25rem 0 0.25rem 0.6rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.scr-cap-prior-head { margin: 0; font-size: var(--fs-xs); opacity: 0.6; font-style: italic; }
+
+.scr-cap-prior-match { display: flex; gap: 0.45rem; align-items: baseline; font-size: var(--fs-sm); }
+
+.scr-cap-prior-ordinal {
+	flex: none;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--gold-bright, #ffd071);
+	letter-spacing: 0.05em;
+}
+
+.scr-cap-prior-q { color: var(--parchment, #efe4c9); }
+
+.scr-cap-prior-a { opacity: 0.65; }
+
+.scr-cap-propose {
+	display: flex;
+	gap: 0.45rem;
+	align-items: baseline;
+	font-size: var(--fs-md);
+	color: var(--parchment, #efe4c9);
+}
+
+.scr-cap-fact {
+	border-top: 1px dashed var(--stone-line);
+	padding-top: 0.45rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.45rem;
+}
+
+.scr-cap-slot { display: flex; flex-direction: column; gap: 0.15rem; font-size: var(--fs-sm); }
+
+.scr-cap-slot > span {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	opacity: 0.55;
+}
+
+.scr-cap-slot select {
+	border: 1px solid var(--stone-line);
+	background: var(--stone-700);
+	color: var(--parchment, #efe4c9);
+	border-radius: var(--r-md);
+	padding: 0.35rem 0.55rem;
+	font-size: var(--fs-sm);
+}
+
+.scr-cap-actions { display: flex; gap: var(--sp-2); }
+
+.scr-cap-note { margin: 0; font-size: var(--fs-sm); color: #e8a13c; min-height: 1em; }
+
 /* the scratch pad — one line, one tap, parked against the live session. */
 
 .scr-notes { display: flex; flex-direction: column; gap: 0.4rem; }
