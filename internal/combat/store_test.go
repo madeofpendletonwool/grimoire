@@ -252,7 +252,7 @@ func TestFullCombatRunsEndToEnd(t *testing.T) {
 	// A goblin hits Velren for 8; his fire resistance does not apply to
 	// a blade, and he takes all 8.
 	velrenID := byName(t, turn.Order, "Velren").ID
-	hit, err := h.store.Damage(ctx, h.campaign, combatID, velrenID, 8, "slashing", "scimitar", false, "keeper")
+	hit, err := h.store.Damage(ctx, h.campaign, combatID, velrenID, 8, "slashing", "scimitar", false, "", "keeper")
 	if err != nil {
 		t.Fatalf("damage: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestFullCombatRunsEndToEnd(t *testing.T) {
 		t.Fatalf("velren after the hit: %+v", hit)
 	}
 	// The fire resistance halves what it should.
-	hit, err = h.store.Damage(ctx, h.campaign, combatID, velrenID, 10, "fire", "torch", false, "keeper")
+	hit, err = h.store.Damage(ctx, h.campaign, combatID, velrenID, 10, "fire", "torch", false, "", "keeper")
 	if err != nil {
 		t.Fatalf("fire damage: %v", err)
 	}
@@ -270,14 +270,14 @@ func TestFullCombatRunsEndToEnd(t *testing.T) {
 
 	// Velren cuts Goblin A down; the wolf kills Goblin B.
 	gaID, gbID := byName(t, turn.Order, "Goblin A").ID, byName(t, turn.Order, "Goblin B").ID
-	kill, err := h.store.Damage(ctx, h.campaign, combatID, gaID, 9, "slashing", "longsword", false, "keeper")
+	kill, err := h.store.Damage(ctx, h.campaign, combatID, gaID, 9, "slashing", "longsword", false, "", "keeper")
 	if err != nil {
 		t.Fatalf("kill goblin a: %v", err)
 	}
 	if !kill.Outcome.Died || !kill.Combatant.Dead {
 		t.Fatalf("goblin a: %+v", kill)
 	}
-	if _, err := h.store.Damage(ctx, h.campaign, combatID, gbID, 11, "piercing", "bite", false, "keeper"); err != nil {
+	if _, err := h.store.Damage(ctx, h.campaign, combatID, gbID, 11, "piercing", "bite", false, "", "keeper"); err != nil {
 		t.Fatalf("kill goblin b: %v", err)
 	}
 
@@ -369,10 +369,10 @@ func TestDownedDeathSavesAndHealing(t *testing.T) {
 	velrenID := byName(t, start.Order, "Velren").ID
 
 	// Dropped, not dead; damage at zero fails saves; healing wakes.
-	if _, err := h.store.Damage(ctx, h.campaign, combatID, velrenID, 28, "slashing", "", false, "keeper"); err != nil {
+	if _, err := h.store.Damage(ctx, h.campaign, combatID, velrenID, 28, "slashing", "", false, "", "keeper"); err != nil {
 		t.Fatalf("damage: %v", err)
 	}
-	down, err := h.store.Damage(ctx, h.campaign, combatID, velrenID, 4, "slashing", "", false, "keeper")
+	down, err := h.store.Damage(ctx, h.campaign, combatID, velrenID, 4, "slashing", "", false, "", "keeper")
 	if err != nil {
 		t.Fatalf("damage at zero: %v", err)
 	}
@@ -597,7 +597,7 @@ func TestDamagePromptsConcentrationChecks(t *testing.T) {
 	}
 	velrenID := byName(t, start.Order, "Velren").ID
 	// 22 damage: DC is half, 11, over the floor of 10.
-	hit, err := h.store.Damage(ctx, h.campaign, start.Combat.ID, velrenID, 22, "slashing", "", false, "keeper")
+	hit, err := h.store.Damage(ctx, h.campaign, start.Combat.ID, velrenID, 22, "slashing", "", false, "", "keeper")
 	if err != nil {
 		t.Fatalf("damage: %v", err)
 	}
@@ -605,7 +605,7 @@ func TestDamagePromptsConcentrationChecks(t *testing.T) {
 		t.Fatalf("concentration prompt: %+v", hit.Concentration)
 	}
 	// A small hit stays at the floor.
-	hit, err = h.store.Damage(ctx, h.campaign, start.Combat.ID, velrenID, 5, "slashing", "", false, "keeper")
+	hit, err = h.store.Damage(ctx, h.campaign, start.Combat.ID, velrenID, 5, "slashing", "", false, "", "keeper")
 	if err != nil {
 		t.Fatalf("damage: %v", err)
 	}
@@ -627,7 +627,7 @@ func TestCombatExportsIntoTheSessionLog(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 	goblinID := byName(t, start.Order, "Goblin").ID
-	if _, err := h.store.Damage(ctx, h.campaign, start.Combat.ID, goblinID, 9, "slashing", "bite", false, "keeper"); err != nil {
+	if _, err := h.store.Damage(ctx, h.campaign, start.Combat.ID, goblinID, 9, "slashing", "bite", false, "", "keeper"); err != nil {
 		t.Fatalf("damage: %v", err)
 	}
 
@@ -669,14 +669,14 @@ func TestJournalFoldsToTheColumns(t *testing.T) {
 	if _, err := h.store.TempHP(ctx, h.campaign, combatID, velrenID, 5, "", "keeper"); err != nil {
 		t.Fatalf("temp: %v", err)
 	}
-	if _, err := h.store.Damage(ctx, h.campaign, combatID, velrenID, 9, "fire", "", false, "keeper"); err != nil {
+	if _, err := h.store.Damage(ctx, h.campaign, combatID, velrenID, 9, "fire", "", false, "", "keeper"); err != nil {
 		t.Fatalf("damage: %v", err)
 	}
 	if _, err := h.store.Heal(ctx, h.campaign, combatID, velrenID, 4, "", "keeper"); err != nil {
 		t.Fatalf("heal: %v", err)
 	}
 	gaID := byName(t, start.Order, "Goblin A").ID
-	if _, err := h.store.Damage(ctx, h.campaign, combatID, gaID, 7, "slashing", "", false, "keeper"); err != nil {
+	if _, err := h.store.Damage(ctx, h.campaign, combatID, gaID, 7, "slashing", "", false, "", "keeper"); err != nil {
 		t.Fatalf("kill: %v", err)
 	}
 

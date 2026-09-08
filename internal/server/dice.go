@@ -23,6 +23,7 @@ import (
 
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
 	"github.com/madeofpendletonwool/grimoire/internal/dice"
+	"github.com/madeofpendletonwool/grimoire/internal/ledger"
 )
 
 // diceEnabled reports the roller's availability.
@@ -58,6 +59,7 @@ type rollView struct {
 	TargetName     string          `json:"target_name,omitempty"`
 	Formula        string          `json:"formula"`
 	Mode           string          `json:"mode,omitempty"`
+	Inspiration    bool            `json:"inspiration,omitempty"` // the roll that spent it (MAD-428)
 	Notation       string          `json:"notation"`
 	Dice           json.RawMessage `json:"dice,omitempty"`
 	Modifier       int             `json:"modifier"`
@@ -76,7 +78,8 @@ func toRollView(r dice.RollRow) rollView {
 		ContextKind: r.ContextKind, Detail: r.Detail,
 		TargetID: r.TargetID, TargetName: r.TargetName,
 		Formula: r.Formula, Mode: r.Mode, Notation: r.Notation(),
-		Modifier: r.Result.Modifier, Total: r.Result.Total,
+		Inspiration: r.Inspiration,
+		Modifier:    r.Result.Modifier, Total: r.Result.Total,
 		Natural20: r.Result.Natural20, Natural1: r.Result.Natural1,
 		Visibility: r.Visibility,
 		CreatedAt:  r.CreatedAt.Format(http.TimeFormat),
@@ -101,6 +104,10 @@ type rollRequest struct {
 	TargetID    string `json:"target_id"`
 	CharacterID string `json:"character_id"`
 	SessionID   string `json:"session_id"`
+	// SpendInspiration spends the character's inspiration on this roll
+	// (MAD-428): advantage on one attack roll, saving throw or ability
+	// check — the 2014 rule, enforced as the rule reads.
+	SpendInspiration bool `json:"spend_inspiration"`
 }
 
 func (s *Server) handleRollDice(w http.ResponseWriter, r *http.Request) {
@@ -135,16 +142,83 @@ func (s *Server) handleRollDice(w http.ResponseWriter, r *http.Request) {
 			req.CharacterID = a.playerScope.EntityID()
 		}
 	}
+	var spend *ledger.TxnRow
+	if req.SpendInspiration {
+		txn, err := s.spendInspirationOnRoll(w, r, a, &req)
+		if err != nil {
+			return // the helper wrote the response
+		}
+		spend = txn
+	}
 	roll, err := s.dice.Roll(r.Context(), a.campaign.ID, dice.Input{
 		Formula: req.Formula, Mode: req.Mode, Visibility: req.Visibility,
 		ContextKind: req.ContextKind, Detail: req.Detail, TargetID: req.TargetID,
 		CharacterID: req.CharacterID, SessionID: req.SessionID, Actor: userID(r),
+		Inspiration: req.SpendInspiration,
 	})
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"roll": toRollView(*roll)})
+	// The spend rode ahead of the roll; point it at the event the roll
+	// left behind, so the ledger reads the same story the log does.
+	if spend != nil {
+		_ = s.ledgers.LinkTxnEvent(r.Context(), spend.ID, roll.SessionEventID, roll.SessionID)
+	}
+	body := map[string]any{"roll": toRollView(*roll)}
+	if spend != nil {
+		body["inspiration"] = toTxnView(*spend)
+	}
+	writeJSON(w, http.StatusCreated, body)
+}
+
+// spendInspirationOnRoll applies the 2014 rule to one roll request:
+// inspiration buys advantage on one attack roll, saving throw or
+// ability check — never initiative, never damage, never a roll that
+// already carries a mode, and never for a character who does not hold
+// it. The spend is validated and written atomically by the ledger
+// before the dice move; the caller links it to the roll's event after.
+// The roll itself is checked first (dice.Check) so a malformed formula
+// cannot eat a character's inspiration. Returns nil only after the
+// response has been written.
+func (s *Server) spendInspirationOnRoll(w http.ResponseWriter, r *http.Request, a *campAccess, req *rollRequest) (*ledger.TxnRow, error) {
+	if s.ledgers == nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("the resource ledger is not configured on this install"))
+		return nil, fmt.Errorf("no ledger")
+	}
+	if req.CharacterID == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("spending inspiration needs a character to spend it"))
+		return nil, fmt.Errorf("no character")
+	}
+	switch req.ContextKind {
+	case dice.ContextAttack, dice.ContextSave, dice.ContextCheck:
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Errorf(
+			"inspiration buys advantage on an attack roll, saving throw or ability check — not %q",
+			req.ContextKind))
+		return nil, fmt.Errorf("context %q", req.ContextKind)
+	}
+	if req.Mode != "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("the roll already carries %s; inspiration is not spent to stack it", req.Mode))
+		return nil, fmt.Errorf("mode %q", req.Mode)
+	}
+	// The formula must accept advantage before anything is spent —
+	// the engine's own rule, checked without writing.
+	req.Mode = dice.ModeAdvantage
+	if err := dice.Check(dice.Input{
+		Formula: req.Formula, Mode: req.Mode, Visibility: req.Visibility,
+		ContextKind: req.ContextKind, Detail: req.Detail,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("inspiration grants advantage: %v", err))
+		return nil, err
+	}
+	txn, err := s.ledgers.TrySpendInspiration(r.Context(), a.campaign.ID, req.CharacterID,
+		"advantage on a "+req.ContextKind, userID(r))
+	if err != nil {
+		writeStoreError(w, err)
+		return nil, err
+	}
+	return txn, nil
 }
 
 /* ---------- the feed ---------- */

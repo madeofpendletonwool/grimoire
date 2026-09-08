@@ -76,6 +76,10 @@ type Input struct {
 	CharacterID string
 	SessionID   string
 	Actor       string
+	// Inspiration marks a roll thrown by spending inspiration (MAD-428):
+	// the caller (the server's roll flow) has already spent the pool and
+	// forces the advantage mode; the row records the why beside the mode.
+	Inspiration bool
 }
 
 // RollRow is one stored roll. Result is the decoded engine output; the
@@ -98,11 +102,54 @@ type RollRow struct {
 	TargetName     string
 	Formula        string
 	Mode           string
+	Inspiration    bool // the roll that spent it (MAD-428)
 	Result         *RollResult
 	Seed           int64
 	Nonce          int64
 	Visibility     string
 	CreatedAt      time.Time
+}
+
+// Check validates one roll request without rolling it: the formula
+// parses, the mode applies, the vocabulary holds. The inspiration flow
+// (MAD-428) calls it before spending the pool, so a malformed roll
+// cannot eat a character's inspiration — nothing is written until the
+// whole request would stand.
+func Check(in Input) error {
+	_, _, err := prepare(in)
+	return err
+}
+
+// prepare validates the request and returns the parsed formula beside
+// its mode-applied twin — the two expressions Roll needs.
+func prepare(in Input) (*Expr, *Expr, error) {
+	in.Formula = strings.TrimSpace(in.Formula)
+	expr, err := Parse(in.Formula)
+	if err != nil {
+		return nil, nil, err
+	}
+	if in.Mode != ModeNone && in.Mode != ModeAdvantage && in.Mode != ModeDisadvantage {
+		return nil, nil, fmt.Errorf("mode %q", in.Mode)
+	}
+	effective, err := WithMode(expr, in.Mode)
+	if err != nil {
+		return nil, nil, err
+	}
+	switch in.Visibility {
+	case "", VisibilityPublic, VisibilitySecret:
+	default:
+		return nil, nil, fmt.Errorf("visibility %q", in.Visibility)
+	}
+	if in.ContextKind == "" {
+		in.ContextKind = ContextOther
+	}
+	if !ValidContext(in.ContextKind) {
+		return nil, nil, fmt.Errorf("context %q", in.ContextKind)
+	}
+	if len(in.Detail) > 200 {
+		return nil, nil, fmt.Errorf("detail longer than 200 characters")
+	}
+	return expr, effective, nil
 }
 
 // Roll executes and stores one roll. The formula is parsed and
@@ -115,33 +162,15 @@ type RollRow struct {
 // campaign with no live sitting still gets its roll — the roller is
 // always usable, the session log simply was not open.
 func (s *Store) Roll(ctx context.Context, campaignID string, in Input) (*RollRow, error) {
-	in.Formula = strings.TrimSpace(in.Formula)
-	expr, err := Parse(in.Formula)
+	expr, effective, err := prepare(in)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", campaign.ErrInvalid, err)
 	}
-	if in.Mode != ModeNone && in.Mode != ModeAdvantage && in.Mode != ModeDisadvantage {
-		return nil, fmt.Errorf("%w: mode %q", campaign.ErrInvalid, in.Mode)
-	}
-	effective, err := WithMode(expr, in.Mode)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", campaign.ErrInvalid, err)
-	}
-	switch in.Visibility {
-	case "", VisibilityPublic:
+	if in.Visibility == "" {
 		in.Visibility = VisibilityPublic
-	case VisibilitySecret:
-	default:
-		return nil, fmt.Errorf("%w: visibility %q", campaign.ErrInvalid, in.Visibility)
 	}
 	if in.ContextKind == "" {
 		in.ContextKind = ContextOther
-	}
-	if !ValidContext(in.ContextKind) {
-		return nil, fmt.Errorf("%w: context %q", campaign.ErrInvalid, in.ContextKind)
-	}
-	if len(in.Detail) > 200 {
-		return nil, fmt.Errorf("%w: detail longer than 200 characters", campaign.ErrInvalid)
 	}
 
 	charName := ""
@@ -187,7 +216,7 @@ func (s *Store) Roll(ctx context.Context, campaignID string, in Input) (*RollRow
 		CharacterID: in.CharacterID, CharacterName: charName,
 		ContextKind: in.ContextKind, Detail: strings.TrimSpace(in.Detail),
 		TargetID: in.TargetID, TargetName: targetName,
-		Visibility: in.Visibility, CreatedAt: now,
+		Visibility: in.Visibility, Inspiration: in.Inspiration, CreatedAt: now,
 	}
 
 	// One transaction: claim the seq atomically, roll from (seed, seq),
@@ -207,14 +236,14 @@ func (s *Store) Roll(ctx context.Context, campaignID string, in Input) (*RollRow
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
 		var seq int64
 		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO dice_rolls (id, campaign_id, seq, actor, character_id, character_name,
-				context_kind, detail, target_id, target_name, formula, mode, visibility, created_at)
+			INSERT INTO dice_rolls (id, campaign_id, seq, session_id, actor, character_id, character_name,
+				context_kind, detail, target_id, target_name, formula, mode, inspiration, visibility, created_at)
 			VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM dice_rolls WHERE campaign_id = ?),
-				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			RETURNING seq`,
-			id, campaignID, campaignID, in.Actor, nullIfEmpty(in.CharacterID), charName,
+			id, campaignID, campaignID, nullIfEmpty(sessionID), in.Actor, nullIfEmpty(in.CharacterID), charName,
 			in.ContextKind, row.Detail, nullIfEmpty(in.TargetID), targetName,
-			expr.String(), in.Mode, in.Visibility, now.UnixMilli()).Scan(&seq); err != nil {
+			expr.String(), in.Mode, boolInt(in.Inspiration), in.Visibility, now.UnixMilli()).Scan(&seq); err != nil {
 			return fmt.Errorf("insert roll: %w", err)
 		}
 		result := Roll(seed, seq, effective, in.Mode)
@@ -264,6 +293,9 @@ func (r *RollRow) summaryLine() string {
 	if r.Mode != "" {
 		fmt.Fprintf(&b, " (%s)", r.Mode)
 	}
+	if r.Inspiration {
+		b.WriteString(" · inspiration spent")
+	}
 	fmt.Fprintf(&b, " → %d", r.Result.Total)
 	return b.String()
 }
@@ -306,7 +338,7 @@ func (r *RollRow) Notation() string {
 // eventPayload is the session event's payload: the complete roll minus
 // the row bookkeeping — everything a replay or a citation needs.
 func (r *RollRow) eventPayload() map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"roll_id":    r.ID,
 		"formula":    r.Formula,
 		"mode":       r.Mode,
@@ -319,6 +351,10 @@ func (r *RollRow) eventPayload() map[string]any {
 		"character":  r.CharacterName,
 		"target":     r.TargetName,
 	}
+	if r.Inspiration {
+		payload["inspiration"] = true
+	}
+	return payload
 }
 
 // liveSession finds the campaign's live sitting, newest ordinal first —
@@ -406,7 +442,7 @@ func (s *Store) Feed(ctx context.Context, campaignID string, after int64, limit 
 				r.actor, COALESCE(u.username, ''), COALESCE(r.character_id, ''), r.character_name,
 				r.context_kind, r.detail, COALESCE(r.target_id, ''), r.target_name,
 				r.formula, COALESCE(r.mode, ''), r.dice, r.modifier, r.total, r.seed, r.nonce,
-				r.visibility, r.created_at
+				r.visibility, r.inspiration, r.created_at
 			FROM dice_rolls r
 			LEFT JOIN users u ON u.id = r.actor
 			WHERE r.campaign_id = ? AND r.seq > ?%s
@@ -470,14 +506,16 @@ func scanRoll(row interface{ Scan(...any) error }) (*RollRow, error) {
 		modifier  int
 		total     int
 		createdMS int64
+		inspired  int
 	)
 	if err := row.Scan(&r.ID, &r.CampaignID, &r.Seq, &r.SessionID, &r.SessionEventID,
 		&r.Actor, &r.ActorName, &r.CharacterID, &r.CharacterName,
 		&r.ContextKind, &r.Detail, &r.TargetID, &r.TargetName,
 		&r.Formula, &r.Mode, &diceJSON, &modifier, &total, &r.Seed, &r.Nonce,
-		&r.Visibility, &createdMS); err != nil {
+		&r.Visibility, &inspired, &createdMS); err != nil {
 		return nil, err
 	}
+	r.Inspiration = inspired == 1
 	r.CreatedAt = time.UnixMilli(createdMS).UTC()
 	r.Result = &RollResult{
 		Formula: r.Formula, Mode: r.Mode, Modifier: modifier, Total: total,
@@ -489,6 +527,14 @@ func scanRoll(row interface{ Scan(...any) error }) (*RollRow, error) {
 }
 
 /* ---------- helpers ---------- */
+
+// boolInt renders a bool the way the integer CHECK columns store it.
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
 
 // withTx runs fn in one transaction, rolling back on error.
 func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {

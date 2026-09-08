@@ -209,6 +209,7 @@ type Member struct {
 	Concentrating string          `json:"concentrating,omitempty"` // what the character holds
 	Slots         []SlotLevel     `json:"slots,omitempty"`         // visible mode, or the viewer's own
 	Warnings      []string        `json:"warnings,omitempty"`      // word-safe in word mode
+	Inspired      bool            `json:"inspired,omitempty"`      // holds inspiration — the table speaks it aloud (MAD-428)
 }
 
 // TurnEntry is one line of the initiative order — names and positions,
@@ -436,12 +437,20 @@ func (s *Store) member(ctx context.Context, campaignID, characterID string, view
 
 	// Slots and warnings, from the ledger's derived balances — visible
 	// per config, or always on the viewer's own strip (and the DM's).
+	// Inspiration rides the same read: a boolean the whole table may
+	// know, number-free, so word mode keeps it too.
 	if s.ledger != nil {
 		balances, err := s.ledger.Balances(ctx, campaignID, characterID)
 		if err == nil {
 			slotsVisible := viewer.DM || cfg.Slots == SlotsVisible || viewer.Own[characterID]
 			hpVisible := exact && maxHP > 0
 			m.Slots, m.Warnings = summarize(balances, slotsVisible, hpVisible, hp, maxHP)
+			for _, b := range balances {
+				if b.Pool.Key() == ledger.InspirationKey {
+					m.Inspired = b.Current > 0
+					break
+				}
+			}
 		}
 	}
 	return m, nil

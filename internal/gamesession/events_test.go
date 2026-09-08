@@ -293,3 +293,59 @@ func TestRoundTripTranscriptToSpanToExport(t *testing.T) {
 		t.Fatalf("export incomplete:\n%s", md)
 	}
 }
+
+// TestExportCarriesTheNumbers (MAD-428): a wired stats renderer lands
+// its section after the fights, and an unwired store exports exactly
+// what it always did.
+func TestExportCarriesTheNumbers(t *testing.T) {
+	s, cid := seeded(t)
+	ses := addSession(t, s, cid, "one")
+
+	stub := stubStats{"## The numbers\n\n_3 rolls · 1 crit_\n"}
+	wired, err := New(s.DB())
+	if err != nil {
+		t.Fatalf("fresh store: %v", err)
+	}
+	wired = wired.WithStats(stub)
+	md, err := wired.ExportMarkdown(context.Background(), ses.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if !strings.Contains(md, "## The numbers") || !strings.Contains(md, "_3 rolls · 1 crit_") {
+		t.Errorf("export missing the numbers section:\n%s", md)
+	}
+	if strings.Index(md, "## The numbers") < strings.Index(md, "## Log") {
+		t.Error("the numbers belong after the log and fights, not before")
+	}
+
+	// The unwired store: no section, no error, no change.
+	plain, err := s.ExportMarkdown(context.Background(), ses.ID)
+	if err != nil {
+		t.Fatalf("plain export: %v", err)
+	}
+	if strings.Contains(plain, "## The numbers") {
+		t.Error("an unwired store rendered numbers from nowhere")
+	}
+
+	// A renderer with nothing to say says nothing.
+	quiet, err := New(s.DB())
+	if err != nil {
+		t.Fatalf("fresh store: %v", err)
+	}
+	quiet = quiet.WithStats(stubStats{""})
+	md, err = quiet.ExportMarkdown(context.Background(), ses.ID)
+	if err != nil {
+		t.Fatalf("quiet export: %v", err)
+	}
+	if strings.Contains(md, "## The numbers") {
+		t.Error("an empty section leaked into the export")
+	}
+}
+
+// stubStats renders a fixed section — the export's contract is
+// placement, not the fold's math (the stats package owns those tests).
+type stubStats struct{ section string }
+
+func (st stubStats) SessionMarkdown(ctx context.Context, sessionID string) (string, error) {
+	return st.section, nil
+}

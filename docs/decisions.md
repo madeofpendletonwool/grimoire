@@ -1017,3 +1017,79 @@ where the journal disagrees with the grammar that wrote it — turning
 | Patching drift to the nearest consistent state | A quiet fix makes the checksum meaningless; an inconsistent journal is data corruption and should be reported, not absorbed |
 | Reusing the combat store directly (no new package) | The fold needs to be pure over journal rows for the checksum and golden tests; the store's methods validate and write — wrong shape for a reader |
 | A player-facing replay surface | Every player-visible number passes the visibility config (ADR 19); the first replay ships as the DM's screen, and a narrowed standing can be added later behind the same construction |
+
+## ADR 21 — Inspiration is a pool; the endcap is a fold
+
+**Status:** accepted · **Date:** 2026-09-07 · **Issue:** MAD-428
+
+### Context
+
+Stage 11 is the table's own numbers: DM-invented resources, the one
+pool the 2014 rules name for everyone, and the campaign's history as a
+story about dice and damage. Two temptations present themselves. Give
+inspiration a first-class table with an `inspired` flag on the
+character — a special case beside the pool grammar the whole layer is
+built on. And compute the campaign stats into a summary table, written
+as play happens, because aggregates feel like state. The layer's own
+rule rejects both before the argument starts: derived, never stored;
+one grammar, no special cases — the promises the ledger (ADR 16), the
+board (ADR 19) and the replay (ADR 20) already keep.
+
+### Decision
+
+**Inspiration registers through the pool grammar unchanged.**
+`feature:inspiration`, size 1, recovery manual — no rest refills it
+(2014: it lasts until spent), the DM's ordinary pool tools correct it,
+and the board reads it like any balance. The registration happens at
+the first award, because a pool is born *full* and inspiration is
+*held*: the registration writes an explicit set-to-none transaction,
+so the fold reads "does not hold it" until an award says otherwise.
+Awarding a character who holds it refuses — the rule, not a policy.
+
+**The spend rides the roll flow, not the ledger's surface.**
+`spend_inspiration: true` on a roll request spends the pool atomically
+and forces advantage — gated on the 2014 rule's own words (an attack
+roll, saving throw or ability check; no mode already carried; a formula
+advantage can apply to), validated before anything is written so a
+malformed roll cannot eat inspiration. The roll's row carries the mark
+(one column, migration 0037), its session event says it, and the
+ledger's spend transaction links to that event: one story, three rows.
+
+**Campaign stats derive, on read, from the logs the stages already
+wrote.** `internal/stats` folds `dice_rolls`, the combat journal and
+the ledger's inspiration spends into the party shot — damage taken and
+dealt with party ratios, crit counts, d20 distributions against the
+fair 10.5, most-targeted enemies. Pure fold, ordered queries, sorted
+outputs: identical log in, identical bytes out, pinned by tests that
+shuffle the rows' arrival. Damage *dealt* rides a source attribution
+added to the damage write's journal payload — flat keys, optional,
+honest about the hits the table did not attribute. Visibility is the
+feed's own rule again: the DM's fold sees secret rolls, a member's
+fold runs the query the feed would, so a secret roll is absent from a
+player's numbers, not unprinted.
+
+### Consequences
+
+- No second truth anywhere: no `inspired` column, no stats table, no
+  backfill. A stage-11 upgrade computes every campaign's numbers the
+  moment it serves, from history that already exists.
+- The fold's cost is one pass over the logs per read — bounded by the
+  campaign's history and served per request; a cache, if one is ever
+  wanted, can key on the fold's own output without a schema change.
+- The inspiration spend-before-roll order means a failed *database*
+  write after a successful spend leaves a spent transaction with no
+  roll — an edge of the same weight as any two-write sequence; the
+  note carries the reason, and the ledger's history keeps it honest.
+- Dice rolls now record their session link at insert (the column
+  existed, unwritten, since stage 3) — session-scoped folds read what
+  the feed always implied.
+
+### Alternatives rejected
+
+| Option | Why not |
+|---|---|
+| An `inspired` flag on the character / a first-class inspiration table | A special case beside the grammar; rests, corrections and display would each need their own rule instead of the grammar's |
+| Inspiration spent through the generic transactions endpoint only | Legal (and still works), but the 2014 rule ties the spend to advantage on the roll — the flow is where the rule can actually be enforced |
+| A stats summary table written on every mechanical commit | The write path grows a second truth to keep consistent; the ledger's own history (ADR 16) is the argument against |
+| Aggregates computed in SQL only | The fold's rules (luck thresholds, ratio rounding, tie-breaks) belong in tested pure code, not in query strings |
+| Attributing damage by matching the preceding attack roll | Guesswork over provenance; one optional `source_id` on the damage write says it exactly |

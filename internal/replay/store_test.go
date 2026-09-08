@@ -175,7 +175,7 @@ func TestReplayReproducesTheRecordedStateMidBattle(t *testing.T) {
 	// Before any end row exists, the fold already has to match the
 	// live rows — the journal and the state it underlies agree at
 	// every moment, or the replay says so.
-	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, orderID(t, start, "Goblin A"), 6, "", "", false, "keeper"); err != nil {
+	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, orderID(t, start, "Goblin A"), 6, "", "", false, "", "keeper"); err != nil {
 		t.Fatalf("damage goblin A: %v", err)
 	}
 	if _, err := h.combats.NextTurn(ctx, h.campaign, start.Combat.ID, "keeper"); err != nil {
@@ -199,10 +199,10 @@ func TestReplayReproducesTheRecordedEndState(t *testing.T) {
 	// A fight with a death, a death save, a healing, a standing
 	// condition, and round wraps — order-agnostic, because initiative
 	// is the dice's.
-	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, orderID(t, start, "Goblin A"), 10, "", "", false, "keeper"); err != nil {
+	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, orderID(t, start, "Goblin A"), 10, "", "", false, "", "keeper"); err != nil {
 		t.Fatalf("goblin A dies: %v", err)
 	}
-	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, velren, 34, "", "", false, "keeper"); err != nil {
+	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, velren, 34, "", "", false, "", "keeper"); err != nil {
 		t.Fatalf("velren goes down: %v", err)
 	}
 	if _, err := h.combats.DeathSave(ctx, h.campaign, start.Combat.ID, velren, combat.SaveSuccess, "keeper"); err != nil {
@@ -260,10 +260,10 @@ func TestReplayScrubsTheRealBattle(t *testing.T) {
 	start := h.start(t)
 	velren, ga := orderID(t, start, "Velren"), orderID(t, start, "Goblin A")
 
-	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, ga, 10, "", "", false, "keeper"); err != nil {
+	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, ga, 10, "", "", false, "", "keeper"); err != nil {
 		t.Fatalf("goblin A dies: %v", err)
 	}
-	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, velren, 34, "", "", false, "keeper"); err != nil {
+	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, velren, 34, "", "", false, "", "keeper"); err != nil {
 		t.Fatalf("velren goes down: %v", err)
 	}
 	if _, err := h.combats.DeathSave(ctx, h.campaign, start.Combat.ID, velren, combat.SaveSuccess, "keeper"); err != nil {
@@ -334,7 +334,7 @@ func TestReplaySessionTimeline(t *testing.T) {
 	start := h.start(t)
 
 	velren := orderID(t, start, "Velren")
-	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, velren, 10, "fire", "", false, "keeper"); err != nil {
+	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, velren, 10, "fire", "", false, "", "keeper"); err != nil {
 		t.Fatalf("damage: %v", err)
 	}
 	for i := 0; i < 3; i++ {
@@ -392,7 +392,7 @@ func TestReplayReportsTamperedJournals(t *testing.T) {
 	ctx := context.Background()
 	start := h.start(t)
 	velren := orderID(t, start, "Velren")
-	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, velren, 10, "", "", false, "keeper"); err != nil {
+	if _, err := h.combats.Damage(ctx, h.campaign, start.Combat.ID, velren, 10, "", "", false, "", "keeper"); err != nil {
 		t.Fatalf("damage: %v", err)
 	}
 	if _, err := h.combats.End(ctx, h.campaign, start.Combat.ID, "", "keeper"); err != nil {

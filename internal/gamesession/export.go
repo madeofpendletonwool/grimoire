@@ -125,6 +125,15 @@ func (s *Store) ExportMarkdown(ctx context.Context, sessionID string) (string, e
 	} else if recap != "" {
 		b.WriteString("\n" + recap)
 	}
+
+	// The numbers (MAD-428): the session's stats — dice, damage, luck —
+	// from the same logs, rendered by the stats fold when it is wired.
+	// A session with nothing to say carries no section.
+	if s.stats != nil {
+		if numbers, err := s.stats.SessionMarkdown(ctx, sessionID); err == nil && numbers != "" {
+			b.WriteString("\n" + numbers)
+		}
+	}
 	return strings.TrimRight(b.String(), "\n") + "\n", nil
 }
 
