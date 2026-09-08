@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import {
 	KINDS, ROLES, currentScene, sceneMeta, castChips, elapsedLabel, noteLines,
 	sceneContext, actingCombatant, combatContext, entityRefs, capturePayload,
+	streamVisible, splitAnswer, revealCards,
 } from "../web/static/js/screenvm.js";
 
 const scenes = [
@@ -152,4 +153,45 @@ test("capturePayload drops the blocks whose context is not live", () => {
 	});
 	// Nothing live: an empty payload, not one full of nulls.
 	assert.deepEqual(capturePayload(null, null, null, []), {});
+});
+
+/* ---------- the session copilot (MAD-486) ---------- */
+
+test("streamVisible holds the reveals fence back from the streamed bubble", () => {
+	const streamed = "REACTION — he deflects.\n\nIN-VOICE — \"Ask elsewhere.\"\n\n```json\n{\"reveals\":[{";
+	assert.equal(streamVisible(streamed), "REACTION — he deflects.\n\nIN-VOICE — \"Ask elsewhere.\"\n\n");
+	// No fence yet: everything shows, and the done frame swaps the clean
+	// answer in anyway.
+	assert.equal(streamVisible("part of an answer"), "part of an answer");
+	assert.equal(streamVisible(""), "");
+	assert.equal(streamVisible(null), "");
+});
+
+test("splitAnswer reads the two parts, labels stripped", () => {
+	const parts = splitAnswer("REACTION — the Duke turns the question back, cold as ever.\n\nIN-VOICE — \"The marches have enough dead.\"");
+	assert.equal(parts.reaction, "the Duke turns the question back, cold as ever.");
+	assert.equal(parts.voice, "\"The marches have enough dead.\"");
+	// Table mode: no marker, the whole answer is the speakable part.
+	const plain = splitAnswer("The watch is stretched thin; two bodies in a week.");
+	assert.equal(plain.reaction, "");
+	assert.equal(plain.voice, "The watch is stretched thin; two bodies in a week.");
+	// The dialogue starts on the marker's own line and must survive it.
+	const inline = splitAnswer("REACTION — wary.\nIN-VOICE: \"We are done here.\"");
+	assert.equal(inline.voice, "\"We are done here.\"");
+	assert.deepEqual(splitAnswer(""), { reaction: "", voice: "" });
+});
+
+test("revealCards drops blank statements and keeps the ids stable", () => {
+	const cards = revealCards([
+		{ statement: "  The Duke burns the watch's reports unread.  ", rationale: "avoid exposure" },
+		{ statement: "", rationale: "never carded" },
+		{ rationale: "also never carded" },
+		{ statement: "A second clerk saw the letter.", rationale: "" },
+	], 4);
+	assert.deepEqual(cards, [
+		{ id: "4", statement: "The Duke burns the watch's reports unread.", rationale: "avoid exposure" },
+		{ id: "7", statement: "A second clerk saw the letter.", rationale: "" },
+	]);
+	assert.deepEqual(revealCards(null), []);
+	assert.deepEqual(revealCards([]), []);
 });

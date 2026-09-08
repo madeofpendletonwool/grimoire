@@ -28,8 +28,49 @@ a mount point:
 - **Notes.** One line, one tap: a session event of kind `note` against
   the live session — the mid-play "don't forget" parking lot, newest
   first, the same immutable log the post-session canon run reads.
-- **Ask Grimoire.** The mount point, warm and honest: the session
-  copilot (Stage 5, MAD-486) lands here.
+- **Ask Grimoire.** The session copilot — see below.
+
+## The session copilot
+
+Stage 5 of play mode (MAD-486): the big **Ask Grimoire** box at the
+bottom of the strip. *"They ask the innkeeper about the murders"* — type
+it, the answer streams, and if it names an NPC on stage (the scene's
+cast, then the fight's entities), the answer arrives in their voice:
+a DM-facing reaction and speakable dialogue, grounded in that NPC's
+actual knowledge state.
+
+```
+POST /api/campaigns/{id}/ask          → SSE: meta, delta, done, error
+POST /api/campaigns/{id}/ask/release  → 201 { event, staged }
+```
+
+Both DM-only. The ask grounds in the **live table** — the live session,
+the current scene with its cast, the active fight, recent session
+events, the party's vitals — braided with the npcask machinery
+(`internal/server/npcask.go`) when the question names an NPC: the mind
+at the DM scope, the record scope-filtered at `npc:<id>` in SQL. What
+the record does not contain, the NPC does not know, and the model
+cannot leak it because it is never retrieved — the load-bearing test
+asserts it on the request body the model received. The scene's secrets
+in play ride the prompt as the DM's *release material*, marked hidden,
+and the system prompt carries the rule the scope filter cannot express:
+an NPC never speaks a clue their record does not carry.
+
+**Clue-discovery awareness** rides both ends: the meta frame lists the
+clues the table already holds (public facts plus accepted party
+discoveries) and the clues still hidden in play; the prompt forbids
+re-releasing a discovered clue as new. Where the answer invents
+something, the `done` frame carries it as a **suggested release**, and
+the box renders it with **Accept as canon | Modify | Discard**.
+
+The release is the copilot's only write, and only on the DM's explicit
+tap: it logs the discovery event against the live session (the
+in-play-capture anchor — the event is the immutable record) and stages
+the canon item in the review queue — an `npc_reveal` when the answer had
+a voice, a `session_capture` proposed fact otherwise. Nothing writes a
+fact or anything player-visible directly; the queue's decision remains
+the only gate, exactly as for every other machine proposal. Discard
+writes nothing at all.
 
 ## The live-context read
 

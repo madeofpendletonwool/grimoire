@@ -46,6 +46,14 @@ func (f *fakeTranscriber) count() int {
 	return f.calls
 }
 
+// setFailFrom flips the outage point under the mutex — the handler's
+// goroutine reads the field, so a bare write races (the suite runs -race).
+func (f *fakeTranscriber) setFailFrom(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failFrom = n
+}
+
 func (f *fakeTranscriber) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) {
@@ -390,14 +398,14 @@ func TestTranscriptionFailureIsRetryableAndSkipsDoneChunks(t *testing.T) {
 
 	// Chunk 0 lands; call 2 answers 503, so the job fails with its first
 	// chunk already in the ledger.
-	fake.failFrom = 2
+	fake.setFailFrom(2)
 	final := waitJob(t, s, cid, sid, tid)
 	if final["status"] != "failed" {
 		t.Fatalf("job = %v, want failed after the endpoint died", final)
 	}
 
 	// Retry resumes at the failed chunk rather than from zero.
-	fake.failFrom = 0
+	fake.setFailFrom(0)
 	before := fake.count()
 	code, body := do(t, s, http.MethodPost,
 		fmt.Sprintf("/api/campaigns/%s/sessions/%s/transcriptions/%s/retry", cid, sid, tid), "")

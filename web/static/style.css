@@ -5533,21 +5533,118 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .scr-note-text { min-width: 0; }
 .scr-note-time { flex: none; font-size: var(--fs-xs); opacity: 0.5; font-variant-numeric: tabular-nums; }
 
-/* the Ask Grimoire mount — Stage 5 (MAD-486) fills the box; the screen
-   keeps the place warm and honest about what is coming. */
+/* the Ask Grimoire mount — the session copilot (MAD-486, stage 5 of
+   MAD-318). One input, one button, streamed answers, one-tap clue
+   releases: the box must cost the DM seconds, not attention. */
 
 .scr-copilot {
-	border: 1px dashed var(--stone-line);
+	border: 1px solid var(--stone-line);
 	border-radius: var(--r-lg);
+	background: linear-gradient(180deg, var(--stone-700), var(--stone-800));
 	padding: var(--sp-3);
 	display: flex;
 	flex-direction: column;
-	gap: 0.4rem;
-	min-height: 96px;
-	justify-content: center;
+	gap: 0.5rem;
 }
 
-.scr-copilot-hint { margin: 0; font-size: var(--fs-md); opacity: 0.55; font-style: italic; }
+.scr-ask-form { display: flex; gap: var(--sp-2); }
+
+.scr-ask-field {
+	flex: 1;
+	min-width: 0;
+	border: 1px solid var(--stone-line);
+	background: var(--stone-700);
+	color: var(--parchment, #efe4c9);
+	border-radius: var(--r-md);
+	padding: 0.5rem 0.6rem;
+	font-size: var(--fs-md);
+	font-family: inherit;
+}
+
+.scr-ask-field:focus { border-color: var(--gold-dim, #8a7024); outline: none; }
+
+.scr-ask-btn { font-size: var(--fs-lg); }
+
+.scr-ask-note { margin: 0; font-size: var(--fs-sm); color: #e8a13c; min-height: 1em; }
+
+.scr-ask-log {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-3);
+	max-height: 42vh;
+	overflow-y: auto;
+}
+
+.scr-ask-turn {
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+	border-left: 3px solid var(--gold-dim, #8a7024);
+	padding-left: 0.6rem;
+}
+
+.scr-ask-turn[data-context]::before {
+	content: attr(data-context);
+	display: block;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--gold-bright, #ffd071);
+	opacity: 0.8;
+}
+
+.scr-ask-q {
+	margin: 0;
+	font-size: var(--fs-md);
+	font-weight: 600;
+	color: var(--parchment, #efe4c9);
+}
+
+.scr-ask-a { display: flex; flex-direction: column; gap: 0.35rem; }
+
+.scr-ask-stream {
+	margin: 0;
+	font-size: var(--fs-md);
+	white-space: pre-wrap;
+	color: var(--parchment-soft, #d8c9a8);
+	opacity: 0.8;
+}
+
+.scr-ask-reaction {
+	margin: 0;
+	font-size: var(--fs-sm);
+	opacity: 0.7;
+}
+
+.scr-ask-voice {
+	margin: 0;
+	font-size: var(--fs-lg);
+	line-height: 1.45;
+	white-space: pre-wrap;
+	color: var(--parchment, #efe4c9);
+}
+
+.scr-ask-releases { display: flex; flex-direction: column; gap: 0.4rem; }
+
+.scr-ask-release {
+	border: 1px dashed var(--gold-dim, #8a7024);
+	border-radius: var(--r-md);
+	padding: 0.5rem 0.6rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+.scr-ask-rel-statement { margin: 0; font-size: var(--fs-md); color: var(--parchment, #efe4c9); }
+
+.scr-ask-rel-edit { width: 100%; box-sizing: border-box; }
+
+.scr-ask-rel-rationale { margin: 0; font-size: var(--fs-sm); opacity: 0.6; font-style: italic; }
+
+.scr-ask-rel-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+
+.scr-ask-rel-note { font-size: var(--fs-sm); color: #e8a13c; min-height: 1em; }
 
 /* Encounter director (MAD-484, stage 3 of MAD-318) — the advisory panel
    beside the tracker. Reading material, not controls: the action line is

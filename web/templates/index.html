@@ -1193,11 +1193,23 @@
 					<ul class="scr-note-list" id="scr-note-list"></ul>
 				</form>
 
-				<!-- The Ask Grimoire box: MAD-486 (Stage 5) fills this
-				     mount; the screen keeps the place warm. -->
+				<!-- The Ask Grimoire box (MAD-486, stage 5): the
+				     session copilot. Type, stream, read — the
+				     answer grounds in the live table and, when
+				     the question names an NPC on stage, answers
+				     in their voice from their actual knowledge.
+				     Suggested clue releases carry Accept as
+				     canon | Modify | Discard. -->
 				<div class="scr-copilot" id="scr-copilot">
 					<h3 class="scr-heading">Ask Grimoire</h3>
-					<p class="scr-copilot-hint" id="scr-copilot-hint">The session copilot lands here — ask the table a question, get an answer in character.</p>
+					<form class="scr-ask-form" id="scr-ask-form" autocomplete="off">
+						<input id="scr-ask-input" class="scr-ask-field" maxlength="500"
+							placeholder="They ask the innkeeper about the murders…"
+							aria-label="Ask Grimoire">
+						<button type="submit" class="enc-btn" id="scr-ask-btn">Ask</button>
+					</form>
+					<p class="scr-ask-note" id="scr-ask-note"></p>
+					<div class="scr-ask-log" id="scr-ask-log"></div>
 				</div>
 			</div>
 
