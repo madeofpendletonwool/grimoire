@@ -100,6 +100,12 @@ export const TOOLS = Object.freeze({
 		blurb: "Budget, roster and statblocks",
 		load: () => import("../encounter.js"),
 	},
+	combat: {
+		title: "Combat", icon: "swords", corpus: "dnd", accel: "t",
+		instances: "single", min: [560, 460],
+		blurb: "The DM's screen — run the battle",
+		load: () => import("../combat.js"),
+	},
 
 	/* ---- Magic ---- */
 	deck: {
