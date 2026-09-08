@@ -5429,3 +5429,188 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 }
 
 .scr-copilot-hint { margin: 0; font-size: var(--fs-md); opacity: 0.55; font-style: italic; }
+
+/* Encounter director (MAD-484, stage 3 of MAD-318) — the advisory panel
+   beside the tracker. Reading material, not controls: the action line is
+   display type, every citation is shown in full with its badge, and the
+   honest tail (dropped, caveats, model) renders below the advice. */
+
+.director {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scroll-behavior: smooth;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+
+.dir-body {
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-3);
+}
+
+/* the ask — one box, one advisory pass; the panel's only call */
+
+.dir-ask { display: flex; gap: var(--sp-2); }
+
+.dir-field {
+	flex: 1;
+	min-width: 0;
+	border: 1px solid var(--stone-line);
+	background: var(--stone-700);
+	color: var(--parchment, #efe4c9);
+	border-radius: var(--r-md);
+	padding: 0.45rem 0.65rem;
+	font-size: var(--fs-md);
+}
+
+.dir-btn {
+	border: 1px solid var(--gold-dim, #8a7024);
+	background: linear-gradient(180deg, var(--stone-700), var(--stone-800));
+	color: var(--gold-bright, #ffd071);
+	border-radius: var(--r-md);
+	padding: 0.45rem 1.1rem;
+	font-size: var(--fs-lg);
+	cursor: pointer;
+}
+
+.dir-btn:hover { border-color: var(--gold, #c9a227); }
+.dir-btn:disabled { opacity: 0.55; cursor: wait; }
+
+.dir-note { margin: 0; font-size: var(--fs-sm); color: #e8a13c; min-height: 1em; }
+
+/* the frame the advice rode with */
+
+.dir-battle { margin: 0; font-size: var(--fs-sm); opacity: 0.7; font-variant-numeric: tabular-nums; }
+.dir-echo { margin: 0; font-size: var(--fs-sm); font-style: italic; color: var(--parchment-soft, #d8c9a8); }
+
+/* a suggestion — the action is the arm's-length line */
+
+.dir-card {
+	border: 1px solid var(--stone-line);
+	border-left: 3px solid var(--gold-dim, #8a7024);
+	border-radius: var(--r-lg);
+	background: linear-gradient(180deg, var(--stone-800), var(--stone-900));
+	padding: var(--sp-2) var(--sp-3);
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+.dir-actor {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--gold-bright, #ffd071);
+}
+
+.dir-action {
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: 1.3rem;
+	line-height: 1.25;
+	color: var(--parchment, #efe4c9);
+}
+
+.dir-why { margin: 0; font-size: var(--fs-md); color: var(--parchment-soft, #d8c9a8); line-height: 1.45; }
+
+/* the citations — every line shown, statblock and state told apart */
+
+.dir-cites { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.25rem; }
+
+.dir-cites-label {
+	margin: 0;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	opacity: 0.5;
+}
+
+.dir-cites ul {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+}
+
+.dir-cite {
+	display: flex;
+	gap: 0.5rem;
+	align-items: baseline;
+	font-size: var(--fs-sm);
+	line-height: 1.4;
+	color: var(--parchment-soft, #d8c9a8);
+}
+
+.dir-cite-id {
+	flex: none;
+	min-width: 2.6em;
+	text-align: center;
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	padding: 0 0.3rem;
+}
+
+.dir-cite.is-statblock .dir-cite-id { border-color: var(--gold-dim, #8a7024); color: var(--gold-bright, #ffd071); }
+.dir-cite.is-state .dir-cite-id { border-color: #4c7a3a; color: #b9d3a8; }
+
+.dir-cite-body { min-width: 0; }
+.dir-cite-src { color: var(--parchment, #efe4c9); }
+.dir-cite-text { opacity: 0.85; }
+
+/* the honest tail — dropped, caveats, model, rendered not hidden */
+
+.dir-strip {
+	border: 1px dashed var(--stone-line);
+	border-radius: var(--r-lg);
+	padding: var(--sp-2) var(--sp-3);
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	font-size: var(--fs-sm);
+}
+
+.dir-model { opacity: 0.65; font-style: italic; }
+.dir-dropped { color: #e8a13c; }
+
+.dir-caveats {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+}
+
+.dir-caveat { color: #e8a13c; opacity: 0.9; }
+
+.dir-none {
+	margin: 0;
+	font-size: var(--fs-md);
+	opacity: 0.65;
+	font-style: italic;
+	border-left: 3px solid var(--stone-line);
+	padding: 0.25rem 0 0.25rem 0.6rem;
+}
+
+/* the resting card — what this is, before the first ask */
+
+.dir-rest {
+	border: 1px dashed var(--stone-line);
+	border-radius: var(--r-lg);
+	padding: var(--sp-3) var(--sp-4);
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+}
+
+.dir-rest-line { margin: 0; font-family: var(--font-display); font-size: 1.3rem; color: var(--parchment, #efe4c9); }
+.dir-rest-hint { margin: 0; font-size: var(--fs-md); opacity: 0.6; line-height: 1.45; }

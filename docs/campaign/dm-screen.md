@@ -3,11 +3,12 @@
 The three hours the game is actually running get their own surface — not
 the chat view with extras. **Alt+2** ("At the table") composes the whole
 thing in one keypress: the screen strip, the combat tracker, the party
-board (with dice, sessions and the encounter builder behind its tab).
-Nothing needs rearranging; that is the acceptance criterion, and the
-layout is seeded as the preset so it is true the first time and every
-reset. Stage 2 of play mode (MAD-485); the tracker it composes is
-[MAD-487](combat.md), the board [MAD-423](board.md).
+board (with dice, the encounter director and the encounter builder
+behind its tab). Nothing needs rearranging; that is the acceptance
+criterion, and the layout is seeded as the preset so it is true the
+first time and every reset. Stage 2 of play mode (MAD-485); the tracker
+it composes is [MAD-487](combat.md), the board [MAD-423](board.md), the
+director panel [MAD-484](director.md).
 
 ## The screen strip
 

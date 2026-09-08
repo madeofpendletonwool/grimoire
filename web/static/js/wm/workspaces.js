@@ -40,13 +40,15 @@ const PRESETS = {
 		{ slot: 1, name: "Prep", build: () => row(leaf("planner"), tabbed(leaf("campaign"), leaf("cchat"))) },
 		// At the table (MAD-318): play mode. The screen strip carries the
 		// scene, the clock, the notes and the copilot mount; the tracker
-		// dominates; vitals and the rest sit behind the board's tab.
+		// dominates; vitals, dice, the director's advisory panel and the
+		// rest sit behind the board's tab — advice beside the tracker,
+		// never crowding the controls the DM is mid-tap on.
 		// One Alt+2, nothing rearranged.
 		{ slot: 2, name: "At the table", build: () =>
 			T.split("row", [
 				leaf("screen"),
 				leaf("combat"),
-				tabbed(leaf("board"), leaf("dice"), leaf("sessions"), leaf("encounter")),
+				tabbed(leaf("board"), leaf("dice"), leaf("director"), leaf("sessions"), leaf("encounter")),
 			], [0.24, 0.42, 0.34]) },
 		{ slot: 3, name: "Canon", build: () => row(leaf("review"), leaf("sessions")) },
 		{ slot: 4, name: "Study", build: () => row(leaf("reader"), leaf("study")) },
