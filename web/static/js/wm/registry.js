@@ -112,6 +112,12 @@ export const TOOLS = Object.freeze({
 		blurb: "The play strip — scene, clock, notes, Ask Grimoire",
 		load: () => import("../screen.js"),
 	},
+	director: {
+		title: "Director", icon: "staff", corpus: "dnd", accel: "q",
+		instances: "single", min: [400, 420],
+		blurb: "Advisory monster tactics, cited",
+		load: () => import("../director.js"),
+	},
 
 	/* ---- Magic ---- */
 	deck: {

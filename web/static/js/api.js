@@ -428,6 +428,17 @@ export const api = {
 			body: JSON.stringify({ mode }),
 		}).then(json),
 
+	// The encounter director (MAD-427): one advisory pass over the live
+	// battle — grounded, cited, write-free. The director panel's (MAD-484)
+	// only wired call; the response carries its own honesty (dropped,
+	// caveats, model).
+	combatDirector: (cid, question) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/combat/director`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ question: question || "" }),
+		}).then(json),
+
 	// The condition vocabulary the tracker's apply control offers — the
 	// same fifteen the effects engine enforces.
 	effectVocabulary: (cid, signal) =>

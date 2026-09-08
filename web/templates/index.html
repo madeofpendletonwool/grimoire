@@ -1250,6 +1250,49 @@
 
 			<datalist id="cbt-damage-types"></datalist>
 		</section>
+		<section class="director" id="director-view" hidden aria-label="Encounter director">
+			<header class="study-head">
+				<h2 class="study-title" id="dir-title">Director</h2>
+				<div class="camp-picker">
+					<select id="dir-campaign" aria-label="Campaign"><option value="">No campaigns yet…</option></select>
+				</div>
+				<p class="study-meta" id="dir-meta"></p>
+			</header>
+
+			<div class="dir-body" id="dir-body" hidden>
+				<!-- The ask: an optional focus question and one advisory
+				     pass. This is the panel's only wired call — the
+				     existing director route, which writes nothing. -->
+				<form class="dir-ask" id="dir-ask" autocomplete="off">
+					<input id="dir-question" class="dir-field" type="text" maxlength="280"
+						placeholder="Focus the advice (optional) — “can the dragon breathe yet?”"
+						aria-label="Optional focus question">
+					<button type="submit" class="dir-btn" id="dir-suggest">Suggest</button>
+				</form>
+				<p class="dir-note" id="dir-note" aria-live="polite"></p>
+
+				<!-- The advice: each suggestion as action + reasoning + the
+				     state that justifies it — every basis citation shown,
+				     then the honest tail (dropped, caveats, model). -->
+				<div class="dir-advice" id="dir-advice"></div>
+
+				<!-- The resting card: what this is, before the first ask. -->
+				<div class="dir-rest" id="dir-rest">
+					<p class="dir-rest-line">What would these monsters do next?</p>
+					<p class="dir-rest-hint">The director reads the live battle — the statblocks the fight was
+						built from, everyone's numbers, the party's slots and conditions — and suggests
+						moves with the state that justifies each one. Advisory only: it never rolls,
+						never takes a turn, writes nothing. You decide.</p>
+				</div>
+			</div>
+
+			<div class="camp-empty" id="dir-empty" hidden>
+				<div class="camp-panel">
+					<h3 class="enc-heading" id="dir-empty-title">No campaign yet</h3>
+					<p class="camp-status" id="dir-empty-text">The director advises at a table. Found a campaign first, or take a seat with an invite.</p>
+				</div>
+			</div>
+		</section>
 		<section class="sessions" id="review-view" hidden aria-label="Canon review queue">
 			<header class="study-head">
 				<h2 class="study-title" id="review-title">Review queue</h2>
