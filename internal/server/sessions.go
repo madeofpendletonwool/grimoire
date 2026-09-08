@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/madeofpendletonwool/grimoire/internal/campaign"
+	"github.com/madeofpendletonwool/grimoire/internal/canon"
 	"github.com/madeofpendletonwool/grimoire/internal/gamesession"
 )
 
@@ -506,6 +507,113 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		views = append(views, toSessionEventView(events[i]))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": views})
+}
+
+/* ---------- in-play capture (MAD-483) ---------- */
+
+// handleRulingMatches is the matcher half of ruling capture, split out of
+// the insert so the DM screen can surface prior rulings while the DM is
+// still typing: "how have we ruled this before?" is worth more before the
+// words are finished than after they are logged. DM-only — the campaign's
+// ruling history is the DM's material.
+func (s *Server) handleRulingMatches(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDM(w, r, r.PathValue("cid")) {
+		return
+	}
+	ses, ok := s.sessionInCampaign(w, r, r.PathValue("cid"), r.PathValue("sid"))
+	if !ok {
+		return
+	}
+	matches, err := s.sessions.MatchPriorRulings(r.Context(), ses.Campaign, r.URL.Query().Get("q"), "", 5)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if matches == nil {
+		matches = []gamesession.PriorRuling{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"matches": matches})
+}
+
+// handleProposeEventFact closes the loop from a logged discovery to the
+// knowledge graph: it stages one proposed_fact item — a single-item batch
+// sourced "session_capture" — prefilled from the event the DM just wrote.
+// Nothing here writes a fact; the review queue stays the only gate, and
+// the event remains the immutable record either way.
+func (s *Server) handleProposeEventFact(w http.ResponseWriter, r *http.Request) {
+	if !s.canonEnabled(w) {
+		return
+	}
+	if !s.requireDM(w, r, r.PathValue("cid")) {
+		return
+	}
+	ses, ok := s.sessionInCampaign(w, r, r.PathValue("cid"), r.PathValue("sid"))
+	if !ok {
+		return
+	}
+	ev, err := s.sessions.GetEvent(r.Context(), r.PathValue("eid"))
+	if err != nil || ev.SessionID != ses.ID {
+		writeError(w, http.StatusNotFound, fmt.Errorf("event %s", r.PathValue("eid")))
+		return
+	}
+	var req struct {
+		Statement  string `json:"statement"`
+		Subject    string `json:"subject"`
+		Predicate  string `json:"predicate"`
+		Object     string `json:"object_literal"`
+		Visibility string `json:"visibility"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+		return
+	}
+	if strings.TrimSpace(req.Statement) == "" {
+		req.Statement = ev.Summary // prefilled from the capture, the common case
+	}
+	if strings.TrimSpace(req.Statement) == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("a statement is required"))
+		return
+	}
+	if strings.TrimSpace(req.Subject) == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("a subject entity is required"))
+		return
+	}
+	if strings.TrimSpace(req.Predicate) == "" {
+		req.Predicate = "discovered"
+	}
+	switch req.Visibility {
+	case "":
+		req.Visibility = campaign.VisibilityPublic
+	case campaign.VisibilityPublic, campaign.VisibilitySecret:
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Errorf("visibility must be public or secret"))
+		return
+	}
+	batch, err := s.canon.StageBatch(r.Context(), canon.BatchInput{
+		CampaignID: ses.Campaign,
+		Source:     canon.BatchSourceSessionCapture,
+		Prompt: fmt.Sprintf("In-play capture from session %d (%s): the %s logged at seq %d. The event is the record; this proposes the fact.",
+			ses.Ordinal, ses.Name, ev.Kind, ev.Seq),
+		CreatedBy: userID(r),
+		Items: []canon.BatchItemInput{{
+			ID:   "fact",
+			Kind: "fact",
+			Payload: map[string]any{
+				"statement":        req.Statement,
+				"subject":          strings.TrimSpace(req.Subject),
+				"predicate":        req.Predicate,
+				"object_literal":   strings.TrimSpace(req.Object),
+				"visibility":       req.Visibility,
+				"session_id":       ses.ID,
+				"session_event_id": ev.ID,
+			},
+		}},
+	})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"batch": toBatchView(*batch, true)})
 }
 
 /* ---------- export ---------- */

@@ -38,6 +38,7 @@ const SOURCE_LABEL = {
 	tick: "Simulation tick",
 	downtime: "Downtime",
 	quest: "Quest designer",
+	session_capture: "In-play capture",
 };
 
 function wire() {

@@ -12,10 +12,13 @@
 // DM-only by construction: the live-context read refuses every other
 // scope, and a player opening this tool sees the screen's empty state.
 
-import { $, el, clear } from "./dom.js";
+import { $, el, clear, debounce } from "./dom.js";
 import { api } from "./api.js";
 import { openEntity } from "./drawer.js";
-import { currentScene, sceneMeta, castChips, elapsedLabel, noteLines } from "./screenvm.js";
+import {
+	currentScene, sceneMeta, castChips, elapsedLabel, noteLines,
+	actingCombatant, capturePayload, entityRefs,
+} from "./screenvm.js";
 
 let campaigns = [];
 let campaignID = null;
@@ -32,6 +35,10 @@ let pickable = null;
 let notes = [];
 // A scene the DM tapped to read, overriding the seated one.
 let pickedSceneID = "";
+
+// The capture form's own context, read fresh when it opens: the battle
+// (and its acting combatant) at the moment of capture.
+let capBattle = null;
 
 let tickTimer = null;
 let pollTimer = null;
@@ -73,6 +80,8 @@ async function loadAll() {
 	entities = [];
 	pickable = null;
 	notes = [];
+	capBattle = null;
+	closeCapture();
 	await loadLive();
 }
 
@@ -255,6 +264,215 @@ function renderNotes() {
 	if (!notes.length && liveNow) {
 		list.append(el("li", { class: "scr-note is-empty", text: "Nothing parked yet." }));
 	}
+	renderCapture();
+}
+
+/* ---------- in-play capture (MAD-483) ---------- */
+
+// The capture form: one tap, one line, done — the context rides in the
+// payload without the DM typing it. A ruling shows the table's own prior
+// rulings while the question is still being typed; a discovery can
+// propose a fact into the review queue on the way out.
+function renderCapture() {
+	const liveNow = !!(live && live.session);
+	for (const id of ["scr-disc-btn", "scr-rule-btn"]) $(id).disabled = !liveNow;
+	if (!liveNow) closeCapture();
+	const hint = $("scr-capture-hint");
+	hint.hidden = liveNow;
+	if (!liveNow) hint.textContent = "Capture logs against the live session — go live first.";
+}
+
+async function openCapture(kind) {
+	if (!campaignID || !live || !live.session) return;
+	$("scr-capture-hint").hidden = true;
+	const form = $("scr-cap-form");
+	form.hidden = false;
+	$("scr-cap-kind").textContent = kind === "ruling" ? "ruling" : "discovery";
+	$("scr-cap-summary").value = "";
+	$("scr-cap-detail").value = "";
+	$("scr-cap-note").textContent = "";
+	$("scr-cap-prior").hidden = true;
+	clear($("scr-cap-prior"));
+	$("scr-cap-propose-label").hidden = kind !== "discovery";
+	$("scr-cap-propose").checked = false;
+	$("scr-cap-fact").hidden = true;
+	// The fight is read fresh at open: the acting combatant is the capture
+	// context, and turns move faster than the strip's poll. Names for the
+	// links get one more chance if the boot read never landed.
+	capBattle = null;
+	try {
+		capBattle = await api.combatActive(campaignID);
+	} catch (_) { /* no battle, no context block */ }
+	if (!entities.length) {
+		try {
+			const ents = await api.campaignEntities(campaignID);
+			entities = ents.entities || [];
+		} catch (_) { /* links fall back to short ids */ }
+	}
+	renderCaptureLinks();
+	$("scr-cap-summary").focus();
+}
+
+function closeCapture() {
+	const form = $("scr-cap-form");
+	if (form.hidden) return;
+	form.hidden = true;
+	capBattle = null;
+	clear($("scr-cap-links"));
+	$("scr-cap-prior").hidden = true;
+	clear($("scr-cap-prior"));
+	$("scr-cap-note").textContent = "";
+}
+
+// The context line: the scene, the fight's acting combatant, and the
+// entity refs the event will link — spelled so the DM sees what rides.
+function renderCaptureLinks() {
+	const host = clear($("scr-cap-links"));
+	const scene = currentScene(live.scenes || [], live.session && live.session.id, pickedSceneID);
+	const acting = capBattle ? actingCombatant(capBattle.order || []) : null;
+	const chips = [];
+	if (scene) {
+		chips.push(el("span", { class: "scr-cap-link", title: "The live scene", text: `⌖ ${scene.name}` }));
+	}
+	if (capBattle && capBattle.combat && acting) {
+		chips.push(el("span", {
+			class: "scr-cap-link is-combat", title: "The acting combatant", text: `⚔ ${acting.name}`,
+		}));
+	}
+	for (const ref of entityRefs(scene, acting, entities)) {
+		chips.push(el("span", {
+			class: "scr-cap-link" + (ref.source === "focus" ? " is-focus" : ""),
+			title: `Entity link · ${ref.source}`,
+			text: ref.name,
+		}));
+	}
+	host.append(...chips);
+	fillSubjectSelect(scene, acting);
+}
+
+// The subject picker for "also propose as fact": the linked refs first,
+// then every campaign entity, so an unlinked subject is a choice, not a
+// dead end.
+function fillSubjectSelect(scene, acting) {
+	const sel = clear($("scr-cap-subject"));
+	const refs = entityRefs(scene, acting, entities);
+	const linked = new Set(refs.map((r) => r.id));
+	for (const r of refs) {
+		sel.append(el("option", { text: r.name, attrs: { value: r.id } }));
+	}
+	for (const e of entities) {
+		if (!linked.has(e.id)) sel.append(el("option", { text: e.name, attrs: { value: e.id } }));
+	}
+	if (!sel.options.length) {
+		sel.append(el("option", { text: "No entities yet", attrs: { value: "" } }));
+	}
+}
+
+// The prior-ruling matcher, live: what the DM is typing, matched against
+// the campaign's own rulings before anything is logged.
+const matchPrior = debounce(async () => {
+	if (!campaignID || !live || !live.session) return;
+	const q = $("scr-cap-summary").value.trim();
+	const wrap = $("scr-cap-prior");
+	if ($("scr-cap-kind").textContent !== "ruling" || q.length < 3) {
+		wrap.hidden = true;
+		clear(wrap);
+		return;
+	}
+	let body;
+	try {
+		body = await api.rulingMatches(campaignID, live.session.id, q);
+	} catch (_) {
+		return; // the matcher is advisory; a failed read stays out of the way
+	}
+	// A slow reply that outlived its form (closed, or switched to a
+	// discovery) renders nothing.
+	if ($("scr-cap-form").hidden || $("scr-cap-kind").textContent !== "ruling") return;
+	const matches = body.matches || [];
+	clear(wrap);
+	if (!matches.length) {
+		wrap.hidden = true;
+		return;
+	}
+	wrap.hidden = false;
+	wrap.append(el("p", { class: "scr-cap-prior-head", text: "Prior rulings on this:" }));
+	for (const m of matches.slice(0, 5)) {
+		wrap.append(el("div", {
+			class: "scr-cap-prior-match",
+			attrs: { title: `Session ${m.session_ordinal} · ${m.at || ""}` },
+		},
+			el("span", { class: "scr-cap-prior-ordinal", text: `S${m.session_ordinal}` }),
+			el("span", { class: "scr-cap-prior-text" },
+				el("span", { class: "scr-cap-prior-q", text: m.summary }),
+				m.detail ? el("span", { class: "scr-cap-prior-a", text: ` — ${m.detail}` }) : null,
+			),
+		));
+	}
+}, 350);
+
+async function onCaptureSubmit(e) {
+	e.preventDefault();
+	if (!campaignID || !live || !live.session) return;
+	const kind = $("scr-cap-kind").textContent === "ruling" ? "ruling" : "discovery";
+	const summary = $("scr-cap-summary").value.trim();
+	const detail = $("scr-cap-detail").value.trim();
+	const note = $("scr-cap-note");
+	if (!summary) {
+		note.textContent = "One line first — what happened.";
+		return;
+	}
+	const scene = currentScene(live.scenes || [], live.session.id, pickedSceneID);
+	const acting = capBattle ? actingCombatant(capBattle.order || []) : null;
+	const payload = capturePayload(scene, capBattle && capBattle.combat, acting, entities);
+	const propose = kind === "discovery" && $("scr-cap-propose").checked;
+	note.textContent = propose ? "Logging… proposing…" : "Logging…";
+	let ev;
+	try {
+		const body = await api.addEvent(campaignID, live.session.id, { kind, summary, detail, payload });
+		ev = body.event;
+	} catch (err) {
+		note.textContent = err.message;
+		return;
+	}
+	if (propose) {
+		const subject = $("scr-cap-subject").value;
+		const statement = $("scr-cap-statement").value.trim() || summary;
+		if (!ev || !ev.id) {
+			note.textContent = "Logged — but the event id never arrived; the proposal was not sent.";
+			return;
+		}
+		if (!subject) {
+			note.textContent = "Logged — but the proposal needs a subject entity.";
+			return;
+		}
+		try {
+			const res = await api.proposeEventFact(campaignID, live.session.id, ev.id, {
+				statement,
+				subject,
+				predicate: $("scr-cap-predicate").value.trim() || "discovered",
+				visibility: $("scr-cap-visibility").value,
+			});
+			const skipped = res.batch && res.batch.skipped ? res.batch.skipped.length : 0;
+			note.textContent = skipped
+				? "Logged — this fact proposal already sits in the review queue."
+				: "Logged — proposed as a fact; Review decides.";
+		} catch (err) {
+			note.textContent = `Logged — the proposal failed: ${err.message}`;
+			return;
+		}
+	} else {
+		note.textContent = "Logged.";
+	}
+	// The event is the immutable record; leave the confirmation a beat,
+	// then fold the form away for the next capture.
+	setTimeout(() => { closeCapture(); }, 900);
+}
+
+function onProposeToggle() {
+	$("scr-cap-fact").hidden = !$("scr-cap-propose").checked;
+	if ($("scr-cap-propose").checked && !$("scr-cap-statement").value) {
+		$("scr-cap-statement").value = $("scr-cap-summary").value.trim();
+	}
 }
 
 /** The ticking half of the clock — one label, repainted each second. */
@@ -263,7 +481,7 @@ function tick() {
 	$("scr-time").textContent = elapsedLabel(live.session.started_at);
 }
 
-/* ---------- the writes (existing routes only) ---------- */
+/* ---------- the writes ---------- */
 
 async function onGoLive(e) {
 	e.preventDefault();
@@ -307,6 +525,12 @@ function wire() {
 	});
 	$("scr-golive").addEventListener("submit", onGoLive);
 	$("scr-notes").addEventListener("submit", onParkNote);
+	$("scr-disc-btn").addEventListener("click", () => openCapture("discovery"));
+	$("scr-rule-btn").addEventListener("click", () => openCapture("ruling"));
+	$("scr-cap-cancel").addEventListener("click", closeCapture);
+	$("scr-cap-form").addEventListener("submit", onCaptureSubmit);
+	$("scr-cap-propose").addEventListener("change", onProposeToggle);
+	$("scr-cap-summary").addEventListener("input", matchPrior);
 }
 
 /* ---------- the window-manager contract ---------- */
