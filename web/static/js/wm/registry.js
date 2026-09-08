@@ -106,6 +106,12 @@ export const TOOLS = Object.freeze({
 		blurb: "The DM's screen — run the battle",
 		load: () => import("../combat.js"),
 	},
+	screen: {
+		title: "Screen", icon: "candle", corpus: "dnd", accel: "l",
+		instances: "single", min: [340, 460],
+		blurb: "The play strip — scene, clock, notes, Ask Grimoire",
+		load: () => import("../screen.js"),
+	},
 
 	/* ---- Magic ---- */
 	deck: {

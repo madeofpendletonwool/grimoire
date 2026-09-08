@@ -314,6 +314,40 @@ func (s *Store) ListScenes(ctx context.Context, scope campaign.Scope, campaignID
 	return out, rows.Err()
 }
 
+// ActiveScenes returns the campaign's active scenes — the ones mid-play —
+// with cast attached but secrets and outcomes left behind: the DM screen's
+// live context (MAD-485) reads this, and its payload has no field a secret
+// could ride in. DM-scope reads only.
+func (s *Store) ActiveScenes(ctx context.Context, scope campaign.Scope, campaignID string) ([]Scene, error) {
+	if err := requireDM(scope); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+sceneCols+` FROM scenes WHERE campaign_id = ? AND status = ? ORDER BY act_id, ordinal`,
+		campaignID, StatusActive)
+	if err != nil {
+		return nil, fmt.Errorf("list active scenes: %w", err)
+	}
+	defer rows.Close()
+	var out []Scene
+	for rows.Next() {
+		sc, err := scanScene(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *sc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if out[i].Cast, err = s.sceneCast(ctx, out[i].ID); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // UpdateScene replaces the mutable fields. nil arguments leave the
 // corresponding field alone; an empty sessionID/settingEntity pointer clears
 // the field.

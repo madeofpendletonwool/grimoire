@@ -629,6 +629,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{id}/npc/{npc}/agent", s.handleGetNPCAgent)
 	mux.HandleFunc("PUT /api/campaigns/{id}/npc/{npc}/agent", s.handlePutNPCAgent)
 	mux.HandleFunc("POST /api/campaigns/{id}/npc/{npc}/ask", s.handleNPCAsk)
+	// The DM screen's live context (MAD-485, stage 2 of MAD-318): the
+	// live session and the active scenes, one DM-only read. The screen
+	// strip composes it beside the tracker and the board.
+	mux.HandleFunc("GET /api/campaigns/{id}/live", s.handleCampaignLive)
 	// The narrative spine (MAD-360): acts, scenes, cast, secrets, outcomes
 	// and session plans, plus the whole-spine read the planner view loads.
 	// DM-only end to end — the plan is DM material, secrets included.

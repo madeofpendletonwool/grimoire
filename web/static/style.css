@@ -3881,6 +3881,7 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.reader { padding: var(--sp-3) var(--sp-3) var(--sp-4); }
 	.encounter { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
 	.combat { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
+	.screen { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
 	.deckbuilder { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
 	.enc-sheet { padding: var(--sp-3) var(--sp-4) var(--sp-4); }
 	.enc-action-row .ask { margin-left: 0; }
@@ -5211,3 +5212,220 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.cbt-strip-ctl { margin-left: 0; width: 100%; }
 	.cbt-next { flex: 1; }
 }
+
+/* DM screen strip (MAD-485) — play mode's thin column. The MAD-318
+   constraint, verbatim: every panel readable at arm's length in a dim
+   room. The clock is the biggest number on the strip, the scene name the
+   biggest word, and the chips are finger-sized — high contrast, few
+   words, no dashboards. */
+
+.screen {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scroll-behavior: smooth;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+
+.scr-body {
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-4);
+}
+
+.scr-heading {
+	margin: 0;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	opacity: 0.55;
+}
+
+.scr-hint {
+	margin: 0;
+	font-size: var(--fs-md);
+	opacity: 0.6;
+	padding: var(--sp-2) 0;
+}
+
+/* the clock — the strip's headline. The tick is client-side over the
+   session's started_at; the server never counts. */
+
+.scr-clock {
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-lg);
+	background: linear-gradient(180deg, var(--stone-800), var(--stone-900));
+	padding: var(--sp-3) var(--sp-4);
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+}
+
+.scr-time {
+	font-family: var(--font-display);
+	font-size: 2.8rem;
+	line-height: 1.05;
+	color: var(--gold-bright, #ffd071);
+	font-variant-numeric: tabular-nums;
+	text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+}
+
+.scr-session { font-size: var(--fs-md); color: var(--parchment-soft, #d8c9a8); }
+
+.scr-golive { display: flex; gap: var(--sp-2); flex-wrap: wrap; align-items: center; }
+
+.scr-golive select,
+.scr-note-field {
+	border: 1px solid var(--stone-line);
+	background: var(--stone-700);
+	color: var(--parchment, #efe4c9);
+	border-radius: var(--r-md);
+	padding: 0.35rem 0.55rem;
+	font-size: var(--fs-sm);
+}
+
+.scr-golive select { flex: 1; min-width: 180px; }
+.scr-golive-note { font-size: var(--fs-sm); color: #e8a13c; }
+
+/* the scene — read-only live context; the Planner owns every write. */
+
+.scr-scene-card {
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-lg);
+	background: linear-gradient(180deg, var(--stone-700), var(--stone-800));
+	padding: var(--sp-3) var(--sp-4);
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+.scr-scene-head { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
+
+.scr-scene-kind {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	color: var(--gold-bright, #ffd071);
+	border: 1px solid var(--gold-dim, #8a7024);
+	border-radius: var(--r-sm);
+	padding: 0.1rem 0.45rem;
+}
+
+.scr-scene-name {
+	font-family: var(--font-display);
+	font-size: 1.45rem;
+	line-height: 1.15;
+	color: var(--parchment, #efe4c9);
+}
+
+.scr-scene-purpose {
+	margin: 0;
+	font-size: var(--fs-lg);
+	color: var(--parchment-soft, #d8c9a8);
+	line-height: 1.4;
+}
+
+.scr-scene-meta { margin: 0; font-size: var(--fs-sm); opacity: 0.65; }
+
+.scr-scene-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: baseline; }
+
+.scr-scene-tabs-label { font-size: var(--fs-xs); opacity: 0.5; font-style: italic; }
+
+.scr-scene-tab {
+	border: 1px solid var(--stone-line);
+	background: transparent;
+	color: var(--parchment-soft, #d8c9a8);
+	border-radius: var(--r-md);
+	padding: 0.2rem 0.6rem;
+	font-size: var(--fs-sm);
+	cursor: pointer;
+}
+
+.scr-scene-tab:hover { border-color: var(--gold-dim, #8a7024); color: var(--gold-bright, #ffd071); }
+
+/* NPCs on stage — chips big enough to read and to hit mid-sentence. */
+
+.scr-cast { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.scr-chip {
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-lg);
+	background: linear-gradient(180deg, var(--stone-700), var(--stone-800));
+	color: var(--parchment, #efe4c9);
+	padding: 0.45rem 0.85rem;
+	font-size: var(--fs-lg);
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.45rem;
+	cursor: pointer;
+}
+
+.scr-chip:hover { border-color: var(--gold-dim, #8a7024); }
+
+.scr-chip.is-focus {
+	border-color: var(--gold-dim, #8a7024);
+	background: linear-gradient(180deg, color-mix(in srgb, var(--stone-700) 82%, var(--gold-dim, #8a7024)), var(--stone-800));
+}
+
+.scr-chip-name { font-weight: 600; }
+
+.scr-chip-role {
+	font-style: normal;
+	font-size: var(--fs-xs);
+	opacity: 0.6;
+	letter-spacing: 0.04em;
+}
+
+/* the scratch pad — one line, one tap, parked against the live session. */
+
+.scr-notes { display: flex; flex-direction: column; gap: 0.4rem; }
+
+.scr-notes-row { display: flex; gap: var(--sp-2); }
+
+.scr-note-field { flex: 1; min-width: 0; font-size: var(--fs-md); }
+
+.scr-note-note { margin: 0; font-size: var(--fs-sm); color: #e8a13c; min-height: 1em; }
+
+.scr-note-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+}
+
+.scr-note {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--sp-2);
+	align-items: baseline;
+	font-size: var(--fs-md);
+	color: var(--parchment, #efe4c9);
+	border-left: 3px solid var(--gold-dim, #8a7024);
+	padding: 0.25rem 0 0.25rem 0.6rem;
+}
+
+.scr-note.is-empty { border-left-color: var(--stone-line); opacity: 0.55; }
+.scr-note-text { min-width: 0; }
+.scr-note-time { flex: none; font-size: var(--fs-xs); opacity: 0.5; font-variant-numeric: tabular-nums; }
+
+/* the Ask Grimoire mount — Stage 5 (MAD-486) fills the box; the screen
+   keeps the place warm and honest about what is coming. */
+
+.scr-copilot {
+	border: 1px dashed var(--stone-line);
+	border-radius: var(--r-lg);
+	padding: var(--sp-3);
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+	min-height: 96px;
+	justify-content: center;
+}
+
+.scr-copilot-hint { margin: 0; font-size: var(--fs-md); opacity: 0.55; font-style: italic; }
