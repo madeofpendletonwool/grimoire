@@ -55,7 +55,9 @@ import (
 // keys the extraction ledger. Changing the validator prompts in a way that
 // affects verdicts means bumping this string — never editing in place —
 // which re-validates the queue under the new contract.
-const VALIDATE_PROMPT_VERSION = "canon-validate-001"
+//
+// 002: the belief kind (MAD-489) — a journal claim judged on its own span.
+const VALIDATE_PROMPT_VERSION = "canon-validate-002"
 
 // Verdict values: what the adversarial pass concluded.
 const (
@@ -369,6 +371,12 @@ func payloadRefs(kind string, payload []byte) []string {
 		if by, _ := m["discovered_by"].(string); by != "" && by != "party" {
 			add(by)
 		}
+	case KindBelief:
+		add(m["subject"])
+		add(m["object_entity"])
+		if by, _ := m["discovered_by"].(string); by != "" && by != "party" {
+			add(by)
+		}
 	}
 	return refs
 }
@@ -415,6 +423,19 @@ func (s *Store) loadEvidence(ctx context.Context, tctx *campaignContext, sourceC
 			fact = statements[discoveryFactRef(cand.Payload)]
 		}
 		ev.factStatement = fact
+	}
+	if cand.Kind == KindBelief {
+		// A belief references a live campaign fact, not a staged one —
+		// the record it matches or contradicts, shown so the validator
+		// can judge the claim against what the journal actually says.
+		var m map[string]any
+		if json.Unmarshal(cand.Payload, &m) == nil {
+			if id, _ := m["fact"].(string); id != "" {
+				if f, ok := tctx.factByID(id); ok {
+					ev.factStatement = f.Statement
+				}
+			}
+		}
 	}
 	return ev, nil
 }
@@ -868,6 +889,8 @@ MONOTONICITY (hard): a machine pass may only downgrade or flag — never upgrade
 
 DISCOVERIES are the highest-risk kind. "The party learned X" is easy to over-read from a transcript in which the DM said X out loud but no character was present to hear it. For any discovery, ask: which character, in the fiction, perceived this, and where in the span do they perceive it? If the span shows the information being spoken with no character present to perceive it, that is a flag or a downgrade, never an agree.
 
+BELIEFS are journal claims, and the candidate does NOT claim the claim is true — it claims the journal's author holds it at the stated stance. Judge the author's assertion, not the campaign's truth: whether the span shows the author stating the claim outright (a "knows"/"believes_false" reading) or hedging it ("suspects"). The campaign fact the belief concerns is context for what is being believed, never evidence for or against the author having said it.
+
 AGREEMENT (0-1) is how well the evidence supports the candidate: 1.0 stated outright, lower for inferred, and low when the span supports only part of the claim or none of it.
 
 RATIONALE: one or two sentences quoting what the span does and does not show.
@@ -928,6 +951,15 @@ func validateUserPrompt(threshold float64, camp campaignHeader, ev *candidateEvi
 		b.WriteString("\n")
 	}
 
+	if cand.Kind == KindBelief {
+		if ev.factStatement != "" {
+			fmt.Fprintf(&b, "THE CAMPAIGN FACT THIS BELIEF CONCERNS: %s\n", ev.factStatement)
+		}
+		b.WriteString(`BELIEF CHECK — this candidate does NOT claim the journal is right; it claims the author holds this stance. Judge only whether the span shows the author asserting the claim with that confidence: stated outright as discovered truth, hedged as a suspicion, or not asserted at all.
+`)
+		b.WriteString("\n")
+	}
+
 	b.WriteString("Return only the JSON verdict object.")
 	return b.String()
 }
@@ -975,6 +1007,13 @@ func renderPayload(kind string, payload []byte) string {
 	case KindDiscovery:
 		fmt.Fprintf(&b, "DISCOVERY: %s learned fact %q\n", firstNonEmpty(str("discovered_by"), "unknown"), str("fact"))
 		fmt.Fprintf(&b, "STANCE: %s\n", str("stance"))
+		if method := str("method"); method != "" {
+			fmt.Fprintf(&b, "METHOD: %s\n", method)
+		}
+	case KindBelief:
+		fmt.Fprintf(&b, "BELIEF: %s holds %q on fact %q\n", firstNonEmpty(str("discovered_by"), "unknown"), str("stance"), str("fact"))
+		fmt.Fprintf(&b, "CLAIM (the author's words): %s\n", str("claim"))
+		fmt.Fprintf(&b, "TRIPLE: %s — %s — %s\n", str("subject"), str("predicate"), firstNonEmpty(str("object_entity"), str("object_literal")))
 		if method := str("method"); method != "" {
 			fmt.Fprintf(&b, "METHOD: %s\n", method)
 		}

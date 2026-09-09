@@ -266,7 +266,7 @@ async function loadSources() {
 function sourceCard(src) {
 	const kind = SOURCE_KINDS[src.kind] || src.kind;
 	const meta = [
-		src.author || "unknown author",
+		src.author_name || src.author || "unknown author",
 		`${src.byte_size.toLocaleString()} bytes`,
 		src.timed ? "timed" : "",
 	].filter(Boolean).join(" · ");

@@ -54,7 +54,7 @@ func TestListSourcesFiltersDMOnlyKinds(t *testing.T) {
 	addSource(t, s, ses.ID, SourceLiveMark, "mid-session mark")
 	addSource(t, s, ses.ID, SourcePlayerJournal, "Mira's journal")
 
-	dmView, err := s.ListSources(context.Background(), ses.ID, true)
+	dmView, err := s.ListSources(context.Background(), ses.ID, DMSourceAccess())
 	if err != nil {
 		t.Fatalf("dm list: %v", err)
 	}
@@ -62,16 +62,107 @@ func TestListSourcesFiltersDMOnlyKinds(t *testing.T) {
 		t.Fatalf("dm sees %d sources; want 4", len(dmView))
 	}
 
-	playerView, err := s.ListSources(context.Background(), ses.ID, false)
+	// An observer's reach: the shared kinds, no DM-only kinds, and no
+	// journals at all — a journal belongs to its author and the DM.
+	observerView, err := s.ListSources(context.Background(), ses.ID, SourceAccess{})
 	if err != nil {
-		t.Fatalf("player list: %v", err)
+		t.Fatalf("observer list: %v", err)
 	}
-	if len(playerView) != 2 {
-		t.Fatalf("player sees %d sources; want 2", len(playerView))
+	if len(observerView) != 1 {
+		t.Fatalf("observer sees %d sources; want 1 (shared kinds only)", len(observerView))
 	}
-	for _, src := range playerView {
-		if DMOnlySources[src.Kind] {
-			t.Errorf("player list leaked %q source", src.Kind)
+	for _, src := range observerView {
+		if DMOnlySources[src.Kind] || src.Kind == SourcePlayerJournal {
+			t.Errorf("observer list leaked %q source", src.Kind)
+		}
+	}
+}
+
+func TestListSourcesScopesJournalsToTheirAuthor(t *testing.T) {
+	s, cid := seeded(t)
+	first := addSession(t, s, cid, "one")
+	second := addSession(t, s, cid, "two")
+
+	mira, err := s.AddSource(context.Background(), first.ID, SourcePlayerJournal, "mira-id", "Mira's entry", "The dust never settled.", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddSource(context.Background(), first.ID, SourcePlayerJournal, "thalia-id", "Thalia's entry", "The shield held.", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddSource(context.Background(), second.ID, SourcePlayerJournal, "mira-id", "Later entry", "The road went on.", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mira sees her own journal and nobody else's — in SQL, never handed
+	// the other rows.
+	miraView, err := s.ListSources(context.Background(), first.ID, SourceAccess{JournalAuthor: "mira-id"})
+	if err != nil {
+		t.Fatalf("mira list: %v", err)
+	}
+	if len(miraView) != 1 || miraView[0].ID != mira.ID {
+		t.Fatalf("mira sees %+v; want exactly her own entry", miraView)
+	}
+
+	// The campaign-wide journal read: Mira's entries across sessions, in
+	// play order; Thalia's are absent.
+	entries, err := s.ListJournals(context.Background(), cid, "", "mira-id")
+	if err != nil {
+		t.Fatalf("mira journals: %v", err)
+	}
+	if len(entries) != 2 || entries[0].SessionOrdinal != 1 || entries[1].SessionOrdinal != 2 {
+		t.Fatalf("mira's campaign journal = %+v; want her two entries in play order", entries)
+	}
+	if entries[0].Title != "Mira's entry" || entries[1].Title != "Later entry" {
+		t.Fatalf("journal titles = %+v", entries)
+	}
+
+	// The DM read: every journal, every author, across the campaign.
+	all, err := s.ListJournals(context.Background(), cid, "", "")
+	if err != nil {
+		t.Fatalf("dm journals: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("dm sees %d journal entries; want 3", len(all))
+	}
+
+	// The session-narrowed DM read.
+	oneSession, err := s.ListJournals(context.Background(), cid, first.ID, "")
+	if err != nil || len(oneSession) != 2 {
+		t.Fatalf("dm session journals = %+v err %v; want session one's two", oneSession, err)
+	}
+}
+
+func TestMayReadSourceGatesTheByIdReads(t *testing.T) {
+	s, cid := seeded(t)
+	ses := addSession(t, s, cid, "one")
+	shared := addSource(t, s, ses.ID, SourceTranscript, "shared")
+	notes := addSource(t, s, ses.ID, SourceDMNotes, "the vampire secret")
+	mine, err := s.AddSource(context.Background(), ses.ID, SourcePlayerJournal, "mira-id", "", "mine", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := s.AddSource(context.Background(), ses.ID, SourcePlayerJournal, "thalia-id", "", "theirs", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mira := SourceAccess{JournalAuthor: "mira-id"}
+	for _, tc := range []struct {
+		src  *Source
+		dm   bool
+		mira bool
+	}{
+		{shared, true, true},
+		{notes, true, false},
+		{mine, true, true},
+		{theirs, true, false},
+	} {
+		if got := DMSourceAccess().MayReadSource(tc.src); got != tc.dm {
+			t.Errorf("dm may read %s: %v", tc.src.Kind, got)
+		}
+		if got := mira.MayReadSource(tc.src); got != tc.mira {
+			t.Errorf("mira may read %s/%s: %v", tc.src.Kind, tc.src.Author, got)
 		}
 	}
 }

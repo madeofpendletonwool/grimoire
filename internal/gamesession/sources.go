@@ -101,17 +101,38 @@ func scanSourceMeta(row interface{ Scan(...any) error }) (*Source, error) {
 	return &src, nil
 }
 
-// ListSources returns a session's sources, oldest first. includeDMNotes is
-// the role gate: DM-only kinds (dm_notes, live_mark) are filtered out in the
-// SQL when it is false — a non-DM caller is never even handed the rows
-// (ADR 2).
-func (s *Store) ListSources(ctx context.Context, sessionID string, includeDMNotes bool) ([]Source, error) {
+// SourceAccess is one caller's read reach over a session's sources, the
+// parameter ListSources filters in SQL (ADR 2: authorization happens in the
+// query). The DM perspective sees everything — IncludeDMNotes carries the
+// DM-only kinds and every player's journal; every other caller sees the
+// shared kinds plus player_journal entries exactly their own: a journal is
+// its author's and the DM's, nobody else's (MAD-489).
+type SourceAccess struct {
+	// IncludeDMNotes is the DM perspective: dm_notes and live_mark rows
+	// are included, and so is every player's journal.
+	IncludeDMNotes bool
+	// JournalAuthor is the caller's bound character id. For a non-DM
+	// caller, player_journal rows are visible only where author matches;
+	// an empty value (observer, unbound member) sees no journals at all.
+	JournalAuthor string
+}
+
+// DMSourceAccess is the DM's read reach: everything.
+func DMSourceAccess() SourceAccess { return SourceAccess{IncludeDMNotes: true} }
+
+// ListSources returns a session's sources, oldest first, filtered to the
+// caller's access in the query itself (ADR 2): DM-only kinds (dm_notes,
+// live_mark) only at the DM perspective, and player_journal entries only for
+// their author (or the DM) — a non-DM caller is never even handed the rows.
+func (s *Store) ListSources(ctx context.Context, sessionID string, access SourceAccess) ([]Source, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+sourceCols+` FROM session_sources src
 		JOIN game_sessions gs ON gs.id = src.session_id
-		WHERE src.session_id = ? AND (? OR src.kind NOT IN ('dm_notes', 'live_mark'))
+		WHERE src.session_id = ?
+		  AND (? OR src.kind NOT IN ('dm_notes', 'live_mark'))
+		  AND (? OR src.kind <> 'player_journal' OR src.author = ?)
 		ORDER BY src.created_at, src.id`,
-		sessionID, includeDMNotes)
+		sessionID, access.IncludeDMNotes, access.IncludeDMNotes, access.JournalAuthor)
 	if err != nil {
 		return nil, fmt.Errorf("list sources: %w", err)
 	}
@@ -123,6 +144,76 @@ func (s *Store) ListSources(ctx context.Context, sessionID string, includeDMNote
 			return nil, err
 		}
 		out = append(out, *src)
+	}
+	return out, rows.Err()
+}
+
+// MayReadSource reports whether one caller's access covers a loaded source —
+// the single-row gate the by-id reads apply after loading (the row must be
+// loaded anyway, so the filter is applied here rather than in a second query
+// shape).
+func (a SourceAccess) MayReadSource(src *Source) bool {
+	if a.IncludeDMNotes {
+		return true
+	}
+	if DMOnlySources[src.Kind] {
+		return false
+	}
+	if src.Kind == SourcePlayerJournal {
+		return src.Author != "" && src.Author == a.JournalAuthor
+	}
+	return true
+}
+
+/* ---------- player journals (MAD-489) ---------- */
+
+// JournalEntry is one player journal entry in the journal reads: the source
+// row's metadata plus the session it was written against, so the journal
+// surfaces render in play order without a second query client-side.
+type JournalEntry struct {
+	Source
+	SessionOrdinal int64
+	SessionName    string
+}
+
+// ListJournals returns player journal entries, in play order. sessionID
+// narrows to one session; author narrows to one character's entries (the
+// player read); an empty author returns the campaign's every journal (the DM
+// read — callers are responsible for having resolved their own standing
+// first, the same rule every scoped read here follows).
+func (s *Store) ListJournals(ctx context.Context, campaignID, sessionID, author string) ([]JournalEntry, error) {
+	q := `
+		SELECT ` + sourceCols + `, gs.ordinal, COALESCE(NULLIF(gs.name, ''), 'Session ' || gs.ordinal)
+		  FROM session_sources src
+		  JOIN game_sessions gs ON gs.id = src.session_id
+		 WHERE gs.campaign_id = ? AND src.kind = 'player_journal'`
+	args := []any{campaignID}
+	if sessionID != "" {
+		q += ` AND src.session_id = ?`
+		args = append(args, sessionID)
+	}
+	if author != "" {
+		q += ` AND src.author = ?`
+		args = append(args, author)
+	}
+	q += ` ORDER BY gs.ordinal, src.created_at, src.id`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list journals: %w", err)
+	}
+	defer rows.Close()
+	var out []JournalEntry
+	for rows.Next() {
+		var e JournalEntry
+		var timing sql.NullString
+		var createdMilli int64
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.Campaign, &e.Kind, &e.Author,
+			&e.Title, &e.Checksum, &timing, &e.ByteSize, &createdMilli,
+			&e.SessionOrdinal, &e.SessionName); err != nil {
+			return nil, err
+		}
+		e.CreatedAt = time.UnixMilli(createdMilli).UTC()
+		out = append(out, e)
 	}
 	return out, rows.Err()
 }

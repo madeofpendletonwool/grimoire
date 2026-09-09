@@ -565,6 +565,30 @@ func (s *Store) Members(ctx context.Context, campaignID string) ([]Member, error
 	return out, rows.Err()
 }
 
+// MemberFor returns one member's row, or ErrNotFound when the user has no
+// membership in the campaign — the single-member fetch the journal scoping
+// and its siblings read (MAD-489).
+func (s *Store) MemberFor(ctx context.Context, campaignID, userID string) (*Member, error) {
+	var (
+		m         Member
+		character sql.NullString
+		joined    int64
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT campaign_id, user_id, role, character_id, joined_at
+		  FROM campaign_members WHERE campaign_id = ? AND user_id = ?`,
+		campaignID, userID).Scan(&m.CampaignID, &m.UserID, &m.Role, &character, &joined)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: member %s in campaign %s", ErrNotFound, userID, campaignID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("member: %w", err)
+	}
+	m.CharacterID = character.String
+	m.JoinedAt = time.UnixMilli(joined).UTC()
+	return &m, nil
+}
+
 // Role reports the user's role in the campaign. The second return is false
 // when there is no membership row — which is the answer "no access", not an
 // error. Callers gate on this, not on a route.
