@@ -1271,3 +1271,60 @@ character's own trail and not the secret's text or id.
 | Register a canon contradiction (contested facts) on accept | A player believing canon is wrong does not make canon contested — that would downgrade true facts every time a journal misreads them |
 | Store the author as a freeform name or user id | A name breaks scoping when characters rename; a user id needs a member join at extraction and muddles "whose account is this" — the character id is both the scope key and the belief's knower |
 | A new journals table | The sources layer already owns verbatim, immutable, span-addressable documents with authors — a second table would fork the span rule the whole engine's provenance stands on |
+
+## ADR 24 — Handouts are visibility, not graph
+
+Date: 2026-09-09 · Status: accepted · Issues: MAD-490, MAD-319
+
+### Context
+
+Stage 7.4 of the player portal: the DM hands material to the party — a
+letter read aloud, a map unrolled on the table. The portal epic called this
+"the one genuinely new object," and the tempting shape is a graph shape:
+make a handout an entity kind, hang facts off it, let the dossier link it.
+But nothing in how a handout works needs the graph. The entities' kinds are
+a controlled vocabulary for things *in the world*; a handout is not in the
+world — it is a thing the DM showed to the party, which is a visibility
+question, and visibility is exactly the machinery this portal already runs
+on (ADR 2, ADR 6).
+
+### Decision
+
+**A handout is a row in its own table with a status, read through the same
+scope line as everything else — never a node in the world graph.** The
+lifecycle is the whole model: `draft` is DM-only, `published` is readable
+by every member, `retired` leaves the portal and keeps the row for
+history. There is no entity row, no facts, no awareness, and no extraction
+input — a handout never enters the canon engine because it asserts
+nothing about the world; it is what the DM said to the party.
+
+**The published-only rule lives in the SQL, and the player surface reads
+through `PlayerView.Handouts`.** The store's non-DM SELECT carries
+`status = 'published'` in its WHERE clause — the same construction that
+makes a secret fact unreachable without its awareness grant — so the
+narrow interface cannot express a draft, the reflection leak test sweeps
+the grown method set, and the handler test holds the route to it. The
+image path walks the same line before any byte is served: a member's
+image read resolves the handout through the view first, so a draft's
+image is the same 404 as its row.
+
+**Images follow the transcription rule (ADR 5's shape): files beside the
+database, bytes never in SQLite, no CDN and no third-party loader**
+(design invariant 6). The row carries the reference (a server-generated
+name — no client input reaches a path), the sniffed MIME type and the
+size; upload is sniffed before it is stored, and replacing or deleting a
+handout removes the file it owned.
+
+### Consequences
+
+- Migration `0039` owns the table; the store lives in `internal/knowledge`
+  (visibility is the epistemic layer's business), the type in
+  `internal/campaign`, mirroring the Rumor split.
+- Publishing validates the handout has something to show — a map needs its
+  image, a letter its words — so the party's surface never renders an
+  empty card; the edit path re-checks so a kind flip cannot invalidate a
+  published shape underneath the status.
+- The optional convenience join (a handout linked to the entities it
+  depicts, a dossier saying "you hold a handout about this place") is
+  deliberately not built: it is a convenience, not a graph edge, and v1
+  stays honest without it.

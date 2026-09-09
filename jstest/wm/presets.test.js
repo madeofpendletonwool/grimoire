@@ -32,10 +32,11 @@ test("the player seat seeds the player workspace, never the DM cockpit", () => {
 	const names = player.map((p) => p.name);
 	assert.deepEqual(names, ["The table", "The world", "Study"]);
 
-	// The five named surfaces of the seat (MAD-493): my character and the
-	// known world live in the Campaign tool, quick rolls in Dice, the party
-	// in the Board, the Player Grimoire in cchat. Every leaf of the preset
-	// set must be a member tool.
+	// The named surfaces of the seat (MAD-493, grown by MAD-490): my
+	// character and the known world live in the Campaign tool, quick
+	// rolls in Dice, the party in the Board, the Player Grimoire in
+	// cchat, the DM's handed material in Handouts. Every leaf of the
+	// preset set must be a member tool.
 	const offered = new Set(toolsFor("dnd", SEAT_PLAYER));
 	for (const preset of player) {
 		for (const id of leavesOf(preset)) {
@@ -44,7 +45,7 @@ test("the player seat seeds the player workspace, never the DM cockpit", () => {
 	}
 
 	const seeded = new Set(player.flatMap(leavesOf));
-	for (const id of ["board", "dice", "cchat", "campaign"]) {
+	for (const id of ["board", "dice", "cchat", "campaign", "handouts"]) {
 		assert.ok(seeded.has(id), `the player seat does not seed ${id}`);
 	}
 	for (const id of ["planner", "combat", "screen", "encounter", "director", "review"]) {

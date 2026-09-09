@@ -396,6 +396,24 @@ func transcribeOptions() server.TranscribeOptions {
 	}
 }
 
+// handoutOptions is where handout and map images live and how big one may
+// be (MAD-490): beside the database file by default, like the
+// transcription recordings — never /tmp, never SQLite.
+func handoutOptions() server.HandoutOptions {
+	maxImage := 32
+	if raw := os.Getenv("HANDOUT_MAX_IMAGE_MB"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			maxImage = n
+		} else {
+			log.Printf("HANDOUT_MAX_IMAGE_MB=%q is not a positive number — using %d", raw, maxImage)
+		}
+	}
+	return server.HandoutOptions{
+		Dir:           env("HANDOUTS_DIR", filepath.Join(filepath.Dir(dbPath()), "handouts")),
+		MaxImageBytes: int64(maxImage) << 20,
+	}
+}
+
 func cardsService() *cards.Service {
 	return cards.NewWithBase(env("SCRYFALL_BASE_URL", cards.DefaultBaseURL))
 }
@@ -1732,6 +1750,7 @@ func runServe() error {
 	srv = srv.WithLeveling(levelingEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
+	srv = srv.WithHandouts(handoutOptions())
 	if cardStore != nil {
 		srv = srv.WithDeckBuilder(cardStore, decks, edhrecClient)
 	}

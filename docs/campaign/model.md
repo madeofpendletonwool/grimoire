@@ -122,6 +122,12 @@ provenance row is a bug, and integrity checks it.
 | `session_events` | `id, session_id, seq, kind, summary, detail, payload` | `qa \| ruling \| note \| discovery \| encounter`. MAD-286's ruling log lives here as one `kind`. `seq` is per-session insertion order; `summary` (the question or label) and `detail` (the ruling/answer body) are first-class so the ruling FTS below can index them in plain SQL; `payload` is JSON for the structured remainder. |
 | `ruling_fts` | FTS5 over `ruling`/`qa` events | The prior-ruling surfacing, retained from MAD-286: recording a ruling or question FTS-matches it against the campaign's past rulings — *"you ruled the other way on this three sessions ago."* Maintained by triggers; no LLM involved. |
 
+### Handouts
+
+| Table | Columns | Notes |
+|---|---|---|
+| `handouts` | `id, campaign_id, kind, title, body, image_ref, image_mime, image_bytes, status, created_by, created_at, published_at` | Material the DM hands **to the party** (MAD-490): `kind` is `handout \| map`, `body` is markdown, the image columns reference a file beside the database (never SQLite, never a third party). Not a graph node — no entity, no facts, no awareness — because a handout is a visibility question, not canon: `status` is `draft \| published \| retired`, and every non-DM read filters `status = 'published'` in the SQL itself, so `PlayerView.Handouts` cannot return a draft any more than it can a secret ([ADR 24](../decisions.md#adr-24-handouts-are-visibility-not-graph)). Retired rows stay for the DM's history. |
+
 ### The narrative spine
 
 What is *planned*, as opposed to what is true (MAD-360; migration `0013`, Go

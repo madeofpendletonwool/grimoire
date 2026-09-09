@@ -5830,3 +5830,96 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 
 .dir-rest-line { margin: 0; font-family: var(--font-display); font-size: 1.3rem; color: var(--parchment, #efe4c9); }
 .dir-rest-hint { margin: 0; font-size: var(--fs-md); opacity: 0.6; line-height: 1.45; }
+
+/* ---------- Handouts (MAD-490) — the party-scope reading material ----------
+   Letters as readable cards, maps as images. The card is parchment (it is
+   content the party reads); the compose desk is stone (it is the DM's
+   chrome). A draft card sits dimmed at the DM's seat only — no player
+   ever receives one, so nothing here hides anything. */
+
+.handouts-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-3);
+}
+
+.handouts-section { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+.handouts-kind {
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: var(--fs-md);
+	color: var(--gold-bright);
+}
+
+.handouts-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+	gap: var(--sp-2);
+	align-items: start;
+}
+
+.handouts-hint { opacity: 0.6; font-size: var(--fs-sm); padding: var(--sp-3); text-align: center; }
+
+.handout-card {
+	padding: var(--sp-2) var(--sp-3) var(--sp-3);
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+}
+
+.handout-card.is-unpublished { opacity: 0.75; }
+
+.handout-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sp-1) var(--sp-2);
+}
+
+.handout-title { font-family: var(--font-display); font-size: var(--fs-md); color: var(--ink); }
+
+.handout-status { font-size: var(--fs-xs); color: var(--ink-soft); font-style: italic; }
+.handout-status.is-draft { color: #8a5a2a; }
+
+.handout-image {
+	display: block;
+	width: 100%;
+	height: auto;
+	border: 1px solid var(--stone-line);
+	image-rendering: auto;
+}
+
+.handout-body { font-size: var(--fs-sm); color: var(--ink); line-height: 1.5; }
+.handout-body :first-child { margin-top: 0; }
+.handout-body :last-child { margin-bottom: 0; }
+
+.handout-stamp { margin: 0; font-size: var(--fs-xs); color: var(--ink-soft); font-style: italic; }
+
+.handout-actions { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.handout-act { font-size: var(--fs-xs); }
+
+/* The DM's desk: a draft a session ahead of the party. */
+
+.handout-compose { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.handout-compose-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+
+.handout-slot {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	font-size: var(--fs-xs);
+	color: var(--parchment-soft, #d8c9a8);
+}
+
+.handout-slot.grow { flex: 1; min-width: 220px; }
+
+.handout-compose-body { min-height: 5rem; }
+
+.handout-attach { display: inline-flex; align-items: center; gap: 0.5rem; font-size: var(--fs-xs); }
+
+.handout-file-name { color: var(--parchment-soft, #d8c9a8); opacity: 0.8; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -178,6 +178,11 @@ type Server struct {
 	transcribe     *transcribe.Client
 	transcribeOpts TranscribeOptions
 	transcribeWork transcribeWorkState
+	// Handout and map images (MAD-490): where the party's material lives
+	// on disk — beside the database, never SQLite, never a third party.
+	// Wired with WithHandouts; a zero dir leaves the image endpoints
+	// reporting unavailable (text handouts work regardless).
+	handoutOpts HandoutOptions
 	// The Campaign OS layout store (MAD-366): saved workspaces and interface
 	// preferences, per user. Wired with WithUIState; nil keeps the window
 	// manager's layouts in the browser instead.
@@ -568,6 +573,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/journal", s.handleSessionJournal)
 	mux.HandleFunc("GET /api/campaigns/{cid}/journal", s.handleCampaignJournal)
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/journal/draft", s.handleJournalDraft)
+	// Handouts and maps (MAD-490): the DM's party-scope material. The
+	// lifecycle and the image upload are the DM's; every member reads
+	// published rows — players through the PlayerView, whose query cannot
+	// return a draft.
+	mux.HandleFunc("GET /api/campaigns/{cid}/handouts", s.handleCampaignHandouts)
+	mux.HandleFunc("POST /api/campaigns/{cid}/handouts", s.handleCreateHandout)
+	mux.HandleFunc("GET /api/campaigns/{cid}/handouts/{hid}", s.handleCampaignHandout)
+	mux.HandleFunc("PATCH /api/campaigns/{cid}/handouts/{hid}", s.handleUpdateHandout)
+	mux.HandleFunc("DELETE /api/campaigns/{cid}/handouts/{hid}", s.handleDeleteHandout)
+	mux.HandleFunc("POST /api/campaigns/{cid}/handouts/{hid}/publish", s.handlePublishHandout)
+	mux.HandleFunc("POST /api/campaigns/{cid}/handouts/{hid}/unpublish", s.handleUnpublishHandout)
+	mux.HandleFunc("POST /api/campaigns/{cid}/handouts/{hid}/retire", s.handleRetireHandout)
+	mux.HandleFunc("PUT /api/campaigns/{cid}/handouts/{hid}/image", s.handlePutHandoutImage)
+	mux.HandleFunc("GET /api/campaigns/{cid}/handouts/{hid}/image", s.handleGetHandoutImage)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/export", s.handleExportSession)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/replay", s.handleSessionReplay)
 	// The optional audio→transcript hook (MAD-320): upload a recording, poll

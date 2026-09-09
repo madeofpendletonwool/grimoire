@@ -71,6 +71,13 @@ type PlayerView interface {
 	// other pc, no other payload key, no facts. Party and npc scopes are
 	// refused; a character scope asking for any id but its own is refused.
 	CharacterSheet(ctx context.Context, campaignID, characterID string) (*SheetRead, error)
+	// Handouts and Handout return the party's reading material (MAD-490):
+	// handouts and maps the DM has published — every member reads them.
+	// A draft or retired row cannot be returned: the store's SELECT
+	// refuses the status in SQL, so an unpublished handout is as absent
+	// from this interface as a secret fact the awareness gate drops.
+	Handouts(ctx context.Context, campaignID string) ([]campaign.Handout, error)
+	Handout(ctx context.Context, campaignID, handoutID string) (*campaign.Handout, error)
 }
 
 // playerView is the PlayerView implementation: the wide store's scoped reads
@@ -169,4 +176,15 @@ func (v *playerView) Summarize(ctx context.Context, campaignID, subject string) 
 
 func (v *playerView) FactionFacade(ctx context.Context, campaignID, id string) (string, string, error) {
 	return v.store.FactionFacade(ctx, v.scope, campaignID, id)
+}
+
+// handoutViews is the shape the player view hands the portal: published
+// material only, because the store's read refuses every other status in
+// the SQL itself (MAD-490).
+func (v *playerView) Handouts(ctx context.Context, campaignID string) ([]campaign.Handout, error) {
+	return v.store.Handouts(ctx, v.scope, campaignID, HandoutFilter{})
+}
+
+func (v *playerView) Handout(ctx context.Context, campaignID, handoutID string) (*campaign.Handout, error) {
+	return v.store.Handout(ctx, v.scope, campaignID, handoutID)
 }
