@@ -2688,9 +2688,11 @@ async function loadSheetRumors(eid) {
 /* ---------- the character page (MAD-418) ---------- */
 
 // The typed sheet, rendered as a read: abilities, classes, defences,
-// spellcasting, features, inventory, currency. The DM can replace the
-// sheet wholesale by pasting a Grimoire sheet JSON; the import door (from a
-// Roll20 or FC5 export) lives in the entity list's add form, where new
+// spellcasting, features, inventory, currency. Whoever's read succeeded
+// may save it back (MAD-488): the DM replaces the sheet wholesale by
+// pasting a Grimoire sheet JSON, the bound player's paste merges their
+// inventory and notes onto it server-side; the import door (from a Roll20
+// or FC5 export) stays DM-only in the entity list's add form, where new
 // characters are made. An unstructured pc says so — the marker is the
 // product, not an empty widget pretending.
 let characterSheetRead = null; // the last sheet body for the selected pc
@@ -2736,7 +2738,7 @@ function renderCharacterSheet(mount) {
 
 	if (!s) {
 		wrap.append(el("p", { class: "camp-status", text: "Unstructured sheet — this character predates typed sheets. Import or fill one in below." }));
-		if (isDM()) wrap.append(sheetPasteForm());
+		wrap.append(sheetPasteForm());
 		mount.append(wrap);
 		return;
 	}
@@ -2790,16 +2792,23 @@ function renderCharacterSheet(mount) {
 		wrap.append(section("Notes", notes));
 	}
 
-	if (isDM()) wrap.append(sheetPasteForm());
+	wrap.append(sheetPasteForm());
 	mount.append(wrap);
 }
 
-// sheetPasteForm is the DM's whole-sheet editor: paste a Grimoire sheet
-// JSON, it validates server-side and replaces the sheet. Field-level
-// editing is the portal's job (MAD-319), not the browser's.
+// sheetPasteForm is the sheet editor both seats share (MAD-488): paste a
+// Grimoire sheet JSON, the server validates and stores it. For the DM that
+// is a replace; for the bound player a merge — inventory and notes land,
+// the mechanical definition stays the DM's unless the campaign opted in
+// (the server decides; the form promises nothing either way). The write
+// gate is the read gate, so the form rides the sheet read, not the seat.
 function sheetPasteForm() {
 	const form = el("div", { class: "camp-character-edit" });
-	const area = el("textarea", { class: "camp-character-paste", attrs: { rows: "6", placeholder: "Paste a Grimoire sheet JSON to replace this character's sheet…", "aria-label": "Sheet JSON" } });
+	const own = !isDM();
+	const placeholder = own
+		? "Paste your sheet JSON to update your pack and notes — the numbers stay the DM's…"
+		: "Paste a Grimoire sheet JSON to replace this character's sheet…";
+	const area = el("textarea", { class: "camp-character-paste", attrs: { rows: "6", placeholder, "aria-label": "Sheet JSON" } });
 	const save = el("button", { class: "btn", text: "Save sheet", attrs: { type: "button" } });
 	const status = el("p", { class: "camp-status", attrs: { hidden: "" } });
 	save.addEventListener("click", async () => {
