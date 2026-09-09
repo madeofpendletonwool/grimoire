@@ -24,7 +24,7 @@ func (s *Store) ExportMarkdown(ctx context.Context, sessionID string) (string, e
 		`SELECT name FROM campaigns WHERE id = ?`, ses.Campaign).Scan(&campaignName); err != nil {
 		return "", fmt.Errorf("campaign name: %w", err)
 	}
-	sources, err := s.ListSources(ctx, sessionID, true)
+	sources, err := s.ListSources(ctx, sessionID, DMSourceAccess())
 	if err != nil {
 		return "", err
 	}

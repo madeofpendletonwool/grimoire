@@ -395,7 +395,7 @@ func TestValidStagedCandidateCarriesSpanAndChecksum(t *testing.T) {
 /* ---------- prompts and config ---------- */
 
 func TestPromptVersionPinned(t *testing.T) {
-	if PROMPT_VERSION != "canon-extract-001" {
+	if PROMPT_VERSION != "canon-extract-002" {
 		t.Fatalf("PROMPT_VERSION = %q", PROMPT_VERSION)
 	}
 }

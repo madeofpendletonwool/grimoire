@@ -64,6 +64,34 @@ type WireDiscovery struct {
 	Confidence   flexFloat `json:"confidence"`
 }
 
+// WireBelief is one candidate belief from a player journal (MAD-489): a
+// claim the journal asserts about a subject the campaign already records,
+// the claim stated as the author holds it. Whether it matches or contradicts
+// canon is not the model's to say — the deterministic join against the
+// campaign's facts decides, at validation.
+type WireBelief struct {
+	// LocalID is the belief's slug, unique within the payload.
+	LocalID string `json:"local_id"`
+	// Statement is the claim in the author's own words (one sentence).
+	Statement string `json:"statement"`
+	// Subject / Predicate / ObjectEntity / ObjectLiteral describe the
+	// claim as a triple, the same shape a fact uses. Reuse the campaign
+	// fact's predicate when one exists — that is what the join keys on.
+	Subject       string `json:"subject"`
+	Predicate     string `json:"predicate"`
+	ObjectEntity  string `json:"object_entity"`
+	ObjectLiteral string `json:"object_literal"`
+	// DiscoveredBy is who holds the belief — an entity ref, usually the
+	// journal's author. Empty defaults to the author at validation.
+	DiscoveredBy string `json:"discovered_by"`
+	// Stance is how the author holds it: knows | suspects |
+	// believes_false.
+	Stance     string    `json:"stance"`
+	Method     string    `json:"method"`
+	Quote      string    `json:"quote"`
+	Confidence flexFloat `json:"confidence"`
+}
+
 // WireRelationship is one candidate relationship change.
 type WireRelationship struct {
 	FromEntity string    `json:"from_entity"`
@@ -80,6 +108,7 @@ type WirePayload struct {
 	Events        []WireEvent        `json:"events"`
 	Discoveries   []WireDiscovery    `json:"discoveries"`
 	Relationships []WireRelationship `json:"relationships"`
+	Beliefs       []WireBelief       `json:"beliefs"`
 }
 
 /* ---------- tolerant scalars ---------- */
@@ -164,6 +193,7 @@ func parseWire(text string) (WirePayload, []string) {
 	out.Events = decodeRecords[WireEvent](raw, "events", &problems)
 	out.Discoveries = decodeRecords[WireDiscovery](raw, "discoveries", &problems)
 	out.Relationships = decodeRecords[WireRelationship](raw, "relationships", &problems)
+	out.Beliefs = decodeRecords[WireBelief](raw, "beliefs", &problems)
 	return out, problems
 }
 

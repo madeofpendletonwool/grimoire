@@ -60,6 +60,13 @@ const (
 	KindRelationship   = "relationship"
 	KindEntity         = "entity"
 	KindPlanTransition = "plan_transition"
+	// KindBelief is a player journal's claim about something the campaign
+	// already records, held by its author at an awareness stance (MAD-489).
+	// A belief is never a fact candidate: "the merchant is a vampire" in a
+	// journal does not stage the claim as canon — it stages the author
+	// believing it, resolved against the campaign fact it matches or
+	// contradicts.
+	KindBelief = "belief"
 )
 
 // Drop reasons — the vocabulary logged per dropped candidate and counted in
@@ -83,6 +90,11 @@ const (
 	DropEmptyStatement    = "empty_statement"
 	DropMaxCandidates     = "max_candidates"       // run reached CANON_MAX_CANDIDATES mid-payload
 	DropUnparseable       = "unparseable_response" // whole response was not JSON
+	// The belief loop's reasons (MAD-489). Beliefs only come out of player
+	// journals, and only about subjects the campaign already records.
+	DropBeliefNotJournal    = "belief_not_journal"    // beliefs are extracted from player journals only
+	DropBeliefUnresolved    = "belief_unresolved"     // claim's subject+predicate matches no live campaign fact
+	DropBeliefInvalidStance = "belief_invalid_stance" // stance not knows/suspects/believes_false
 )
 
 // Run status values.

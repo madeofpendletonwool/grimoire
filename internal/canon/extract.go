@@ -143,10 +143,48 @@ type Drop struct {
 type validateContext struct {
 	sourceContent string
 	chunk         Chunk
+	// sourceKind and sourceAuthor identify the unit behind the chunk:
+	// beliefs are extracted from player journals only, and the journal's
+	// author is the belief's default knower (MAD-489).
+	sourceKind   string
+	sourceAuthor string
 	// knownEntities maps campaign entity id -> kind.
 	knownEntities map[string]string
 	// relTypes is the allowed relationship vocabulary.
 	relTypes map[string]bool
+	// facts is the campaign's live fact list, loaded for journal sources —
+	// the join beliefs resolve against.
+	facts []promptFact
+}
+
+// factByTriple finds the live campaign fact a belief's claim concerns: same
+// subject entity, same predicate (case-insensitive — predicates are freeform
+// short phrases), oldest first. The join is deterministic: the same campaign
+// state and the same claim always resolve to the same fact.
+func (vctx *validateContext) factByTriple(subjectID, predicate string) (promptFact, bool) {
+	p := strings.ToLower(strings.TrimSpace(predicate))
+	for _, f := range vctx.facts {
+		if f.Subject == subjectID && strings.ToLower(strings.TrimSpace(f.Predicate)) == p {
+			return f, true
+		}
+	}
+	return promptFact{}, false
+}
+
+// claimMatchesFact reports whether a belief's object agrees with the fact it
+// resolved to — the match/contradict half of the join. Entity ids compare
+// exactly; literals compare case-insensitively. Exactly one of the claim's
+// object fields is non-empty (the object rule validated that first).
+func claimMatchesFact(f promptFact, objectEntity, objectLiteral string) bool {
+	objectEntity = strings.TrimSpace(objectEntity)
+	objectLiteral = strings.TrimSpace(objectLiteral)
+	if objectEntity != "" {
+		return f.ObjectEntity == objectEntity
+	}
+	if objectLiteral != "" {
+		return f.ObjectEntity == "" && strings.EqualFold(strings.TrimSpace(f.ObjectLiteral), objectLiteral)
+	}
+	return false
 }
 
 // slugRe is the local-id grammar, same as Arda's: lowercase slugs only.
@@ -451,6 +489,108 @@ func validatePayload(wire WirePayload, vctx validateContext, seen map[string]boo
 		stage(KindDiscovery, payload, float64(d.Confidence), start, end, d.Quote, vctx.chunk.Index, ref)
 	}
 
+	/* beliefs — the journal loop (MAD-489).
+
+	A belief is a journal's claim about something the campaign already
+	records, held by its author. It never stages the claim as a fact: the
+	join below resolves the claim's subject+predicate against the live
+	campaign facts, and the staged payload carries the resolved fact, the
+	claim as written, and the author's stance — coerced to believes_false
+	when the claim contradicts canon and the journal spoke it as truth. */
+	for _, bl := range wire.Beliefs {
+		ref := bl.LocalID
+		if ref == "" {
+			ref = fmt.Sprintf("%s/%s", bl.Subject, bl.Predicate)
+		}
+		if vctx.sourceKind != JournalSourceKind {
+			drop(KindBelief, ref, DropBeliefNotJournal, "beliefs are extracted from player journals only", vctx.chunk.Index)
+			continue
+		}
+		if !validSlug(bl.LocalID) {
+			drop(KindBelief, ref, DropInvalidID, "local_id must be a lowercase slug", vctx.chunk.Index)
+			continue
+		}
+		if localIDs[bl.LocalID] {
+			drop(KindBelief, ref, DropDuplicateID, "local_id already used this payload", vctx.chunk.Index)
+			continue
+		}
+		if strings.TrimSpace(bl.Statement) == "" {
+			drop(KindBelief, ref, DropEmptyStatement, "statement is required", vctx.chunk.Index)
+			continue
+		}
+		if strings.TrimSpace(bl.Predicate) == "" {
+			drop(KindBelief, ref, DropEmptyStatement, "predicate is required", vctx.chunk.Index)
+			continue
+		}
+		if (bl.ObjectEntity == "") == (strings.TrimSpace(bl.ObjectLiteral) == "") {
+			drop(KindBelief, ref, DropInvalidObject, "object is an entity or a literal, never both and never neither", vctx.chunk.Index)
+			continue
+		}
+		if _, ok := resolveEntity(bl.Subject); !ok {
+			drop(KindBelief, ref, DropUnknownEntity, fmt.Sprintf("subject %q resolves nowhere", bl.Subject), vctx.chunk.Index)
+			continue
+		}
+		if bl.ObjectEntity != "" {
+			if _, ok := resolveEntity(bl.ObjectEntity); !ok {
+				drop(KindBelief, ref, DropUnknownEntity, fmt.Sprintf("object %q resolves nowhere", bl.ObjectEntity), vctx.chunk.Index)
+				continue
+			}
+		}
+		switch bl.Stance {
+		case "knows", "suspects", "believes_false":
+		default:
+			drop(KindBelief, ref, DropBeliefInvalidStance, fmt.Sprintf("stance %q", bl.Stance), vctx.chunk.Index)
+			continue
+		}
+		// The knower: the model's ref, defaulting to the journal's author.
+		// A belief needs a character to hold it — "party" is not a knower
+		// here, because a journal is one author's account.
+		knower := strings.TrimSpace(bl.DiscoveredBy)
+		if knower == "" || knower == "party" {
+			knower = vctx.sourceAuthor
+		}
+		if knower == "" || knower == "party" {
+			drop(KindBelief, ref, DropUnknownEntity, "a belief needs a knower: discovered_by or the journal's author", vctx.chunk.Index)
+			continue
+		}
+		if _, ok := resolveEntity(knower); !ok {
+			drop(KindBelief, ref, DropUnknownEntity, fmt.Sprintf("discovered_by %q resolves nowhere", knower), vctx.chunk.Index)
+			continue
+		}
+		// The join: only a campaign entity can have campaign facts. A
+		// subject staged new this payload has no record to contradict —
+		// that material belongs in facts + discoveries.
+		if _, isCampaign := vctx.knownEntities[bl.Subject]; !isCampaign {
+			drop(KindBelief, ref, DropBeliefUnresolved, fmt.Sprintf("subject %q is new this payload; no campaign fact to resolve against", bl.Subject), vctx.chunk.Index)
+			continue
+		}
+		fact, ok := vctx.factByTriple(bl.Subject, bl.Predicate)
+		if !ok {
+			drop(KindBelief, ref, DropBeliefUnresolved, fmt.Sprintf("no live campaign fact on %s %q", bl.Subject, bl.Predicate), vctx.chunk.Index)
+			continue
+		}
+		contradicts := !claimMatchesFact(fact, bl.ObjectEntity, bl.ObjectLiteral)
+		stance := bl.Stance
+		if contradicts && stance == "knows" {
+			// The journal spoke a contradicting claim as discovered
+			// truth; the honest record of that is believes_false.
+			stance = "believes_false"
+		}
+		start, end, ok := pass(KindBelief, ref, float64(bl.Confidence), bl.Quote)
+		if !ok {
+			continue
+		}
+		localIDs[bl.LocalID] = true
+		payload, _ := json.Marshal(map[string]any{
+			"local_id": bl.LocalID, "claim": strings.TrimSpace(bl.Statement),
+			"fact": fact.ID, "subject": bl.Subject, "predicate": strings.TrimSpace(bl.Predicate),
+			"object_entity": bl.ObjectEntity, "object_literal": strings.TrimSpace(bl.ObjectLiteral),
+			"discovered_by": knower, "stance": stance,
+			"method": strings.TrimSpace(bl.Method), "contradicts": contradicts,
+		})
+		stage(KindBelief, payload, float64(bl.Confidence), start, end, bl.Quote, vctx.chunk.Index, ref)
+	}
+
 	return staged, drops
 }
 
@@ -560,6 +700,7 @@ func (s *Store) Extract(ctx context.Context, in ExtractInput) (*Run, error) {
 			CampaignName: camp.Name, CampaignClock: camp.Clock,
 			SourceKind: u.Kind, SourceAuthor: u.Author, SourceTitle: u.Title,
 			Entities: tctx.Entities, Roster: tctx.Roster, RelTypes: tctx.RelTypes,
+			Facts: tctx.Facts,
 		}
 
 		var unitStaged []Staged
@@ -609,6 +750,7 @@ func (s *Store) Extract(ctx context.Context, in ExtractInput) (*Run, error) {
 			vctx := validateContext{
 				sourceContent: u.Content, chunk: ch,
 				knownEntities: tctx.knownEntities, relTypes: tctx.relTypeSet(),
+				sourceKind: u.Kind, sourceAuthor: u.Author, facts: tctx.Facts,
 			}
 			staged, drops := validatePayload(wire, vctx, seen)
 			for _, c := range staged {
@@ -695,8 +837,9 @@ func (s *Store) waitInterval(ctx context.Context, lastCall *time.Time) error {
 
 // inputChecksum hashes everything the model sees for one unit: prompt
 // version, source checksum, the chunk plan, the entity list, the
-// relationship vocabulary and the roster. Re-extract happens exactly when
-// any of those change.
+// relationship vocabulary, the roster and — for journal units, the only ones
+// whose output depends on it — the campaign fact list beliefs join against.
+// Re-extract happens exactly when any of those change.
 func inputChecksum(u unit, chunks []Chunk, tctx *campaignContext) string {
 	var b strings.Builder
 	b.WriteString(PROMPT_VERSION)
@@ -714,6 +857,11 @@ func inputChecksum(u unit, chunks []Chunk, tctx *campaignContext) string {
 	b.WriteString("\x00")
 	for _, r := range tctx.Roster {
 		fmt.Fprintf(&b, "\x00%s", r.ID)
+	}
+	if u.Kind == JournalSourceKind {
+		for _, f := range tctx.Facts {
+			fmt.Fprintf(&b, "\x00%s|%s|%s|%s|%s", f.ID, f.Subject, f.Predicate, f.ObjectEntity, f.ObjectLiteral)
+		}
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
@@ -742,9 +890,23 @@ type campaignContext struct {
 	Entities []promptEntity
 	Roster   []promptEntity
 	RelTypes []string
+	// Facts is the campaign's live fact list (MAD-489) — the join beliefs
+	// resolve against and the list journal prompts show.
+	Facts []promptFact
 
 	knownEntities map[string]string
 	entityByID    map[string]promptEntity
+}
+
+// factByID finds one live campaign fact, for the surfaces that need the
+// record behind a staged belief.
+func (c campaignContext) factByID(id string) (promptFact, bool) {
+	for _, f := range c.Facts {
+		if f.ID == id {
+			return f, true
+		}
+	}
+	return promptFact{}, false
 }
 
 func (c campaignContext) relTypeSet() map[string]bool {
@@ -827,7 +989,34 @@ func (s *Store) loadTaskContext(ctx context.Context, campaignID string) (*campai
 		}
 		tctx.RelTypes = append(tctx.RelTypes, name)
 	}
-	return tctx, relRows.Err()
+	if err := relRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// The live fact list (MAD-489): what a journal's claims resolve
+	// against. Oldest first and capped, so the same campaign state always
+	// produces the same list, prompt and checksum.
+	factRows, err := s.db.QueryContext(ctx, `
+		SELECT f.id, f.subject_entity, f.predicate,
+		       COALESCE(f.object_entity, ''), COALESCE(f.object_literal, ''),
+		       f.statement, f.visibility
+		  FROM facts f
+		 WHERE f.campaign_id = ? AND f.confidence <> 'proposed' AND f.superseded_by IS NULL
+		 ORDER BY f.created_at, f.id
+		 LIMIT ?`, campaignID, maxPromptFacts)
+	if err != nil {
+		return nil, fmt.Errorf("load facts: %w", err)
+	}
+	defer factRows.Close()
+	for factRows.Next() {
+		var f promptFact
+		if err := factRows.Scan(&f.ID, &f.Subject, &f.Predicate,
+			&f.ObjectEntity, &f.ObjectLiteral, &f.Statement, &f.Visibility); err != nil {
+			return nil, err
+		}
+		tctx.Facts = append(tctx.Facts, f)
+	}
+	return tctx, factRows.Err()
 }
 
 // loadUnits gathers the run's work units, in session play order.

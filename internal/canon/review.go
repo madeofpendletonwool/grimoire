@@ -55,10 +55,16 @@ const (
 	ReviewProposedPlanTransition = "proposed_plan_transition"
 	ReviewProposedQuest          = "proposed_quest"
 	ReviewProposedRumor          = "proposed_rumor"
-	ReviewLowAgreement           = "low_agreement"
-	ReviewContradiction          = "contradiction"
-	ReviewEngineFlag             = "engine_flag"
-	ReviewNPCReveal              = "npc_reveal"
+	// ReviewProposedBelief is a player journal's claim about a live
+	// campaign fact that AGREES with the record (MAD-489): accepting
+	// records the author's discovery of that fact at the claimed stance.
+	// A contradicting claim is claimed by the contradiction kind below
+	// instead, pairing journal claim against canon for the DM.
+	ReviewProposedBelief = "proposed_belief"
+	ReviewLowAgreement   = "low_agreement"
+	ReviewContradiction  = "contradiction"
+	ReviewEngineFlag     = "engine_flag"
+	ReviewNPCReveal      = "npc_reveal"
 )
 
 // Review statuses. A decision is terminal: once accepted, modified or
@@ -85,6 +91,7 @@ var candidateKindReview = map[string]string{
 	KindDiscovery:    ReviewProposedDiscovery,
 	KindRelationship: ReviewProposedRelationship,
 	KindEntity:       ReviewProposedEntity,
+	KindBelief:       ReviewProposedBelief,
 }
 
 // contextWindowBytes is how much source text rides along on each side of a
@@ -426,6 +433,36 @@ func (s *Store) buildCandidateItems(ctx context.Context, campaignID string) erro
 		}
 	}
 
+	// The belief loop's contradictions (MAD-489): a journal claim that
+	// disagrees with a live campaign fact is claimed by one contradiction
+	// item pairing the claim against canon. Accepting records the belief —
+	// never a fact, never a correction; dismissing leaves the journal
+	// standing as written with no belief recorded.
+	for _, it := range items {
+		if it.cand.Kind != KindBelief || (it.verdict != "agree" && it.verdict != "downgrade") {
+			continue
+		}
+		var p map[string]any
+		if len(it.cand.Payload) > 0 {
+			_ = json.Unmarshal(it.cand.Payload, &p)
+		}
+		if contradicts, _ := p["contradicts"].(bool); !contradicts {
+			continue // agrees with canon; the generic pass queues proposed_belief
+		}
+		claimed[it.cand.ID] = true
+		factID, _ := p["fact"].(string)
+		claim, _ := p["claim"].(string)
+		canon := s.factStatement(ctx, campaignID, factID)
+		detail, _ := json.Marshal(map[string]any{
+			"kind": "belief", "fact": factID, "sides": []string{it.cand.ID},
+		})
+		summary := fmt.Sprintf("a player journal claims %q — canon says %q", claim, canon)
+		if err := s.insertReview(ctx, campaignID, ReviewContradiction, "contradiction:belief:"+it.cand.ID,
+			"", "", "Journal vs canon", summary, string(detail)); err != nil {
+			return err
+		}
+	}
+
 	for _, it := range items {
 		if claimed[it.cand.ID] {
 			continue
@@ -482,6 +519,21 @@ func (s *Store) buildFlagItems(ctx context.Context, campaignID string) error {
 		}
 	}
 	return nil
+}
+
+// factStatement loads one live fact's statement, "" when it does not
+// resolve — the rendering half of the belief contradiction pairing.
+func (s *Store) factStatement(ctx context.Context, campaignID, factID string) string {
+	if factID == "" {
+		return ""
+	}
+	var stmt string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT statement FROM facts WHERE id = ? AND campaign_id = ?`, factID, campaignID).Scan(&stmt)
+	if err != nil {
+		return factID // dead or dangling reference: the id is the honest label
+	}
+	return stmt
 }
 
 // insertReview inserts one queue item, doing nothing when its dedup key has
@@ -575,9 +627,10 @@ func (s *Store) Reviews(ctx context.Context, campaignID, status string) ([]Revie
 // follow-up queries.
 func (s *Store) enrich(ctx context.Context, r *Review) error {
 	if r.CandidateID == "" {
-		// npc_reveal and proposal-batch items have no candidate row behind
-		// them: the proposed change lives in the item's detail.
-		if len(r.Detail) > 0 && (r.Kind == ReviewNPCReveal || r.BatchID != "") {
+		// npc_reveal, proposal-batch and belief-contradiction items have
+		// no candidate row behind them: the proposed change lives in the
+		// item's detail.
+		if len(r.Detail) > 0 && (r.Kind == ReviewNPCReveal || r.BatchID != "" || r.Kind == ReviewContradiction) {
 			_ = json.Unmarshal([]byte(r.Detail), &r.Payload)
 		}
 		return nil
@@ -916,6 +969,8 @@ func (s *Store) applyReview(ctx context.Context, rev *Review, payload map[string
 		return s.applyEvent(ctx, rev, payload, decidedBy)
 	case ReviewProposedDiscovery:
 		return s.applyDiscovery(ctx, rev, payload, decidedBy)
+	case ReviewProposedBelief:
+		return s.applyBelief(ctx, rev, payload, decidedBy)
 	case ReviewProposedRelationship:
 		return s.applyRelationship(ctx, rev, payload, decidedBy)
 	case ReviewProposedEntity:
@@ -1111,6 +1166,71 @@ func (s *Store) applyDiscovery(ctx context.Context, rev *Review, p map[string]an
 	return d.ID, nil
 }
 
+// applyBelief records one accepted journal belief as a discovery with its
+// awareness row (MAD-489): the campaign fact it concerns already exists, and
+// the acceptance writes WHAT THE AUTHOR HOLDS — a discovery of that fact at
+// the belief's stance, provenance pointing at the journal span. The claim
+// itself is never written as a fact, and the player is never corrected.
+func (s *Store) applyBelief(ctx context.Context, rev *Review, p map[string]any, decidedBy string) (string, error) {
+	c, err := s.getCandidate(ctx, rev.CampaignID, rev.CandidateID)
+	if err != nil {
+		return "", err
+	}
+	d, err := s.recordBelief(ctx, rev, c, p, decidedBy)
+	if err != nil {
+		return "", err
+	}
+	return d.ID, nil
+}
+
+// recordBelief is the one write both belief surfaces make: an accepted (or
+// contradiction-claimed) belief candidate becomes a RecordDiscovery at the
+// author's stance, journal span and all. A stance of knows on a contradicting
+// claim is coerced here again — validation coerced it at staging, but a
+// modified payload or a changed campaign can reintroduce it, and the honest
+// record of "the journal spoke a falsehood as truth" is believes_false.
+func (s *Store) recordBelief(ctx context.Context, rev *Review, c Candidate, p map[string]any, decidedBy string) (*knowledge.Discovery, error) {
+	factID := str(p, "fact")
+	if factID == "" {
+		return nil, fmt.Errorf("%w: belief payload has no fact", ErrInvalid)
+	}
+	factID, err := s.resolveFactRef(ctx, rev.CampaignID, factID)
+	if err != nil {
+		return nil, err
+	}
+	discoveredBy := str(p, "discovered_by")
+	if discoveredBy == "" || discoveredBy == campaign.PartyKnower {
+		return nil, fmt.Errorf("%w: a belief needs a character to hold it", ErrInvalid)
+	}
+	discoveredBy, err = s.resolveEntityRef(ctx, rev.CampaignID, discoveredBy)
+	if err != nil {
+		return nil, err
+	}
+	stance := str(p, "stance")
+	contradicts, _ := p["contradicts"].(bool)
+	if contradicts && stance == knowledge.StanceKnows {
+		stance = knowledge.StanceBelievesFalse
+	}
+	d, err := s.knowledge.RecordDiscovery(ctx, knowledge.RecordDiscoveryInput{
+		CampaignID:   rev.CampaignID,
+		FactID:       factID,
+		DiscoveredBy: discoveredBy,
+		SessionID:    c.SessionID,
+		Method:       str(p, "method"),
+		SourceID:     c.SourceID,
+		SpanStart:    c.SpanStart,
+		SpanEnd:      c.SpanEnd,
+		Quote:        c.Quote,
+		Confidence:   c.Confidence,
+		AcceptedBy:   decidedBy,
+		Stance:       stance,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("accept belief: %w", err)
+	}
+	return d, nil
+}
+
 // applyRelationship creates the accepted edge. Both ends may be staged
 // local_ids; they resolve through the entity candidate's accepted review.
 func (s *Store) applyRelationship(ctx context.Context, rev *Review, p map[string]any, decidedBy string) (string, error) {
@@ -1148,13 +1268,26 @@ func (s *Store) applyEntity(ctx context.Context, rev *Review, p map[string]any, 
 // already accepted reuses the fact that accept wrote (accepting must never
 // mint a duplicate of it); a side that was individually dismissed refuses the
 // whole contradiction rather than resurrecting a rejected claim.
+//
+// A journal-vs-canon contradiction (MAD-489) is the other shape: its sides
+// are belief candidates, and accepting records the beliefs — awareness at
+// believes_false (or suspects) with the journal span as provenance — without
+// touching canon. The journal claimed the merchant is a vampire; canon is not
+// contested by a player believing otherwise, and the player is not corrected.
 func (s *Store) applyContradiction(ctx context.Context, rev *Review, decidedBy string) (string, error) {
 	var sides struct {
+		Kind      string   `json:"kind"`
 		Subject   string   `json:"subject"`
 		Predicate string   `json:"predicate"`
 		Sides     []string `json:"sides"`
 	}
-	if err := json.Unmarshal([]byte(rev.Detail), &sides); err != nil || len(sides.Sides) < 2 {
+	if err := json.Unmarshal([]byte(rev.Detail), &sides); err != nil || len(sides.Sides) < 1 {
+		return "", fmt.Errorf("%w: contradiction item has no sides", ErrInvalid)
+	}
+	if sides.Kind == "belief" {
+		return s.applyBeliefContradiction(ctx, rev, sides.Sides, decidedBy)
+	}
+	if len(sides.Sides) < 2 {
 		return "", fmt.Errorf("%w: contradiction item has no sides", ErrInvalid)
 	}
 	type created struct{ id, label string }
@@ -1207,6 +1340,36 @@ func (s *Store) applyContradiction(ctx context.Context, rev *Review, decidedBy s
 		return "", fmt.Errorf("register contradiction: %w", err)
 	}
 	return con.ID, nil
+}
+
+// applyBeliefContradiction records the belief sides of a journal-vs-canon
+// contradiction: each side's discovery and awareness row, journal span as
+// provenance, nothing written into canon. The result ref is the first
+// discovery written.
+func (s *Store) applyBeliefContradiction(ctx context.Context, rev *Review, sideIDs []string, decidedBy string) (string, error) {
+	var first string
+	for _, candID := range sideIDs {
+		c, err := s.getCandidate(ctx, rev.CampaignID, candID)
+		if err != nil {
+			return "", err
+		}
+		payload := map[string]any{}
+		if len(c.Payload) > 0 {
+			_ = json.Unmarshal(c.Payload, &payload)
+		}
+		sub := &Review{ID: rev.ID, CampaignID: rev.CampaignID, Kind: ReviewProposedBelief, CandidateID: candID}
+		d, err := s.recordBelief(ctx, sub, c, payload, decidedBy)
+		if err != nil {
+			return "", err
+		}
+		if first == "" {
+			first = d.ID
+		}
+	}
+	if first == "" {
+		return "", fmt.Errorf("%w: contradiction item has no sides", ErrInvalid)
+	}
+	return first, nil
 }
 
 // decidedReviewForCandidate returns the result_ref and status of the most
@@ -1316,6 +1479,8 @@ func renderCandidate(c Candidate) (subject, summary string) {
 		return "Event", strv("summary")
 	case KindDiscovery:
 		return "Discovery", fmt.Sprintf("%s learned %s", strv("discovered_by"), strv("fact"))
+	case KindBelief:
+		return "Belief", fmt.Sprintf("%s holds %s: %q", strv("discovered_by"), strv("stance"), strv("claim"))
 	case KindRelationship:
 		return "Relationship", fmt.Sprintf("%s — %s — %s", strv("from_entity"), strv("rel_type"), strv("to_entity"))
 	case KindEntity:
@@ -1403,11 +1568,15 @@ func intField(v any) (int64, bool) {
 // before the facts, relationships and events about them, and discoveries
 // (which reference facts) last.
 var acceptPriority = map[string]int{
-	ReviewProposedEntity:         0,
-	ReviewProposedFact:           1,
-	ReviewProposedRelationship:   2,
-	ReviewProposedEvent:          3,
-	ReviewProposedDiscovery:      4,
+	ReviewProposedEntity:       0,
+	ReviewProposedFact:         1,
+	ReviewProposedRelationship: 2,
+	ReviewProposedEvent:        3,
+	ReviewProposedDiscovery:    4,
+	// A belief references a live campaign fact, never a staged one, so it
+	// has no ordering dependency inside a batch — it sits with the
+	// discoveries it mirrors.
+	ReviewProposedBelief:         4,
 	ReviewProposedPlanTransition: 5,
 	// A quest references entities (its cast) and facts (what its states
 	// reveal), so it applies after both among independent items — its own

@@ -1177,3 +1177,97 @@ a self, not an afterthought.
 | A seat per selected campaign (switching campaigns swaps the rail) | The shell has no selected campaign; each tool picks its own. A DM-anywhere rule keeps one cockpit, and the DM tools already narrow their own pickers |
 | Hide Sessions from members | Its reads are scoped and its writes server-gated; reliving the session list and public sources is a member feature, not a DM secret |
 | A separate player app | Every player surface is already the DM's surface at a narrower scope; two apps would duplicate the board, dice, journal and chat to differ in the rail |
+
+## ADR 23 — Journal claims become beliefs, never facts
+
+Date: 2026-09-09 · Status: accepted · Issues: MAD-489, MAD-319
+
+### Context
+
+Stage 7.3 of the player portal: a seated player writes a journal against a
+session, and the DM's post-session canon run reads it like any other source.
+The headline behavior MAD-319 names is epistemic, not mechanical: *"when the
+journal says 'we finally discovered the merchant is a vampire' and canon says
+he is not, the engine records player belief, opens a contradiction, and
+tells the DM — without correcting the player."* The storage predates the
+feature (`player_journal` is a first-class source kind with an `author`
+column, migration 0004), the awareness vocabulary already has `believes_false`
+with its transition table, and the review queue already has a
+`contradiction` kind. The question is what the engine does with a claim it
+cannot verify: the transcript pipeline stages claims as fact candidates and
+lets review sort them, but a journal's claims are one character's account —
+staging them as facts would let a player write canon by journaling
+confidently.
+
+### Decision
+
+**A journal claim about something the campaign already records stages as a
+belief candidate — a new candidate kind — and never as a fact.** The
+extraction prompt for journal sources carries the campaign's live fact list
+and the journal-specific rules (claims about recorded subjects are the
+author's beliefs; genuinely new material stays facts + discoveries). The
+model emits the claim as the journal holds it; whether the claim matches or
+contradicts canon is **not** the model's to say — validation resolves the
+claim's subject+predicate against the live facts deterministically (the
+codebase's standing rule: the checks the models cannot be trusted to make
+are joins), and a `knows` stance on a contradicting claim is coerced to
+`believes_false`, the honest record of a falsehood spoken as truth.
+
+**The queue pairs belief against canon for the DM, and acceptance records
+awareness.** An agreeing belief becomes a `proposed_belief` item; a
+contradicting one is claimed by a `contradiction` item whose summary pairs
+the journal's claim with canon's statement. Accepting either writes one
+thing: a discovery (provenance = the journal span) and its awareness row at
+the author's stance. Canon is never contested by a player misbelieving it —
+`RegisterContradiction` does not fire — and dismissing records nothing at
+all. The journal itself is verbatim and immutable either way; the player is
+never corrected.
+
+**Authorship is server-bound, and reads scope to it.** The journal write
+route (POST `…/sessions/{sid}/journal`) is the player's; the `author` is the
+caller's bound character, read from the membership row and never the body,
+and the kind is `player_journal` and nothing else. The DM's own material
+keeps the sources route. Journal visibility follows the same ADR 2 rule as
+`dm_notes`: a player sees exactly their own entries in SQL (the generic
+source list, the by-id read, and the span resolver all apply the same
+filter), the DM sees the campaign's journals marked by author name beside
+transcripts and notes, and nobody else sees anyone's.
+
+**The drafting assist grounds in the character's record alone.** "Help me
+write today's entry" assembles its context only from `PlayerView` reads —
+the character's discoveries, the quest journal, the witnessed timeline —
+which cannot return a secret or proposed row at all. The leak test asserts
+on the assembled prompt (the MAD-311 pattern): with the party holding a
+granting awareness row on a secret, the prompt provably contains the
+character's own trail and not the secret's text or id.
+
+### Consequences
+
+- Migration 0038 widens the `canon_candidates` and `canon_reviews` kind
+  CHECKs (`belief`, `proposed_belief`) using the 0031 referenced-table
+  rebuild discipline — `canon_candidates` is referenced by the verdict,
+  review and batch tables, so the rename dance 0022/0024 used for the
+  unreferenced reviews table would have rewritten every REFERENCES clause
+  into the grave.
+- `PROMPT_VERSION` and `VALIDATE_PROMPT_VERSION` bump to `canon-extract-002`
+  / `canon-validate-002` (prompts are code); journal units' input checksums
+  now cover the fact list, so a changed record re-extracts the journals that
+  claimed against it.
+- A belief resolves against the campaign fact list loaded at extraction
+  time (oldest-first, capped at 400) — a claim whose subject+predicate
+  matches nothing is dropped as `belief_unresolved` and belongs in the
+  facts + discoveries path the model was instructed to use.
+- The Player Grimoire needs no new surface: the accepted belief's awareness
+  row is exactly what `Summarize`'s Incorrect bucket renders ("what they are
+  confidently wrong about"), and the secret the belief is about stays
+  secret because the player view drops it regardless of grants.
+
+### Alternatives rejected
+
+| Option | Why not |
+|---|---|
+| Stage journal claims as fact candidates and let the DM dismiss them | A confident journal would write canon unless the DM catches it; the review queue's job is to gate *the engine's* reading, not to make a player's diary load-bearing |
+| Let the model decide contradiction at extraction | The one check the whole engine refuses to trust models with; subject+predicate matching is a join, and joins are free |
+| Register a canon contradiction (contested facts) on accept | A player believing canon is wrong does not make canon contested — that would downgrade true facts every time a journal misreads them |
+| Store the author as a freeform name or user id | A name breaks scoping when characters rename; a user id needs a member join at extraction and muddles "whose account is this" — the character id is both the scope key and the belief's knower |
+| A new journals table | The sources layer already owns verbatim, immutable, span-addressable documents with authors — a second table would fork the span rule the whole engine's provenance stands on |

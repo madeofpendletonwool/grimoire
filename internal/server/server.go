@@ -561,6 +561,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/events", s.handleAddEvent)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/ruling-matches", s.handleRulingMatches)
 	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/events/{eid}/propose-fact", s.handleProposeEventFact)
+	// The player journal surface (MAD-489): a seated player writes and
+	// reads their own journal, and the drafting assist grounds in their
+	// character's record alone.
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/journal", s.handleCreateJournal)
+	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/journal", s.handleSessionJournal)
+	mux.HandleFunc("GET /api/campaigns/{cid}/journal", s.handleCampaignJournal)
+	mux.HandleFunc("POST /api/campaigns/{cid}/sessions/{sid}/journal/draft", s.handleJournalDraft)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/export", s.handleExportSession)
 	mux.HandleFunc("GET /api/campaigns/{cid}/sessions/{sid}/replay", s.handleSessionReplay)
 	// The optional audio→transcript hook (MAD-320): upload a recording, poll

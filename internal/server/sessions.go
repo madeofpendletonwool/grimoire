@@ -93,6 +93,27 @@ func (s *Server) sessionInCampaign(w http.ResponseWriter, r *http.Request, campa
 	return ses, true
 }
 
+// sourceAccessFor resolves the caller's read reach over a campaign's session
+// sources: the DM perspective sees everything; anyone else sees the shared
+// kinds plus their own bound character's journals (MAD-489). The role check
+// runs through campaignAccess (which writes its own errors); the member row
+// lookup is one read, and a member row that vanished mid-request simply
+// leaves the caller journal-less rather than request-less.
+func (s *Server) sourceAccessFor(w http.ResponseWriter, r *http.Request, campaignID string) (gamesession.SourceAccess, bool) {
+	role, ok := s.campaignAccess(w, r, campaignID)
+	if !ok {
+		return gamesession.SourceAccess{}, false
+	}
+	if role == campaign.RoleDM {
+		return gamesession.DMSourceAccess(), true
+	}
+	access := gamesession.SourceAccess{}
+	if m, err := s.campaigns.MemberFor(r.Context(), campaignID, userID(r)); err == nil {
+		access.JournalAuthor = m.CharacterID
+	}
+	return access, true
+}
+
 /* ---------- campaigns (the minimum the Sessions view needs) ----------
    Listed and created by the handlers in campaign.go, which own the richer
    campaignView the whole campaign surface shares. */
@@ -177,7 +198,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 // handleGetSession returns one session with its source and event counts, the
 // shape the session detail header wants.
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.campaignAccess(w, r, r.PathValue("cid")); !ok {
+	access, ok := s.sourceAccessFor(w, r, r.PathValue("cid"))
+	if !ok {
 		return
 	}
 	ses, ok := s.sessionInCampaign(w, r, r.PathValue("cid"), r.PathValue("sid"))
@@ -185,7 +207,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := toSessionView(*ses)
-	sources, err := s.sessions.ListSources(r.Context(), ses.ID, true)
+	sources, err := s.sessions.ListSources(r.Context(), ses.ID, access)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -230,12 +252,16 @@ type sourceView struct {
 	SessionID string `json:"session_id"`
 	Kind      string `json:"kind"`
 	Author    string `json:"author"`
-	Title     string `json:"title"`
-	Checksum  string `json:"checksum"`
-	ByteSize  int64  `json:"byte_size"`
-	Timed     bool   `json:"timed"`
-	CreatedAt string `json:"created_at"`
-	Content   string `json:"content,omitempty"`
+	// AuthorName is the resolved name of a player journal's author (the
+	// bound character), so the surfaces that mark journals by author
+	// render a name rather than an entity id. Empty for freeform authors.
+	AuthorName string `json:"author_name,omitempty"`
+	Title      string `json:"title"`
+	Checksum   string `json:"checksum"`
+	ByteSize   int64  `json:"byte_size"`
+	Timed      bool   `json:"timed"`
+	CreatedAt  string `json:"created_at"`
+	Content    string `json:"content,omitempty"`
 }
 
 func toSourceView(src gamesession.Source, withContent bool) sourceView {
@@ -252,24 +278,44 @@ func toSourceView(src gamesession.Source, withContent bool) sourceView {
 }
 
 func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
-	role, ok := s.campaignAccess(w, r, r.PathValue("cid"))
+	access, ok := s.sourceAccessFor(w, r, r.PathValue("cid"))
 	if !ok {
 		return
 	}
 	if _, ok := s.sessionInCampaign(w, r, r.PathValue("cid"), r.PathValue("sid")); !ok {
 		return
 	}
-	// DM-only kinds are filtered in SQL for everyone else (ADR 2).
-	sources, err := s.sessions.ListSources(r.Context(), r.PathValue("sid"), role == campaign.RoleDM)
+	// The role gate is in the SQL (ADR 2): DM-only kinds and other
+	// players' journals are never handed to a non-DM caller.
+	sources, err := s.sessions.ListSources(r.Context(), r.PathValue("sid"), access)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	names := s.journalAuthorNames(r, r.PathValue("cid"), sources)
 	views := make([]sourceView, 0, len(sources))
 	for i := range sources {
 		views = append(views, toSourceView(sources[i], false))
+		views[i].AuthorName = names[sources[i].Author]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sources": views})
+}
+
+// journalAuthorNames resolves the character names behind player journal
+// author ids, for the surfaces that mark journals by author. A miss (a
+// freeform DM-typed author, a deleted character) resolves no name — the raw
+// author string stays, which is what those surfaces always showed.
+func (s *Server) journalAuthorNames(r *http.Request, campaignID string, sources []gamesession.Source) map[string]string {
+	names := map[string]string{}
+	for _, src := range sources {
+		if src.Kind != gamesession.SourcePlayerJournal || src.Author == "" || names[src.Author] != "" {
+			continue
+		}
+		if e, err := s.campaigns.GetEntity(r.Context(), campaign.ScopeDM, campaignID, src.Author); err == nil {
+			names[src.Author] = e.Name
+		}
+	}
+	return names
 }
 
 // handleAddSource ingests a source two ways: a JSON paste (the transcript box
@@ -355,7 +401,7 @@ func (s *Server) handleAddSource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetSource(w http.ResponseWriter, r *http.Request) {
-	role, ok := s.campaignAccess(w, r, r.PathValue("cid"))
+	access, ok := s.sourceAccessFor(w, r, r.PathValue("cid"))
 	if !ok {
 		return
 	}
@@ -367,14 +413,21 @@ func (s *Server) handleGetSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("source %s", r.PathValue("srcid")))
 		return
 	}
-	// Same gate as the list: DM-only kinds are simply not there for anyone
-	// else — a 404, indistinguishable from a missing row.
-	if gamesession.DMOnlySources[src.Kind] && role != campaign.RoleDM {
+	// Same gate as the list, applied to the loaded row: DM-only kinds and
+	// another player's journal are simply not there — a 404,
+	// indistinguishable from a missing row.
+	if !access.MayReadSource(src) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("source %s", src.ID))
 		return
 	}
+	view := toSourceView(*src, true)
+	if src.Kind == gamesession.SourcePlayerJournal {
+		if e, err := s.campaigns.GetEntity(r.Context(), campaign.ScopeDM, r.PathValue("cid"), src.Author); err == nil {
+			view.AuthorName = e.Name
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"source": toSourceView(*src, true),
+		"source": view,
 		"timing": src.Timing,
 	})
 }
@@ -386,7 +439,7 @@ func (s *Server) handleGetSource(w http.ResponseWriter, r *http.Request) {
 // quote it locates the offsets. Everything downstream that cites a span
 // resolves through here.
 func (s *Server) handleResolveSpan(w http.ResponseWriter, r *http.Request) {
-	role, ok := s.campaignAccess(w, r, r.PathValue("cid"))
+	access, ok := s.sourceAccessFor(w, r, r.PathValue("cid"))
 	if !ok {
 		return
 	}
@@ -397,13 +450,14 @@ func (s *Server) handleResolveSpan(w http.ResponseWriter, r *http.Request) {
 	sourceID := q.Get("source_id")
 
 	// The span endpoint respects the source visibility gate: a quote out of
-	// the DM's notes is as secret as the notes.
+	// the DM's notes is as secret as the notes, and a quote out of another
+	// player's journal is as theirs.
 	src, err := s.sessions.GetSource(r.Context(), sourceID)
 	if err != nil || src.SessionID != r.PathValue("sid") {
 		writeError(w, http.StatusNotFound, fmt.Errorf("source %s", sourceID))
 		return
 	}
-	if gamesession.DMOnlySources[src.Kind] && role != campaign.RoleDM {
+	if !access.MayReadSource(src) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("source %s", sourceID))
 		return
 	}
