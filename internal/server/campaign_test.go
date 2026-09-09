@@ -273,12 +273,17 @@ func TestPlayerCannotReadSecretFact(t *testing.T) {
 }
 
 // TestPlayerCannotWriteAnything checks every write route refuses a player
-// role before touching the store.
+// role before touching the store. The one widening (MAD-488): a bound
+// player's PUT of their own sheet is a write they may make — pinned in
+// sheets_test.go — so the sheet case here targets a pc that is not theirs.
 func TestPlayerCannotWriteAnything(t *testing.T) {
 	s, _, _, _ := newCampaignServer(t)
 	f := buildFixture(t, s)
 	player := addPlayerMember(t, s, f, "mira", true)
+	dm := dmSession(t, s)
 	base := "/api/campaigns/" + f.campaignID
+	otherPC := hit(t, s, http.MethodPost, base+"/entities", `{"kind":"pc","name":"Not Mine"}`, dm)
+	otherPCID := idFrom(t, otherPC, "entity")
 
 	writes := []struct {
 		name   string
@@ -290,7 +295,8 @@ func TestPlayerCannotWriteAnything(t *testing.T) {
 		{"update entity", http.MethodPatch, base + "/entities/" + f.dukeID, `{"summary":"x"}`},
 		{"delete entity", http.MethodDelete, base + "/entities/" + f.dukeID, ""},
 		{"add alias", http.MethodPost, base + "/entities/" + f.dukeID + "/names", `{"name":"Aldric"}`},
-		{"put character sheet", http.MethodPut, base + "/characters/" + f.pcID + "/sheet", `{"ac":20}`},
+		{"put another character's sheet", http.MethodPut, base + "/characters/" + otherPCID + "/sheet", `{"ac":20}`},
+		{"put sheet-edit settings", http.MethodPut, base + "/sheet-edit/settings", `{"mechanics":true}`},
 		{"import character", http.MethodPost, base + "/characters/import", `{"format":"grimoire","data":{"ac":20}}`},
 		{"create fact", http.MethodPost, base + "/facts", `{"subject":"` + f.dukeID + `","predicate":"is","object_literal":"tested","statement":"tested"}`},
 		{"supersede fact", http.MethodPost, base + "/facts/" + f.publicID + "/supersede", `{"subject":"` + f.dukeID + `","predicate":"is","object_literal":"x","statement":"x"}`},

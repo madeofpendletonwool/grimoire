@@ -124,13 +124,25 @@ Under `/api/campaigns/{id}`:
 | Route | Who | What |
 |---|---|---|
 | `GET /characters/{eid}/sheet` | DM, or the player bound to `eid` | The sheet, `structured`, and problems. Unstructured pcs read `"structured": false` and no `sheet` — the marker, never an invention |
-| `PUT /characters/{eid}/sheet` | DM | Replace the sheet. 400 with every problem named on invalid input; 200 with the stored (normalized) sheet |
+| `PUT /characters/{eid}/sheet` | DM, or the player bound to `eid` | The DM replaces the sheet. A bound player's write is a merge: inventory (attunement flags included) and notes land, every other key survives the stored sheet — omission cannot zero an ability, and smuggled fields cannot move mechanics. 400 with every problem named on invalid input; 200 with the stored (normalized) sheet |
 | `POST /characters/import` | DM | Create a pc from an export: `{"format": "auto\|grimoire\|roll20\|fc5", "data": <export>, "name": "…"}` — name only when the export carries none |
+| `PUT /sheet-edit/settings` | DM (owner-shaped) | The player-edit knob: `{"mechanics": true\|false}`. On, a bound player's PUT is a full write like the DM's — the campaign's explicit trust; off (the default), the merge above |
 
 The player read is the one deliberate widening of the portal's surface
 (ADR 15): a character-scoped player sees exactly their own sheet through
 the player view — no other pc, no other payload key, no facts. Entity
-payloads stay dropped at player scope everywhere else.
+payloads stay dropped at player scope everywhere else. The player write
+(MAD-488) mirrors the read's binding exactly: their own character and
+nobody else's, ever. Every sheet write — DM's or player's — stamps its
+provenance under the payload's `sheet_meta` key, surfaced as `last_edit`
+on the DM's read, so "who changed this" is answerable without an audit
+table.
+
+The purse is deliberately not player-writable through the sheet: the
+ledger already lets a seated player spend and regain their own coin
+(MAD-419), and a sheet write that could rewrite `currency` would redefine
+pool sizes from under the transaction log. Rests — live or staged — stay
+DM-actuated because a long rest advances the campaign clock.
 
 ## Import
 

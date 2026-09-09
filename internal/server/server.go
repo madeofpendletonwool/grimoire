@@ -330,11 +330,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/campaigns/{id}/entities/{eid}", s.handleDeleteCampaignEntity)
 	mux.HandleFunc("POST /api/campaigns/{id}/entities/{eid}/names", s.handleAddEntityName)
 	// The typed character sheet (MAD-418): the pc's definition as data.
-	// Reads are the DM's or the owning player's; writes and imports are
-	// DM-only. "import" is a literal, so it wins over {eid} beside it.
+	// Reads are the DM's or the owning player's; the write gate is the
+	// same binding widened by MAD-488 (a player edits their own sheet —
+	// inventory and notes by default, the mechanics behind the campaign's
+	// sheet-edit knob); imports stay DM-only. "import" is a literal, so it
+	// wins over {eid} beside it.
 	mux.HandleFunc("GET /api/campaigns/{id}/characters/{eid}/sheet", s.handleGetCharacterSheet)
 	mux.HandleFunc("PUT /api/campaigns/{id}/characters/{eid}/sheet", s.handlePutCharacterSheet)
 	mux.HandleFunc("POST /api/campaigns/{id}/characters/import", s.handleImportCharacter)
+	mux.HandleFunc("PUT /api/campaigns/{id}/sheet-edit/settings", s.handleSheetEditSettings)
 	// The resource ledger (MAD-419): the sheet's state as an append-only
 	// log. Players read and spend their own; the DM adjusts anyone, and a
 	// rest — the live button or a model's proposal — is a batch transaction

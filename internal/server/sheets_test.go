@@ -332,3 +332,327 @@ func TestSheetProjectionTracksWrites(t *testing.T) {
 		t.Fatalf("projection after sheet write = level:%d structured:%d", lvl2, structured2)
 	}
 }
+
+/* ---------- self-service sheets (MAD-488): the player edits their own ---------- */
+
+// addCampaignMember registers a member through the invite flow with an
+// arbitrary role, optionally bound to a character — the same path
+// addPlayerMember walks, generalized for the gate matrix.
+func addCampaignMember(t *testing.T, s *Server, f fixture, name, role, characterID string) *http.Cookie {
+	t.Helper()
+	dm := dmSession(t, s)
+	inv := hit(t, s, http.MethodPost, "/api/campaigns/"+f.campaignID+"/invites",
+		`{"role":`+quote(role)+`}`, dm)
+	if inv.Code != http.StatusCreated {
+		t.Fatalf("mint invite: status %d, body %s", inv.Code, inv.Body)
+	}
+	code, _ := inviteCodeFrom(t, inv)
+	reg := hit(t, s, http.MethodPost, "/api/auth/register",
+		`{"username":`+quote(name)+`,"password":"a-fine-passphrase","invite":`+quote(code)+`}`)
+	if reg.Code != http.StatusCreated {
+		t.Fatalf("register member: status %d, body %s", reg.Code, reg.Body)
+	}
+	cookie := sessionFrom(t, reg)
+	if characterID != "" {
+		id, err := s.users.LookupUseridByName(t.Context(), name)
+		if err != nil {
+			t.Fatalf("lookup member id: %v", err)
+		}
+		body := `{"character_id":` + quote(characterID) + `}`
+		if r := hit(t, s, http.MethodPatch, "/api/campaigns/"+f.campaignID+"/members/"+id, body, dm); r.Code != http.StatusOK {
+			t.Fatalf("bind character: status %d, body %s", r.Code, r.Body)
+		}
+	}
+	return cookie
+}
+
+// A bound player's write is a merge: their inventory and notes land on the
+// stored sheet, and nothing else moves — not by omission, not by smuggling
+// mechanical fields into the body. The edit is visible in the read both
+// sides see, and the DM's read carries who made it.
+func TestPlayerEditsOwnSheetsInventoryAndNotes(t *testing.T) {
+	s, _, _, _ := newCampaignServer(t)
+	f := buildFixture(t, s)
+	dm := dmSession(t, s)
+	base := "/api/campaigns/" + f.campaignID + "/characters/" + f.pcID + "/sheet"
+
+	dmSheet := `{
+		"abilities": {"int": 16},
+		"classes": [{"class": "wizard", "level": 5}],
+		"ac": 13, "max_hp": 32,
+		"inventory": [{"name": "potion of healing", "qty": 3}],
+		"currency": {"gp": 55},
+		"notes": "the shield of the party"
+	}`
+	if rec := hit(t, s, http.MethodPut, base, dmSheet, dm); rec.Code != http.StatusOK {
+		t.Fatalf("dm put sheet: %d %s", rec.Code, rec.Body)
+	}
+
+	player := addPlayerMember(t, s, f, "mira", true)
+	// Mira edits her pack and her notes — and tries abilities, classes,
+	// armor class, hit points and the purse alongside them.
+	sneak := `{
+		"abilities": {"int": 20},
+		"classes": [{"class": "fighter", "level": 9}],
+		"ac": 20, "max_hp": 80,
+		"inventory": [
+			{"name": "rope", "qty": 1},
+			{"name": "flame tongue warhammer", "qty": 1, "equipped": true, "attuned": true}
+		],
+		"currency": {"gp": 999},
+		"notes": "my notes now"
+	}`
+	rec := hit(t, s, http.MethodPut, base, sneak, player)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("player put sheet: %d %s", rec.Code, rec.Body)
+	}
+
+	merged := struct {
+		Sheet struct {
+			Abilities struct {
+				INT int `json:"int"`
+			} `json:"abilities"`
+			Classes []struct {
+				Class string `json:"class"`
+				Level int    `json:"level"`
+			} `json:"classes"`
+			AC        int `json:"ac"`
+			MaxHP     int `json:"max_hp"`
+			Inventory []struct {
+				Name    string `json:"name"`
+				Attuned bool   `json:"attuned"`
+			} `json:"inventory"`
+			Currency struct {
+				GP int `json:"gp"`
+			} `json:"currency"`
+			Notes string `json:"notes"`
+		} `json:"sheet"`
+		LastEdit *struct {
+			By   string `json:"by"`
+			Name string `json:"name"`
+			Role string `json:"role"`
+			At   string `json:"at"`
+		} `json:"last_edit"`
+	}{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &merged); err != nil {
+		t.Fatal(err)
+	}
+	if merged.Sheet.Abilities.INT != 16 {
+		t.Errorf("abilities moved: %+v", merged.Sheet.Abilities)
+	}
+	if len(merged.Sheet.Classes) != 1 || merged.Sheet.Classes[0].Class != "wizard" || merged.Sheet.Classes[0].Level != 5 {
+		t.Errorf("classes moved: %+v", merged.Sheet.Classes)
+	}
+	if merged.Sheet.AC != 13 || merged.Sheet.MaxHP != 32 {
+		t.Errorf("ac/max_hp moved: %d/%d", merged.Sheet.AC, merged.Sheet.MaxHP)
+	}
+	if merged.Sheet.Currency.GP != 55 {
+		t.Errorf("the purse moved: %+v", merged.Sheet.Currency)
+	}
+	if len(merged.Sheet.Inventory) != 2 || merged.Sheet.Inventory[1].Name != "flame tongue warhammer" || !merged.Sheet.Inventory[1].Attuned {
+		t.Errorf("inventory did not land: %+v", merged.Sheet.Inventory)
+	}
+	if merged.Sheet.Notes != "my notes now" {
+		t.Errorf("notes did not land: %q", merged.Sheet.Notes)
+	}
+	if merged.LastEdit == nil || merged.LastEdit.Name != "mira" || merged.LastEdit.Role != "player" || merged.LastEdit.At == "" {
+		t.Errorf("last edit provenance = %+v", merged.LastEdit)
+	}
+
+	// The DM reads the same merged sheet and the same provenance.
+	get := hit(t, s, http.MethodGet, base, "", dm)
+	if get.Code != http.StatusOK {
+		t.Fatalf("dm get: %d %s", get.Code, get.Body)
+	}
+	if !strings.Contains(get.Body.String(), `"rope"`) || !strings.Contains(get.Body.String(), `"my notes now"`) {
+		t.Fatalf("the dm read does not show the player's edit: %s", get.Body)
+	}
+	if !strings.Contains(get.Body.String(), `"role":"player"`) || !strings.Contains(get.Body.String(), `"name":"mira"`) {
+		t.Fatalf("the dm read does not say who edited: %s", get.Body)
+	}
+	if !strings.Contains(get.Body.String(), `"int":16`) || strings.Contains(get.Body.String(), `"int":20`) {
+		t.Fatalf("the dm read shows moved mechanics: %s", get.Body)
+	}
+
+	// The player's own read shows the edit — the same sheet both sides
+	// see — and carries no provenance block.
+	own := hit(t, s, http.MethodGet, base, "", player)
+	if own.Code != http.StatusOK {
+		t.Fatalf("player get: %d %s", own.Code, own.Body)
+	}
+	if !strings.Contains(own.Body.String(), `"rope"`) || !strings.Contains(own.Body.String(), `"int":16`) {
+		t.Fatalf("the player read does not show the merged sheet: %s", own.Body)
+	}
+	if strings.Contains(own.Body.String(), "last_edit") {
+		t.Fatalf("the player read carries provenance: %s", own.Body)
+	}
+}
+
+// The widened gate's full matrix: the bound player writes their own; any
+// other character, any observer, any unbound member is 403; the DM
+// path is unchanged.
+func TestPlayerSheetWriteGate(t *testing.T) {
+	s, _, _, _ := newCampaignServer(t)
+	f := buildFixture(t, s)
+	dm := dmSession(t, s)
+	base := "/api/campaigns/" + f.campaignID
+
+	if rec := hit(t, s, http.MethodPut, base+"/characters/"+f.pcID+"/sheet",
+		`{"abilities":{"int":16},"notes":"dm's copy"}`, dm); rec.Code != http.StatusOK {
+		t.Fatalf("dm put sheet: %d %s", rec.Code, rec.Body)
+	}
+	other := hit(t, s, http.MethodPost, base+"/entities", `{"kind":"pc","name":"Someone Else"}`, dm)
+	otherID := idFrom(t, other, "entity")
+
+	bound := addPlayerMember(t, s, f, "mira", true)
+	rival := addCampaignMember(t, s, f, "rival", "player", otherID)
+	observer := addCampaignMember(t, s, f, "watcher", "observer", "")
+	unbound := addPlayerMember(t, s, f, "wanderer", false)
+
+	if rec := hit(t, s, http.MethodPut, base+"/characters/"+f.pcID+"/sheet", `{"notes":"mine now"}`, bound); rec.Code != http.StatusOK {
+		t.Fatalf("bound player's own sheet: status %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if rec := hit(t, s, http.MethodPut, base+"/characters/"+f.pcID+"/sheet", `{"notes":"stolen"}`, rival); rec.Code != http.StatusForbidden {
+		t.Fatalf("another player's sheet: status %d, want 403", rec.Code)
+	}
+	if rec := hit(t, s, http.MethodPut, base+"/characters/"+f.pcID+"/sheet", `{"notes":"watching"}`, observer); rec.Code != http.StatusForbidden {
+		t.Fatalf("observer's sheet write: status %d, want 403", rec.Code)
+	}
+	if rec := hit(t, s, http.MethodPut, base+"/characters/"+f.pcID+"/sheet", `{"notes":"unbound"}`, unbound); rec.Code != http.StatusForbidden {
+		t.Fatalf("unbound member's sheet write: status %d, want 403", rec.Code)
+	}
+	// Nothing above moved the stored sheet but the bound player.
+	get := hit(t, s, http.MethodGet, base+"/characters/"+f.pcID+"/sheet", "", dm)
+	if !strings.Contains(get.Body.String(), "mine now") || strings.Contains(get.Body.String(), "stolen") {
+		t.Fatalf("stored sheet after the gate: %s", get.Body)
+	}
+	// The DM path is unchanged, and its write is provenance-stamped.
+	rec := hit(t, s, http.MethodPut, base+"/characters/"+f.pcID+"/sheet", `{"notes":"dm again"}`, dm)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dm put after widening: status %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), `"role":"dm"`) {
+		t.Fatalf("dm write provenance missing: %s", rec.Body)
+	}
+}
+
+// The opt-in: with settings.sheet_edit.mechanics on, a bound player's PUT
+// is a full write — the DM's explicit trust. The knob itself is
+// owner-shaped; a player cannot flip it.
+func TestPlayerSheetMechanicsOptIn(t *testing.T) {
+	s, _, _, _ := newCampaignServer(t)
+	f := buildFixture(t, s)
+	dm := dmSession(t, s)
+	base := "/api/campaigns/" + f.campaignID
+	sheetURL := base + "/characters/" + f.pcID + "/sheet"
+
+	if rec := hit(t, s, http.MethodPut, sheetURL,
+		`{"abilities":{"int":16},"classes":[{"class":"wizard","level":5}]}`, dm); rec.Code != http.StatusOK {
+		t.Fatalf("dm put sheet: %d %s", rec.Code, rec.Body)
+	}
+	player := addPlayerMember(t, s, f, "mira", true)
+
+	if rec := hit(t, s, http.MethodPut, base+"/sheet-edit/settings", `{"mechanics":true}`, player); rec.Code != http.StatusForbidden {
+		t.Fatalf("player sets the knob: status %d, want 403", rec.Code)
+	}
+	knob := hit(t, s, http.MethodPut, base+"/sheet-edit/settings", `{"mechanics":true}`, dm)
+	if knob.Code != http.StatusOK {
+		t.Fatalf("owner sets the knob: status %d, body %s", knob.Code, knob.Body)
+	}
+	if !strings.Contains(knob.Body.String(), `"mechanics":true`) {
+		t.Fatalf("knob response: %s", knob.Body)
+	}
+
+	full := `{"abilities":{"int":20},"classes":[{"class":"fighter","level":2}],"notes":"rebuilt myself"}`
+	if rec := hit(t, s, http.MethodPut, sheetURL, full, player); rec.Code != http.StatusOK {
+		t.Fatalf("player put with opt-in: %d %s", rec.Code, rec.Body)
+	}
+	get := hit(t, s, http.MethodGet, sheetURL, "", dm)
+	if get.Code != http.StatusOK {
+		t.Fatalf("dm get: %d %s", get.Code, get.Body)
+	}
+	if !strings.Contains(get.Body.String(), `"int":20`) || !strings.Contains(get.Body.String(), "fighter") {
+		t.Fatalf("the opt-in did not widen the write: %s", get.Body)
+	}
+	if !strings.Contains(get.Body.String(), `"role":"player"`) {
+		t.Fatalf("player write provenance missing: %s", get.Body)
+	}
+}
+
+// The merge validates like any write: a player's inventory that breaks a
+// rule (over-attunement against the sheet's limit) is refused with the
+// problem named, and the stored sheet is untouched.
+func TestPlayerSheetEditValidatesMergedSheet(t *testing.T) {
+	s, _, _, _ := newCampaignServer(t)
+	f := buildFixture(t, s)
+	dm := dmSession(t, s)
+	base := "/api/campaigns/" + f.campaignID + "/characters/" + f.pcID + "/sheet"
+
+	if rec := hit(t, s, http.MethodPut, base,
+		`{"inventory":[{"name":"ring of mind shielding","attuned":true}]}`, dm); rec.Code != http.StatusOK {
+		t.Fatalf("dm put sheet: %d %s", rec.Code, rec.Body)
+	}
+	player := addPlayerMember(t, s, f, "mira", true)
+
+	over := `{"inventory":[
+		{"name":"ring of mind shielding","attuned":true},
+		{"name":"ring of protection","attuned":true},
+		{"name":"ring of invisibility","attuned":true},
+		{"name":"ring of flying","attuned":true}
+	]}`
+	rec := hit(t, s, http.MethodPut, base, over, player)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("over-attunement: status %d, want 400 (%s)", rec.Code, rec.Body)
+	}
+	var res struct {
+		Problems []struct {
+			Field  string `json:"field"`
+			Detail string `json:"detail"`
+		} `json:"problems"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range res.Problems {
+		if p.Field == "inventory" && strings.Contains(p.Detail, "attuned") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no attunement problem named: %+v", res.Problems)
+	}
+
+	// The rejected merge stored nothing.
+	get := hit(t, s, http.MethodGet, base, "", dm)
+	if strings.Contains(get.Body.String(), "ring of flying") {
+		t.Fatalf("a rejected player edit was stored: %s", get.Body)
+	}
+	if !strings.Contains(get.Body.String(), "ring of mind shielding") {
+		t.Fatalf("the stored sheet lost the dm's inventory: %s", get.Body)
+	}
+}
+
+// A player edit on a pc with no stored sheet materializes a partial sheet
+// — the same tolerance every sheet write has; the unstructured base is not
+// a lock the DM forgot to click.
+func TestPlayerEditOnUnstructuredSheetMaterializesPartial(t *testing.T) {
+	s, _, _, _ := newCampaignServer(t)
+	f := buildFixture(t, s)
+	dm := dmSession(t, s)
+	base := "/api/campaigns/" + f.campaignID + "/characters/" + f.pcID + "/sheet"
+
+	player := addPlayerMember(t, s, f, "mira", true)
+	rec := hit(t, s, http.MethodPut, base,
+		`{"inventory":[{"name":"torch","qty":10}],"notes":"found a torch"}`, player)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("player put on unstructured base: %d %s", rec.Code, rec.Body)
+	}
+	get := hit(t, s, http.MethodGet, base, "", dm)
+	if !strings.Contains(get.Body.String(), `"structured":true`) {
+		t.Fatalf("the edit did not materialize a sheet: %s", get.Body)
+	}
+	if !strings.Contains(get.Body.String(), "torch") || strings.Contains(get.Body.String(), `"abilities"`) {
+		t.Fatalf("the materialized sheet is not the partial merge: %s", get.Body)
+	}
+}
