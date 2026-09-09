@@ -989,6 +989,46 @@ export const api = {
 	campaignQuestJournal: (cid) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/journal`).then(json),
 
+	// Handouts and maps (MAD-490): the DM authors at party scope. Every
+	// member reads the published material; the writes and the lifecycle
+	// are the DM's — the server enforces both, the seat only shapes the
+	// surface.
+	handoutList: (cid, params) => {
+		const q = new URLSearchParams(params || {}).toString();
+		return fetch(`/api/campaigns/${encodeURIComponent(cid)}/handouts${q ? "?" + q : ""}`).then(json);
+	},
+
+	handoutCreate: (cid, handout) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/handouts`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(handout),
+		}).then(json),
+
+	handoutUpdate: (cid, hid, patch) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/handouts/${encodeURIComponent(hid)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(patch),
+		}).then(json),
+
+	handoutDelete: (cid, hid) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/handouts/${encodeURIComponent(hid)}`, { method: "DELETE" }).then(json),
+
+	handoutStatus: (cid, hid, action) =>
+		fetch(`/api/campaigns/${encodeURIComponent(cid)}/handouts/${encodeURIComponent(hid)}/${action}`, {
+			method: "POST",
+		}).then(json),
+
+	handoutImage: (cid, hid, file) => {
+		const body = new FormData();
+		body.set("file", file);
+		return fetch(`/api/campaigns/${encodeURIComponent(cid)}/handouts/${encodeURIComponent(hid)}/image`, {
+			method: "PUT",
+			body,
+		}).then(json);
+	},
+
 	campaignQuestTransition: (cid, questID, to) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/quests/${encodeURIComponent(questID)}/transition`, {
 			method: "POST",

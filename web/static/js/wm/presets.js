@@ -37,7 +37,7 @@ const DM = {
 			T.split("row", [
 				leaf("screen"),
 				leaf("combat"),
-				tabbed(leaf("board"), leaf("dice"), leaf("director"), leaf("sessions"), leaf("encounter")),
+				tabbed(leaf("board"), leaf("dice"), leaf("director"), leaf("sessions"), leaf("encounter"), leaf("handouts")),
 			], [0.24, 0.42, 0.34]) },
 		{ slot: 3, name: "Canon", build: () => row(leaf("review"), leaf("sessions")) },
 		{ slot: 4, name: "Study", build: () => row(leaf("reader"), leaf("study")) },
@@ -53,18 +53,20 @@ const DM = {
 /**
  * The player seat (ADR 22): the table, the world, the books. The board is
  * the party, live; the dice window's quick rolls bind the player's own
- * character server-side; the Campaign tool carries the known world at the
- * player's scope — met entities and place dossiers, the quest journal, and
- * their own sheet. The Grimoire answers as what the party has learned.
- * Observers get the same seat: nothing character-shaped reaches one, and
- * the tools degrade themselves — no sheet, no quick-roll chips.
+ * character server-side; the handouts tab is what the DM has handed the
+ * party — letters and maps, published material only. The Campaign tool
+ * carries the known world at the player's scope — met entities and place
+ * dossiers, the quest journal, and their own sheet. The Grimoire answers
+ * as what the party has learned. Observers get the same seat: nothing
+ * character-shaped reaches one, and the tools degrade themselves — no
+ * sheet, no quick-roll chips.
  */
 const PLAYER = {
 	dnd: [
 		{ slot: 1, name: "The table", build: () =>
 			T.split("row", [
 				leaf("board"),
-				tabbed(leaf("dice"), leaf("cchat")),
+				tabbed(leaf("dice"), leaf("handouts"), leaf("cchat")),
 			], [0.56, 0.44]) },
 		{ slot: 2, name: "The world", build: () => row(leaf("campaign"), leaf("cchat")) },
 		{ slot: 3, name: "Study", build: () => row(leaf("reader"), leaf("study")) },

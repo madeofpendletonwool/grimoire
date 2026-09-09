@@ -125,3 +125,69 @@ func TestPlayerViewBindsOnlyPlayerScopes(t *testing.T) {
 		t.Fatalf("character player view: %v", err)
 	}
 }
+
+// A draft handout is invisible to a player by construction (MAD-490):
+// the view's own query refuses every status but published, so neither the
+// list nor the single read can carry it — the handler has no good
+// behaviour to forget. Retiring takes a published handout back off the
+// party's list the same way.
+func TestPlayerViewHandoutsCannotSeeDrafts(t *testing.T) {
+	s, fx, _ := seeded(t)
+	ctx := context.Background()
+	cid := fx.Campaign.ID
+
+	draft, err := s.CreateHandout(ctx, cid, HandoutInput{
+		Kind: campaign.HandoutKindHandout, Title: "The unfinished letter",
+		Body: "Do not show the party this yet.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := s.CreateHandout(ctx, cid, HandoutInput{
+		Kind: campaign.HandoutKindHandout, Title: "The charter", Body: "Be it known…",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetHandoutStatus(ctx, cid, published.ID, campaign.HandoutStatusPublished); err != nil {
+		t.Fatal(err)
+	}
+
+	pv, err := s.PlayerViewOf(ScopeParty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := pv.Handouts(ctx, cid)
+	if err != nil {
+		t.Fatalf("player handouts: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != published.ID {
+		t.Fatalf("player handout list = %+v; want the published charter alone", list)
+	}
+	if _, err := pv.Handout(ctx, cid, draft.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("draft by id through the view must be missing: %v", err)
+	}
+	got, err := pv.Handout(ctx, cid, published.ID)
+	if err != nil || got.Title != "The charter" {
+		t.Fatalf("published by id through the view: %v %+v", err, got)
+	}
+
+	// Retire: off the party's list, kept for the DM's history.
+	if _, err := s.SetHandoutStatus(ctx, cid, published.ID, campaign.HandoutStatusRetired); err != nil {
+		t.Fatal(err)
+	}
+	after, err := pv.Handouts(ctx, cid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 {
+		t.Fatalf("retired handout still on the player list: %+v", after)
+	}
+	dmList, err := s.Handouts(ctx, ScopeDM, cid, HandoutFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dmList) != 2 {
+		t.Fatalf("the dm keeps the history: %d rows, want 2", len(dmList))
+	}
+}

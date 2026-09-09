@@ -1089,6 +1089,57 @@
 				</div>
 			</div>
 		</section>
+		<section class="handouts" id="handouts-view" hidden aria-label="Handouts">
+			<header class="study-head">
+				<h2 class="study-title" id="handouts-title">Handouts</h2>
+				<div class="camp-picker">
+					<select id="handouts-campaign" aria-label="Campaign"><option value="">No campaigns yet…</option></select>
+				</div>
+				<p class="study-meta" id="handouts-meta"></p>
+			</header>
+
+			<div class="handouts-body" id="handouts-body" hidden>
+				<div class="handouts-cards" id="handouts-cards" aria-live="polite"></div>
+				<!-- The DM's desk: a draft a session ahead of the party. The
+				     image lands beside the database and joins the row on
+				     upload; publishing is a separate, deliberate act. -->
+				<form class="handout-compose camp-panel" id="handout-compose" hidden autocomplete="off">
+					<h3 class="enc-heading">Draft a handout</h3>
+					<div class="handout-compose-row">
+						<label class="handout-slot">
+							<span>kind</span>
+							<select id="handout-kind-input" aria-label="The handout's kind">
+								<option value="handout">letter / note</option>
+								<option value="map">map</option>
+							</select>
+						</label>
+						<label class="handout-slot grow">
+							<span>title</span>
+							<input id="handout-title-input" class="sess-source-input" maxlength="160"
+								placeholder="The steward's letter" aria-label="The title">
+						</label>
+					</div>
+					<textarea id="handout-body-input" class="sess-field handout-compose-body" rows="4"
+						placeholder="What the party reads — markdown" aria-label="The body, in markdown"></textarea>
+					<div class="handout-compose-row">
+						<label class="handout-attach">
+							<input type="file" id="handout-file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+							<span class="enc-btn handout-file-btn" role="button" tabindex="0">attach image</span>
+							<span class="handout-file-name" id="handout-file-name"></span>
+						</label>
+						<button type="submit" class="enc-btn">Draft it</button>
+						<span class="board-set-note" id="handout-note"></span>
+					</div>
+				</form>
+			</div>
+
+			<div class="camp-empty" id="handouts-empty" hidden>
+				<div class="camp-panel">
+					<h3 class="enc-heading">No campaign yet</h3>
+					<p class="camp-status">Handouts belong to a table. Found a campaign first, or take a seat with an invite.</p>
+				</div>
+			</div>
+		</section>
 		<section class="screen" id="screen-view" hidden aria-label="DM screen">
 			<header class="study-head">
 				<h2 class="study-title" id="scr-title">Screen</h2>

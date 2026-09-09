@@ -98,6 +98,12 @@ export const TOOLS = Object.freeze({
 		blurb: "The party, live — hp, conditions, who's at the table",
 		load: () => import("../board.js"),
 	},
+	handouts: {
+		title: "Handouts", icon: "letter", corpus: "dnd", accel: "h",
+		instances: "single", min: [440, 380],
+		blurb: "What the DM hands the party — letters and maps",
+		load: () => import("../handouts.js"),
+	},
 	review: {
 		title: "Review", icon: "shield", corpus: "dnd", role: SEAT_DM, accel: "v",
 		instances: "single", min: [460, 360],
