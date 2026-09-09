@@ -1093,3 +1093,87 @@ player's numbers, not unprinted.
 | A stats summary table written on every mechanical commit | The write path grows a second truth to keep consistent; the ledger's own history (ADR 16) is the argument against |
 | Aggregates computed in SQL only | The fold's rules (luck thresholds, ratio rounding, tie-breaks) belong in tested pure code, not in query strings |
 | Attributing damage by matching the preceding attack roll | Guesswork over provenance; one optional `source_id` on the damage write says it exactly |
+
+---
+
+## ADR 22 — The player seat: the shell learns its shape from campaign standing
+
+**Status:** accepted · **Date:** 2026-09-08 · **Issue:** MAD-493 (stage 1 of MAD-319)
+
+### Context
+
+Membership (ADR 4) and invites (MAD-305) mint member rows; every
+player-facing read already arrives scoped through `knowledge.PlayerView`,
+and the server refuses every DM write a member attempts. But the shell
+ignored all of it: the tool registry filtered by corpus only, so a player
+saw Combat, Review, Planner, Encounter, Director and Screen in their rail —
+a DM cockpit wearing a player costume, every button a 403 waiting to
+happen — and every `PRESETS.dnd` slot was DM-shaped, seeding a player's
+first boot with Planner and the canon queue.
+
+### Decision
+
+**The registry gains a role annotation; the shell gains a seat.** Tools
+that belong to the DM's seat carry `role: "dm"` in `wm/registry.js` — the
+six named above, and nothing else. Sessions stays member-available: its
+reads are scoped (DM-only source kinds are filtered in SQL, ADR 2) and
+its writes are server-gated, so the tool works at a member's scope. The
+seat itself is resolved once at boot (`js/seat.js`) from two payloads
+the shell already fetches: `/api/auth/state` (the keeper flag — the
+keeper may always look, so they keep the DM shell) and `/api/campaigns`
+(each row carries `my_role`). A DM standing anywhere keeps the DM shell —
+the DM tools' own campaign pickers already narrow to the campaigns the
+caller runs. An account with no campaigns keeps it too: the create and
+join forms are the DM's front door. Only a member of campaigns who never
+resolves to the DM perspective lands in the player seat. A failed read is
+no verdict; the seat stays DM.
+
+**The seat shapes what is offered, never what is stored.** The rail, the
+command menu, the cheat sheet, the which-key hints and the keyboard
+commands all filter through `toolsFor(corpus, seat)`; `cmd.open` refuses
+a role-gated tool at the player seat, so the chord is absent, not merely
+failing. `knownTool` is untouched: a saved layout naming Combat still
+mounts for a player (the MAD-487 rule — presets only seed, saved layouts
+keep working), and the tool degrades itself, its picker listing no
+campaigns the caller runs.
+
+**The player seat seeds player shapes.** The preset table
+(`wm/presets.js`, split out of workspaces.js so its invariants are
+testable) gains a `player` set: *The table* (the board, with dice and
+the Player Grimoire tabbed beside), *The world* (the Campaign tool —
+met entities and place dossiers at the caller's scope, the quest
+journal, their own character's sheet — beside the Grimoire), *Study*.
+Seeding follows the same rule it always did: only slots the account has
+never saved. Magic keeps the DM shapes — campaigns are a D&D surface.
+
+**The observer experience is the player seat, by design.** An observer
+watches: the board, the journal, the party-scope Grimoire chat. They
+carry no character binding, so nothing character-shaped reaches them —
+the server refuses any bound character's sheet, chat pins to the party
+scope, and the dice window's quick-roll chips simply do not load. They
+may still roll public, as the table. That is a seat deliberately without
+a self, not an afterthought.
+
+### Consequences
+
+- No new server route, and no new payload on any player surface — the
+  seat is a client shape over reads that were already scoped and already
+  leak-tested. `handleListCampaigns` carrying `my_role` is the one input,
+  and the invite-flow test already pins it.
+- The seat is resolved at boot and fixed for the session; a membership
+  granted mid-session reaches the shell on the next sign-in. Saved
+  layouts cross seats untouched, the way they cross corpora.
+- A role-gated tool reachable only through a saved layout keeps its
+  honest degradation: an empty campaign picker, writes the server
+  refuses — the same answer a DM of another campaign gets.
+- Adding a tool stays one registry entry; a DM-only one adds
+  `role: "dm"` and every surface that offers it narrows at once.
+
+### Alternatives rejected
+
+| Option | Why not |
+|---|---|
+| Filter the shell server-side (per-user HTML) | The registry is client data by design — one entry drives rail, menu, sheet, keyboard and presets; a server-rendered variant would fork that table for no gain |
+| A seat per selected campaign (switching campaigns swaps the rail) | The shell has no selected campaign; each tool picks its own. A DM-anywhere rule keeps one cockpit, and the DM tools already narrow their own pickers |
+| Hide Sessions from members | Its reads are scoped and its writes server-gated; reliving the session list and public sources is a member feature, not a DM secret |
+| A separate player app | Every player surface is already the DM's surface at a narrower scope; two apps would duplicate the board, dice, journal and chat to differ in the rail |
