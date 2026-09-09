@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
-	TOOLS, TOOL_IDS, ANY_CORPUS, isTool, toolDef, inCorpus, toolsFor, knownTool,
+	TOOLS, TOOL_IDS, ANY_CORPUS, isTool, toolDef, inCorpus, inSeat, toolsFor, knownTool,
+	SEAT_DM, SEAT_PLAYER,
 } from "../../web/static/js/wm/registry.js";
 
 const entries = () => TOOL_IDS.map((id) => [id, TOOLS[id]]);
@@ -94,6 +95,55 @@ test("toolsFor preserves registry order, so the rail is stable", () => {
 
 test("an unknown corpus offers nothing rather than everything", () => {
 	assert.deepEqual(toolsFor("pokemon"), []);
+});
+
+// The seat is the second axis of the same filter (ADR 22): the rail, the
+// command menu and the cheat sheet all read it, so the DM-only set has to
+// stay a list someone meant, not one that drifted.
+test("role-gated tools are exactly the DM cockpit", () => {
+	const dmOnly = TOOL_IDS.filter((id) => TOOLS[id].role === "dm");
+	assert.deepEqual([...dmOnly].sort(), ["combat", "director", "encounter", "planner", "review", "screen"]);
+	for (const id of dmOnly) {
+		assert.equal(TOOLS[id].role, SEAT_DM, `${id}: unknown role annotation`);
+	}
+});
+
+test("the player seat offers the member tools, not a failing cockpit", () => {
+	const dm = toolsFor("dnd", SEAT_DM);
+	const player = toolsFor("dnd", SEAT_PLAYER);
+
+	for (const id of ["campaign", "cchat", "dice", "board", "sessions", "chat", "study", "reader"]) {
+		assert.ok(player.includes(id), `${id} should serve a member`);
+	}
+	for (const id of ["combat", "director", "encounter", "planner", "review", "screen"]) {
+		assert.ok(!player.includes(id), `${id} is DM-only and must be absent, not failing`);
+		assert.ok(dm.includes(id), `${id} should serve the DM`);
+	}
+});
+
+test("the DM seat is what a seat-less caller gets, so old callers keep their rail", () => {
+	assert.deepEqual(toolsFor("dnd"), toolsFor("dnd", SEAT_DM));
+});
+
+test("the seat narrows D&D only — Magic has no role-gated tools", () => {
+	assert.deepEqual(toolsFor("mtg", SEAT_PLAYER), toolsFor("mtg", SEAT_DM));
+});
+
+// Saved layouts and stored ids still name every tool (the MAD-487 rule): the
+// seat decides what the shell offers, never what a layout may contain.
+test("the seat does not unknow any tool", () => {
+	for (const id of TOOL_IDS) {
+		assert.equal(knownTool(id), true, `${id} must stay a known tool at every seat`);
+		assert.equal(isTool(id), true);
+	}
+	assert.equal(knownTool("combat"), true);
+});
+
+test("inSeat tolerates ids that arrive from stored data", () => {
+	for (const junk of ["", "nope", "__proto__", "constructor"]) {
+		assert.equal(inSeat(junk, SEAT_DM), false, `inSeat(${JSON.stringify(junk)})`);
+		assert.equal(inSeat(junk, SEAT_PLAYER), false);
+	}
 });
 
 test("lookups tolerate ids that arrive from stored data", () => {

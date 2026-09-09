@@ -12,7 +12,7 @@
 
 import { $, el, clear } from "../dom.js";
 import { sprite } from "../icons.js";
-import { TOOLS, toolsFor } from "./registry.js";
+import { TOOLS, toolsFor, SEAT_DM } from "./registry.js";
 
 let open = null;   // { layer, input, list, items, index, onClose }
 
@@ -160,9 +160,10 @@ function choose(i) {
 
 /* ---------- the lists ---------- */
 
-/** Every tool this game ships, as menu items. Registry-driven, like the rail. */
-export function toolItems(corpus, run) {
-	return toolsFor(corpus).map((id) => ({
+/** Every tool this game offers this seat, as menu items. Registry-driven,
+    like the rail. */
+export function toolItems(corpus, seat = SEAT_DM, run) {
+	return toolsFor(corpus, seat).map((id) => ({
 		label: TOOLS[id].title,
 		hint: TOOLS[id].blurb || "",
 		icon: TOOLS[id].icon,

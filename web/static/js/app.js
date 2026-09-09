@@ -23,7 +23,8 @@ import { initScene, initSettings } from "./scene.js";
 import { initDice } from "./dice.js";
 import { initBoard } from "./board.js";
 
-import { TOOLS, toolsFor } from "./wm/registry.js";
+import { TOOLS, toolsFor, inSeat } from "./wm/registry.js";
+import { loadSeat, seatRole } from "./seat.js";
 import * as wm from "./wm/wm.js";
 import { initWM, openTool } from "./wm/wm.js";
 import { initDrag } from "./wm/drag.js";
@@ -34,13 +35,15 @@ import * as ws from "./wm/workspaces.js";
 /* ---------- the rail ---------- */
 
 /**
- * Build the tool list for one game. This replaced nine hardcoded buttons in
- * index.html and the html[data-corpus] display:none block in style.css — two
- * hand-maintained lists that both had to be edited for every new tool.
+ * Build the tool list for one game at one seat. This replaced nine hardcoded
+ * buttons in index.html and the html[data-corpus] display:none block in
+ * style.css — two hand-maintained lists that both had to be edited for every
+ * new tool. The seat (ADR 22) is the second dimension: a member-only account
+ * is offered the member tools, not a DM cockpit with failing buttons.
  */
 function renderTools(corpus) {
 	const nav = clear($("rail-tools"));
-	for (const id of toolsFor(corpus)) {
+	for (const id of toolsFor(corpus, seatRole())) {
 		const def = TOOLS[id];
 		nav.append(el("button", {
 			class: "rail-action",
@@ -117,7 +120,7 @@ async function pickCorpus(corpus) {
 	await ws.switchCorpus(corpus);
 	renderTools(corpus);
 	renderWorkspaces();
-	refreshSheet(corpus);
+	refreshSheet(corpus, seatRole());
 }
 
 function initRail() {
@@ -155,7 +158,7 @@ function initRail() {
 function pickTool(title, run) {
 	openMenu({
 		title,
-		items: toolItems(state.corpus, run),
+		items: toolItems(state.corpus, seatRole(), run),
 		onClose: popModal,
 	});
 	pushModal();
@@ -164,7 +167,7 @@ function pickTool(title, run) {
 /** Everything the shell can do, in one list. */
 function openCommandMenu(cmd) {
 	const items = [
-		...toolItems(state.corpus, (id) => openTool(id)).map((it) => ({ ...it, hint: "Open" })),
+		...toolItems(state.corpus, seatRole(), (id) => openTool(id)).map((it) => ({ ...it, hint: "Open" })),
 		{ label: "Split right", hint: "Window", run: cmd.splitRight },
 		{ label: "Split down", hint: "Window", run: cmd.splitDown },
 		{ label: "Tab / untab", hint: "Window", run: cmd.toggleTabs },
@@ -199,7 +202,13 @@ function commands() {
 			closePalette();
 		},
 
-		open: (id) => openTool(id),
+		// The shell only opens what it offers (ADR 22): a role-gated tool is
+		// absent from a member's keyboard, not merely failing. Saved layouts
+		// mount directly through the window manager and are untouched.
+		open: (id) => {
+			if (!inSeat(id, seatRole())) return null;
+			return openTool(id);
+		},
 		close: () => wm.closeWindow(),
 		closeAll: () => wm.closeAll(),
 		zoom: () => wm.toggleZoom(),
@@ -299,7 +308,12 @@ async function start() {
 	safe("scene", initScene);
 	safe("settings", initSettings);
 	safe("corpus-preference", loadCorpusPreference);
-	await loadPrefs();
+
+	// The seat runs alongside the prefs fetch: both must land before the
+	// keyboard and the workspace layer shape themselves, and neither waits
+	// on the other.
+	const prefs = loadPrefs();
+	const seat = loadSeat();
 
 	safe("rail", initRail);
 	safe("drawer", initDrawer);
@@ -308,14 +322,17 @@ async function start() {
 	safe("voice", initVoice);
 	safe("sheet", initSheet);
 
+	await prefs;
+	await seat;
+
 	// The window manager, then the layouts it renders.
 	safe("wm", () => initWM(state.corpus));
 	safe("drag", initDrag);
-	safe("keys", () => initKeys(commands(), { corpus: state.corpus }));
+	safe("keys", () => initKeys(commands(), { corpus: state.corpus, seat: seatRole() }));
 	wm.onChange(markOpenTools);
 
 	try {
-		await ws.initWorkspaces(state.corpus, renderWorkspaces);
+		await ws.initWorkspaces(state.corpus, seatRole(), renderWorkspaces);
 	} catch (err) {
 		console.error("workspaces failed to load:", err);
 		safe("fallback-chat", () => openTool("chat"));

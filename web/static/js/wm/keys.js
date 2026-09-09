@@ -10,7 +10,7 @@
 
 import { $, el, clear } from "../dom.js";
 import { createKeymap, describe, normalize, parseSpec, LAYERS } from "./keymap.js";
-import { TOOLS, TOOL_IDS, toolsFor } from "./registry.js";
+import { TOOLS, TOOL_IDS, toolsFor, SEAT_DM } from "./registry.js";
 
 const LEADER = "mod+g";
 const HINT_DELAY = 400;   // ms before the leader shows its menu
@@ -22,6 +22,7 @@ const state = {
 	modalDepth: 0,        // how many floating dialogs are stacked
 	mac: false,
 	corpus: "mtg",
+	seat: SEAT_DM,
 };
 
 /** A modal claims the top layer while it is open, so Escape reaches it first. */
@@ -40,10 +41,16 @@ const activeLayers = () => (state.modalDepth > 0 ? LAYERS : ["window", "global"]
  * `cmd` maps a name to a function. Everything below is declared against those
  * names, so rebinding later is a data change and the cheat sheet is generated
  * rather than written down twice and allowed to drift.
+ *
+ * The seat names which tools this account is offered (ADR 22); the chord
+ * bindings themselves stay whole — a saved layout may still mount a
+ * role-gated tool — but what the sheet and the hint bar advertise, and what
+ * cmd.open honours, is the seat's list.
  */
-export function initKeys(cmd, { corpus = "mtg" } = {}) {
+export function initKeys(cmd, { corpus = "mtg", seat = SEAT_DM } = {}) {
 	state.mac = /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || "");
 	state.corpus = corpus;
+	state.seat = seat;
 	const km = createKeymap();
 	state.km = km;
 
@@ -153,16 +160,11 @@ export function initKeys(cmd, { corpus = "mtg" } = {}) {
 			console.error(`tool ${id} could not claim ${LEADER} ${def.accel}:`, err);
 		}
 	}
-
 	/* --- always available, even mid-typing --- */
 	km.add("global", "escape", cmd.dismiss, { label: "Dismiss", group: "Find", typing: true });
 
 	document.addEventListener("keydown", onKeydown, true);
 	buildSheet();
-}
-
-export function setKeyCorpus(corpus) {
-	state.corpus = corpus;
 }
 
 /* ---------- dispatch ---------- */
@@ -245,7 +247,7 @@ function showHint(leader) {
 	$("wm-hint")?.remove();
 	const items = state.km.continuations(leader, activeLayers())
 		.filter((m) => m.hint !== false)
-		.filter((m) => !m.tool || toolsFor(state.corpus).includes(m.tool));
+		.filter((m) => !m.tool || toolsFor(state.corpus, state.seat).includes(m.tool));
 
 	// Grouped, and with the nine workspaces and eight arrows collapsed to one
 	// row each: the leader now reaches everything, and an unsorted run of
@@ -311,7 +313,7 @@ function buildSheet() {
 	const groups = new Map();
 	for (const meta of state.km.list()) {
 		if (meta.listed === false) continue;
-		if (meta.tool && !toolsFor(state.corpus).includes(meta.tool)) continue;
+		if (meta.tool && !toolsFor(state.corpus, state.seat).includes(meta.tool)) continue;
 		if (!groups.has(meta.group)) groups.set(meta.group, []);
 		groups.get(meta.group).push(meta);
 	}
@@ -329,8 +331,10 @@ function buildSheet() {
 	}
 }
 
-/** Rebuild the sheet when the game changes — the tool list changes with it. */
-export function refreshSheet(corpus) {
+/** Rebuild the sheet when the game or the seat changes — the tool list
+    changes with either. */
+export function refreshSheet(corpus, seat = state.seat) {
 	state.corpus = corpus;
+	state.seat = seat;
 	buildSheet();
 }

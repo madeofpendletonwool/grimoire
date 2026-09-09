@@ -16,6 +16,11 @@
 //   title      what the titlebar, rail and command menu call it
 //   icon       a sprite name from ICONS in icons.js (32px pixel art)
 //   corpus     "dnd", "mtg", or "*" for the tools both games share
+//   role       "dm" for the tools that belong to the DM's seat only; absent
+//              means every member of a campaign may open it. The shell offers
+//              role-gated tools only at the DM seat (see seat.js, ADR 22) —
+//              a saved layout naming one still renders; the tool narrows
+//              itself, the way every DM tool's campaign picker already does.
 //   accel      the letter after the leader: Ctrl+G then this opens the tool
 //   instances  "single" — one window per tool. See the note at the bottom.
 //   min        [width, height] in px, below which the tiler will not shrink it
@@ -23,6 +28,11 @@
 //              rather than all of it at boot
 
 export const ANY_CORPUS = "*";
+
+/** The campaign seats the shell knows (ADR 22): the DM's cockpit, or the
+    player-shaped seat a member-only account lands in. */
+export const SEAT_DM = "dm";
+export const SEAT_PLAYER = "player";
 
 /** The games the app knows. A corpus outside this offers no tools at all —
     the value reaches us from stored preferences, and a half-populated shell
@@ -53,7 +63,7 @@ export const TOOLS = Object.freeze({
 
 	/* ---- D&D ---- */
 	planner: {
-		title: "Planner", icon: "scrollOpen", corpus: "dnd", accel: "p",
+		title: "Planner", icon: "scrollOpen", corpus: "dnd", role: SEAT_DM, accel: "p",
 		instances: "single", min: [520, 360],
 		blurb: "The narrative spine: acts, scenes, cast, secrets",
 		load: () => import("../planner.js"),
@@ -89,31 +99,31 @@ export const TOOLS = Object.freeze({
 		load: () => import("../board.js"),
 	},
 	review: {
-		title: "Review", icon: "shield", corpus: "dnd", accel: "v",
+		title: "Review", icon: "shield", corpus: "dnd", role: SEAT_DM, accel: "v",
 		instances: "single", min: [460, 360],
 		blurb: "The canon queue: proposals become truth here",
 		load: () => import("../review.js"),
 	},
 	encounter: {
-		title: "Encounter", icon: "dice", corpus: "dnd", accel: "e",
+		title: "Encounter", icon: "dice", corpus: "dnd", role: SEAT_DM, accel: "e",
 		instances: "single", min: [460, 380],
 		blurb: "Budget, roster and statblocks",
 		load: () => import("../encounter.js"),
 	},
 	combat: {
-		title: "Combat", icon: "swords", corpus: "dnd", accel: "t",
+		title: "Combat", icon: "swords", corpus: "dnd", role: SEAT_DM, accel: "t",
 		instances: "single", min: [560, 460],
 		blurb: "The DM's screen — run the battle",
 		load: () => import("../combat.js"),
 	},
 	screen: {
-		title: "Screen", icon: "candle", corpus: "dnd", accel: "l",
+		title: "Screen", icon: "candle", corpus: "dnd", role: SEAT_DM, accel: "l",
 		instances: "single", min: [340, 460],
 		blurb: "The play strip — scene, clock, notes, Ask Grimoire",
 		load: () => import("../screen.js"),
 	},
 	director: {
-		title: "Director", icon: "staff", corpus: "dnd", accel: "q",
+		title: "Director", icon: "staff", corpus: "dnd", role: SEAT_DM, accel: "q",
 		instances: "single", min: [400, 420],
 		blurb: "Advisory monster tactics, cited",
 		load: () => import("../director.js"),
@@ -146,15 +156,26 @@ export function inCorpus(id, corpus) {
 	return def.corpus === ANY_CORPUS || def.corpus === corpus;
 }
 
+/** Does this tool belong to the given seat? An unannotated tool serves every
+    member; a role-gated one exists for the DM's seat alone. */
+export function inSeat(id, seat) {
+	const def = toolDef(id);
+	if (!def) return false;
+	return !def.role || def.role === seat;
+}
+
 /**
- * The tools one game offers, in registry order.
+ * The tools one game offers one seat, in registry order.
  *
- * This is the whole of corpus separation. It replaced closeForeignSurfaces()
- * — a hand-maintained list of DOM ids to close when the game changed — and the
- * html[data-corpus] display:none rules that hid the other game's rail buttons.
- * Both were lists that had to be edited per tool; this is derived.
+ * This is the whole of corpus separation, and now of seat separation too: the
+ * rail, the command menu, the cheat sheet and preset seeding all read it. It
+ * replaced closeForeignSurfaces() — a hand-maintained list of DOM ids to close
+ * when the game changed — and the html[data-corpus] display:none rules that
+ * hid the other game's rail buttons. Both were lists that had to be edited per
+ * tool; this is derived.
  */
-export const toolsFor = (corpus) => TOOL_IDS.filter((id) => inCorpus(id, corpus));
+export const toolsFor = (corpus, seat = SEAT_DM) =>
+	TOOL_IDS.filter((id) => inCorpus(id, corpus) && inSeat(id, seat));
 
 /** Passed to tree.parse so a layout naming a retired tool drops that leaf. */
 export const knownTool = (id) => isTool(id);
