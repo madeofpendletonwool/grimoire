@@ -63,8 +63,9 @@ const maxCombos = 400
 // candidateArgs builds the argument sets for one method: the context, the
 // scope, the campaign id in its position, then a bounded product of fixture
 // values aimed at the planted secret, proposal and their subjects. rumorIDs
-// are the leak fixture's planted rumours, aimed the same way.
-func candidateArgs(m reflect.Method, scope Scope, cid string, fx *campaign.Fixture, kx *KnowledgeFixture, rumorIDs []string) [][]any {
+// are the leak fixture's planted rumours, handoutIDs its planted handouts —
+// both aimed the same way.
+func candidateArgs(m reflect.Method, scope Scope, cid string, fx *campaign.Fixture, kx *KnowledgeFixture, rumorIDs, handoutIDs []string) [][]any {
 	ft := m.Type
 	if ft.NumIn() < 3 || ft.NumIn() > 6 {
 		return nil
@@ -83,6 +84,7 @@ func candidateArgs(m reflect.Method, scope Scope, cid string, fx *campaign.Fixtu
 		fx.FactMinesOwned,
 	}
 	strPositions = append(strPositions, anySlice(rumorIDs)...)
+	strPositions = append(strPositions, anySlice(handoutIDs)...)
 	positions := [][]any{{cid}}
 	for i := 4; i < ft.NumIn(); i++ {
 		in := ft.In(i)
@@ -98,6 +100,12 @@ func candidateArgs(m reflect.Method, scope Scope, cid string, fx *campaign.Fixtu
 				RumorFilter{},
 				RumorFilter{About: fx.Duke},
 				RumorFilter{Status: campaign.RumorStatusCirculating},
+			})
+		case in == reflect.TypeOf(HandoutFilter{}):
+			positions = append(positions, []any{
+				HandoutFilter{},
+				HandoutFilter{Kind: campaign.HandoutKindHandout},
+				HandoutFilter{Status: campaign.HandoutStatusDraft},
 			})
 		case in.Kind() == reflect.Int || in.Kind() == reflect.Int64:
 			positions = append(positions, []any{20})
@@ -215,6 +223,48 @@ type rumorSighting struct {
 	dmOnly            bool
 }
 
+// handoutSighting is one Handout row a result carried: the id and the
+// status. A draft or retired row at a non-DM scope is the leak.
+type handoutSighting struct {
+	id, status string
+}
+
+// scanHandouts walks a returned value for anything handout-shaped — a
+// campaign.Handout — and reports the id/status pairs.
+func scanHandouts(v reflect.Value, depth int, found *[]handoutSighting) {
+	if depth > 4 {
+		return
+	}
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Interface:
+		if !v.IsNil() {
+			scanHandouts(v.Elem(), depth+1, found)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			scanHandouts(v.Index(i), depth+1, found)
+		}
+	case reflect.Struct:
+		t := v.Type()
+		if t.Name() == "Handout" {
+			var h handoutSighting
+			for i := 0; i < t.NumField(); i++ {
+				switch t.Field(i).Name {
+				case "ID":
+					h.id = v.Field(i).String()
+				case "Status":
+					h.status = v.Field(i).String()
+				}
+			}
+			*found = append(*found, h)
+			return
+		}
+		for i := 0; i < t.NumField(); i++ {
+			scanHandouts(v.Field(i), depth+1, found)
+		}
+	}
+}
+
 // plantAdversarial adds the two states a filter regression would leak: an
 // awareness row granted on the proposed vampire fact (the write path allows
 // it — one DM write or a Stage-3 extraction grant away), and a retcon that
@@ -277,6 +327,37 @@ func plantRumors(t *testing.T, s *Store, fx *campaign.Fixture) []string {
 	return ids
 }
 
+// plantHandouts adds the states a lazy status filter would leak: one in
+// each lifecycle status — draft, published, retired. Returns the ids so
+// the argument aiming can reach every planted row.
+func plantHandouts(t *testing.T, s *Store, fx *campaign.Fixture) []string {
+	t.Helper()
+	ctx := context.Background()
+	cid := fx.Campaign.ID
+	ids := make([]string, 0, 3)
+	plant := func(title string) string {
+		h, err := s.CreateHandout(ctx, cid, HandoutInput{
+			Kind: campaign.HandoutKindHandout, Title: title,
+			Body: "A letter pressed into the party's hands.", CreatedBy: "keeper",
+		})
+		if err != nil {
+			t.Fatalf("plant handout: %v", err)
+		}
+		ids = append(ids, h.ID)
+		return h.ID
+	}
+	plant("The published proclamation")
+	pub := plant("The camp orders")
+	ret := plant("The retired notice")
+	if _, err := s.SetHandoutStatus(ctx, cid, pub, campaign.HandoutStatusPublished); err != nil {
+		t.Fatalf("publish plant: %v", err)
+	}
+	if _, err := s.SetHandoutStatus(ctx, cid, ret, campaign.HandoutStatusRetired); err != nil {
+		t.Fatalf("retire plant: %v", err)
+	}
+	return ids
+}
+
 func TestNoLeakAcrossScopes(t *testing.T) {
 	s, fx, kx := seeded(t)
 	ctx := context.Background()
@@ -288,6 +369,7 @@ func TestNoLeakAcrossScopes(t *testing.T) {
 	plantAdversarial(t, s, cs, fx, kx)
 	rumorIDs := plantRumors(t, s, fx)
 	dmOnlyRumorID := rumorIDs[len(rumorIDs)-1]
+	handoutIDs := plantHandouts(t, s, fx)
 
 	nonDM := []Scope{ScopeParty, ScopeCharacter(fx.Thalia), ScopeNPC(fx.Elara)}
 	scopeType := reflect.TypeOf(ScopeDM)
@@ -305,6 +387,7 @@ func TestNoLeakAcrossScopes(t *testing.T) {
 		vv := reflect.ValueOf(st.value)
 		scanned := 0
 		rumorsScanned := 0
+		handoutsScanned := 0
 		for i := 0; i < tv.NumMethod(); i++ {
 			m := tv.Method(i)
 			if !m.IsExported() || isMutation(m.Name) {
@@ -320,7 +403,7 @@ func TestNoLeakAcrossScopes(t *testing.T) {
 				scopes = append(scopes, ScopeDM) // DM: proposals must still be invisible
 			}
 			for _, scope := range scopes {
-				for _, args := range candidateArgs(m, scope, cid, fx, kx, rumorIDs) {
+				for _, args := range candidateArgs(m, scope, cid, fx, kx, rumorIDs, handoutIDs) {
 					callArgs := []reflect.Value{vv, reflect.ValueOf(ctx), reflect.ValueOf(scope)}
 					for _, a := range args {
 						callArgs = append(callArgs, reflect.ValueOf(a))
@@ -332,9 +415,11 @@ func TestNoLeakAcrossScopes(t *testing.T) {
 					errVal, _ := results[len(results)-1].Interface().(error)
 					var found []struct{ vis, conf string }
 					var rumFound []rumorSighting
+					var handFound []handoutSighting
 					for _, r := range results[:len(results)-1] {
 						scanFacts(r, 0, &found)
 						scanRumors(r, 0, &rumFound)
+						scanHandouts(r, 0, &handFound)
 					}
 					if errVal != nil {
 						// An errored call cannot leak — and for the campaign
@@ -361,6 +446,13 @@ func TestNoLeakAcrossScopes(t *testing.T) {
 						}
 					}
 					rumorsScanned += len(rumFound)
+					for _, h := range handFound {
+						if !scope.IsDM() && h.status != campaign.HandoutStatusPublished {
+							t.Fatalf("LEAK: %s.%s at %s returned handout %s with status %q; only published rows are portal material",
+								st.name, m.Name, scope, h.id, h.status)
+						}
+					}
+					handoutsScanned += len(handFound)
 					if st.name == "campaign.Store" && !scope.IsDM() {
 						if len(found) > 0 {
 							t.Fatalf("LEAK: campaign.Store.%s succeeded at %s and returned fact-shaped rows; campaign retrieval is DM-only",
@@ -391,7 +483,10 @@ func TestNoLeakAcrossScopes(t *testing.T) {
 		if st.name == "knowledge.Store" && rumorsScanned == 0 {
 			t.Fatalf("leak test scanned no rumour rows; the reflection enumeration is broken")
 		}
-		t.Logf("%s: leak test exercised %d fact-shaped and %d rumour-shaped results", st.name, scanned, rumorsScanned)
+		if st.name == "knowledge.Store" && handoutsScanned == 0 {
+			t.Fatalf("leak test scanned no handout rows; the reflection enumeration is broken")
+		}
+		t.Logf("%s: leak test exercised %d fact-shaped, %d rumour-shaped and %d handout-shaped results", st.name, scanned, rumorsScanned, handoutsScanned)
 	}
 
 	// Prove the fixture has teeth: the secret and the proposal exist, the

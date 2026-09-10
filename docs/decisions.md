@@ -1328,3 +1328,67 @@ handout removes the file it owned.
   depicts, a dossier saying "you hold a handout about this place") is
   deliberately not built: it is a convenience, not a graph edge, and v1
   stays honest without it.
+
+## ADR 25 — A seated player edits their own sheet; mechanics are a campaign opt-in
+
+Date: 2026-09-09 · Status: accepted · Issues: MAD-488, MAD-319
+
+### Context
+
+Stage 7.2 of the player portal. Sheet reads were already split correctly
+(MAD-418: a player reads exactly their own bound character through
+`PlayerView.CharacterSheet`), but writes were DM-only — the sheet issue
+explicitly deferred the product question here. The realistic options were
+"players watch" (self-service means nothing), "players edit everything"
+(a typo zeroes an ability score mid-session), or a split.
+
+### Decision
+
+**A bound player may edit their own character's sheet; nobody else's,
+ever.** The PUT gate widens from DM-only to DM-or-bound-player: the
+caller's resolved scope must be `character:<eid>` — the read-side binding
+mirrored on the write side. An unbound member, an observer, or a player
+pointing at any other character is refused exactly as before.
+
+**The edit itself is a merge, not a write: inventory (attunement flags
+included) and notes are player-writable; the mechanical definition —
+abilities, classes, proficiencies, AC, HP — is DM-writable unless the
+campaign opts in.** A player's PUT lands only the player-writable keys
+and leaves every other key on the stored sheet: omission cannot zero an
+ability, and a smuggled field cannot move mechanics. The opt-in is
+`campaigns.settings` (`sheet_edit.mechanics`, default off) — the table
+that trusts its players can say so, per campaign, and the default table
+never has to think about it. Every write, either side, stamps its
+provenance under the payload's `sheet_meta` (surfaced as `last_edit` on
+the DM's read) so "who changed this" is answerable without an audit
+table.
+
+**The purse and rests stay out of the player's hands.** The ledger
+already lets a seated player spend and regain their own coin through the
+transaction log (MAD-419); a sheet write that could rewrite `currency`
+would redefine pool sizes from under that log. Rests advance the
+campaign clock and stay DM-actuated. Import stays DM-only: creating
+characters is a DM act, and an import is a creation.
+
+### Consequences
+
+- The campaign settings JSON column (0002) carries the knob — no
+  migration, the home the sheet's own configuration already lives in.
+- Validation and derivation sync are identical on both sides of the gate:
+  a player's inventory edit lands validated, quick rolls re-derived, the
+  ledger pools refreshed — the same PUT machinery, narrower input.
+- The merge is structural, not a field blacklist in the handler: the
+  player path builds the patch from exactly two blocks, so a new sheet
+  key is DM-writable by default rather than player-writable by default.
+- The read guarantee holds unchanged: `CharacterSheet` returns the pc
+  payload's `sheet` block and nothing else, so a player's own edit can
+  never widen what the read serves.
+
+### Alternatives rejected
+
+| Option | Why not |
+|---|---|
+| Players watch, DMs type | Every inventory tick becomes a DM interrupt; the portal's promise of a character-shaped seat would end at its most-touched surface |
+| Players edit everything | A mid-session typo or a smuggled key rewrites mechanics; "trust your table" is a per-campaign property, not a default the software chooses for every table |
+| A separate player sheet table | Two sources of truth for one character, with the ledger deriving from one of them — the drift is not a risk, it is a schedule |
+| Audit table for player edits | The entity update already carries metadata; `sheet_meta.last_edit` answers "who changed this" where the data already lives |
