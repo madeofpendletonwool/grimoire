@@ -1,0 +1,467 @@
+package engine
+
+// The fold. fold(events) → State is deterministic and total: it never
+// errors and never panics, because the log's integrity is enforced at
+// write time — the reducer validates, the store assigns contiguous
+// ordinals — and a fold that could fail would make rewind a gamble instead
+// of a truncation. Rows that reference things the fold has not seen (a
+// corrupted or foreign log) are skipped, not guessed at.
+//
+// The derived-never-stored rule from ADR 9 lives here: expiry of
+// until_end_of_turn is computed from TURN_ENDED anchors rather than stored,
+// commander damage is recomputed from DAMAGE_DEALT rows rather than kept
+// as a counter, and marked damage clears at cleanup exactly when the
+// anchor says so.
+
+// Fold builds the state a whole log folds to.
+func Fold(events []Event) *State {
+	s := NewState()
+	for i := range events {
+		s.foldEvent(events[i])
+	}
+	return s
+}
+
+// FoldInto advances a state by more events — the incremental form, used by
+// streaming clients and by the prefix property tests to prove
+// fold(log[:n]) is the state after the first n events.
+func (s *State) FoldInto(events []Event) *State {
+	if s == nil {
+		s = NewState()
+	}
+	for i := range events {
+		s.foldEvent(events[i])
+	}
+	return s
+}
+
+func (s *State) foldEvent(e Event) {
+	if e.Ord > s.LastOrd {
+		s.LastOrd = e.Ord
+	}
+	switch e.Kind {
+	case EventGameStarted:
+		s.foldGameStarted(e)
+	case EventGameEnded:
+		s.Status = StatusFinished
+	case EventTurnStarted:
+		s.Turn = e.Turn
+		s.TurnSeat = e.TurnSeat
+		s.PrioritySeat = e.TurnSeat
+		s.resetTurnScoped()
+		s.Passed = nil
+		s.Attackers = nil
+		s.Blockers = nil
+	case EventStepEntered:
+		s.Phase = e.Phase
+		s.Step = e.Step
+		s.Passed = nil
+	case EventTurnEnded:
+		// The expiry anchor: everything that lasts until end of turn ends
+		// here — modifiers by computation, marked damage with them, the
+		// land drop and the pass cycle with the turn.
+		for _, o := range s.Objects {
+			o.Damage = 0
+			o.Modifiers = dropUntilEOT(o.Modifiers)
+		}
+		s.resetTurnScoped()
+		s.Passed = nil
+	case EventPriorityPassed:
+		s.PrioritySeat = e.SeatTo
+		s.Passed = append(s.Passed, e.ActorSeat)
+	case EventStackPushed:
+		s.Stack = append(s.Stack, StackItem{Object: e.Object, Mode: e.Mode, Ability: e.Ability,
+			Controller: e.Controller, Targets: e.Targets})
+		s.Passed = nil
+	case EventStackResolved:
+		if len(s.Stack) > 0 {
+			s.Stack = s.Stack[:len(s.Stack)-1]
+		}
+		s.Passed = nil
+	case EventObjectCreated:
+		s.foldObjectCreated(e)
+	case EventZoneChanged:
+		s.foldZoneChanged(e)
+	case EventLandPlayed:
+		if p, ok := s.Seats[e.Controller]; ok {
+			p.LandsThisTurn++
+		}
+	case EventCast:
+		// Casts from the command zone are the commander tax base (the tax
+		// itself is derived, MAD-324).
+		if e.From == ZoneCommand && e.Card != "" {
+			s.CommanderCasts[e.Card]++
+		}
+	case EventAttackersDeclared:
+		s.Attackers = e.Attackers
+	case EventBlockersDeclared:
+		s.Blockers = e.Blockers
+	case EventDamageDealt:
+		s.foldDamageDealt(e)
+	case EventDamageMarked:
+		if o, ok := s.Objects[e.Object]; ok {
+			o.Damage += e.Amount
+		}
+	case EventLifeChanged:
+		if p, ok := s.Seats[e.TargetSeat]; ok {
+			if e.To != nil {
+				p.Life = *e.To
+			} else {
+				p.Life += e.Delta
+			}
+		}
+	case EventCounterChanged:
+		if e.Object != 0 {
+			if o, ok := s.Objects[e.Object]; ok {
+				if o.Counters == nil {
+					o.Counters = map[string]int{}
+				}
+				applyCounter(o.Counters, e)
+			}
+			return
+		}
+		if p, ok := s.Seats[e.TargetSeat]; ok {
+			if p.Counters == nil {
+				p.Counters = map[string]int{}
+			}
+			applyCounter(p.Counters, e)
+		}
+	case EventFlagChanged:
+		if p, ok := s.Seats[e.TargetSeat]; ok {
+			if p.Flags == nil {
+				p.Flags = map[string]string{}
+			}
+			if e.Value == "" {
+				delete(p.Flags, e.Flag)
+			} else {
+				p.Flags[e.Flag] = e.Value
+			}
+		}
+	case EventTapChanged:
+		if o, ok := s.Objects[e.Object]; ok {
+			o.Tapped = e.Tapped
+		}
+	case EventPhaseChanged:
+		if o, ok := s.Objects[e.Object]; ok {
+			o.Phased = e.Phased
+		}
+	case EventAttached:
+		att, aok := s.Objects[e.Object]
+		host, hok := s.Objects[e.TargetObject]
+		if !aok || !hok {
+			return
+		}
+		att.AttachedTo = host.ID
+		if !containsID(host.Attachments, att.ID) {
+			host.Attachments = append(host.Attachments, att.ID)
+		}
+	case EventUnattached:
+		if att, ok := s.Objects[e.Object]; ok {
+			old := att.AttachedTo
+			att.AttachedTo = 0
+			if host, ok := s.Objects[old]; ok {
+				host.Attachments = dropID(host.Attachments, att.ID)
+			}
+		}
+	case EventModifierAdded:
+		if o, ok := s.Objects[e.Object]; ok && e.Modifier != nil {
+			o.Modifiers = append(o.Modifiers, *e.Modifier)
+			if e.Modifier.ID >= s.NextModifier {
+				s.NextModifier = e.Modifier.ID + 1
+			}
+		}
+	case EventModifierRemoved:
+		if o, ok := s.Objects[e.Object]; ok {
+			o.Modifiers = dropModifierID(o.Modifiers, e.ModifierID)
+		}
+	case EventTriggerFired:
+		// The trigger queue is MAD-325's; the row is log surface now.
+	case EventCardDrawn:
+		if p, ok := s.Seats[e.TargetSeat]; ok {
+			p.Hand = Count{Known: true, N: p.Hand.N + e.Count}
+			if p.Library.Known {
+				p.Library.N -= e.Count
+				if p.Library.N < 0 {
+					p.Library.N = 0
+				}
+			}
+			if !e.Identified && len(p.LibraryComp) > 0 {
+				// Cards the system cannot name left a known library: the
+				// composition is an upper bound per name from here on, and
+				// the probability layer must say so rather than guess.
+				p.LibraryExact = false
+			}
+		}
+	case EventCardKnown:
+		// Drawn identities left the library and joined the seat's known
+		// hand; a look's did not — the row is the whole of a look.
+		if e.Drawn {
+			if p, ok := s.Seats[e.TargetSeat]; ok {
+				for _, c := range e.Cards {
+					removeFromComp(p, c)
+					p.HandKnown = append(p.HandKnown, c)
+				}
+			}
+		}
+	case EventCardRevealed, EventEffectDeclared:
+		// Public log surface; no state to derive.
+	case EventZoneCountSet:
+		if p, ok := s.Seats[e.TargetSeat]; ok {
+			if e.To != nil {
+				switch e.Zone {
+				case ZoneHand:
+					p.Hand = KnownCount(*e.To)
+				case ZoneLibrary:
+					p.Library = KnownCount(*e.To)
+				}
+			}
+		}
+	}
+}
+
+// resetTurnScoped clears the per-turn facts at a turn boundary.
+func (s *State) resetTurnScoped() {
+	for _, p := range s.Seats {
+		p.LandsThisTurn = 0
+	}
+}
+
+// foldGameStarted rebuilds the game from its echo: seats, life, the
+// known-card universe each library began as, and the commander objects in
+// the command zone — the one place objects are created by config rather
+// than by an action, because every seat's commander is public fact.
+func (s *State) foldGameStarted(e Event) {
+	s.Status = StatusActive
+	s.Format = e.Format
+	s.StartingLife = e.StartingLife
+	s.CommanderCasts = map[string]int{}
+	order := []int{}
+	for _, sc := range e.Seats {
+		life := sc.StartingLife
+		if life == 0 {
+			life = e.StartingLife
+		}
+		p := &Player{
+			Seat: sc.Seat, Name: sc.Name, UserID: sc.UserID, DeckID: sc.DeckID,
+			Commander: sc.Commander, StartingLife: life, Life: life, Alive: true,
+			// The hand and a deckless library start unknown, not zero:
+			// the tracker has not been told what it cannot see, and
+			// collapsing "not told" into "empty" is the failure that
+			// makes a tracker untrustworthy. Draws and counts make them
+			// known; a deck makes the library's size known.
+			Hand:      UnknownCount(),
+			Library:   UnknownCount(),
+			HandKnown: []string{},
+		}
+		if len(sc.Deck) > 0 {
+			total := 0
+			comp := map[string]int{}
+			for name, n := range sc.Deck {
+				comp[name] = n
+				total += n
+			}
+			p.Library = KnownCount(total)
+			p.LibraryComp = comp
+			p.LibraryExact = true
+		}
+		s.Seats[sc.Seat] = p
+		order = append(order, sc.Seat)
+		if sc.Commander != "" {
+			id := s.NextObject
+			s.NextObject++
+			s.Objects[id] = &Object{ID: id, Identity: Identity{Card: sc.Commander},
+				Owner: sc.Seat, Controller: sc.Seat, Zone: ZoneCommand, Counters: map[string]int{}}
+		}
+	}
+	sortSeats(order)
+	s.Order = order
+}
+
+func (s *State) foldObjectCreated(e Event) {
+	o := &Object{
+		ID: e.Object, Identity: e.Identity, Owner: e.Owner, Controller: e.Controller,
+		Zone: e.ToZone, Counters: map[string]int{},
+	}
+	if e.Base != nil {
+		o.Base = *e.Base
+	}
+	if o.Identity.Token != nil && e.Base == nil {
+		o.Base = tokenBase(o.Identity.Token)
+	}
+	if e.Object >= s.NextObject {
+		s.NextObject = e.Object + 1
+	}
+	s.Objects[e.Object] = o
+	if e.From != "" {
+		if p, ok := s.Seats[o.Owner]; ok {
+			leaveZone(p, e.From, o.Identity.Card)
+		}
+	}
+}
+
+// foldZoneChanged moves an object, and does the bookkeeping the move
+// implies: count-only zones count in and out, composition subtracts named
+// departures, and leaving the battlefield ends everything that only existed
+// there — counters, modifiers, marked damage, tap and phase state. A card
+// that returns is fresh; that is what blinking means.
+func (s *State) foldZoneChanged(e Event) {
+	o, ok := s.Objects[e.Object]
+	if !ok {
+		return
+	}
+	if e.From != "" {
+		if p, ok := s.Seats[o.Owner]; ok {
+			leaveZone(p, e.From, o.Identity.Card)
+		}
+	}
+	if e.From == ZoneBattlefield {
+		o.Modifiers = nil
+		o.Counters = map[string]int{}
+		o.Damage = 0
+		o.Tapped = false
+		o.Phased = false
+		for _, att := range o.Attachments {
+			if a, ok := s.Objects[att]; ok {
+				a.AttachedTo = 0
+			}
+		}
+		o.Attachments = nil
+		if o.AttachedTo != 0 {
+			if host, ok := s.Objects[o.AttachedTo]; ok {
+				host.Attachments = dropID(host.Attachments, o.ID)
+			}
+			o.AttachedTo = 0
+		}
+	}
+	switch e.ToZone {
+	case ZoneHand:
+		if p, ok := s.Seats[o.Owner]; ok {
+			p.Hand = Count{Known: true, N: p.Hand.N + 1}
+		}
+		delete(s.Objects, o.ID)
+	case ZoneLibrary:
+		if p, ok := s.Seats[o.Owner]; ok {
+			if p.Library.Known {
+				p.Library.N++
+			}
+			if o.Identity.Card != "" && p.LibraryComp != nil {
+				p.LibraryComp[o.Identity.Card]++
+			}
+		}
+		delete(s.Objects, o.ID)
+	default:
+		o.Zone = e.ToZone
+	}
+}
+
+// foldDamageDealt derives commander damage: combat damage from an object
+// that is its controller's... its owner seat's commander accumulates
+// against the player dealt it. Never a stored counter, never a separate
+// event — refold the log and it is here again.
+func (s *State) foldDamageDealt(e Event) {
+	if !e.Combat || e.TargetSeat == 0 || e.SourceObj == 0 || e.Amount <= 0 {
+		return
+	}
+	o, ok := s.Objects[e.SourceObj]
+	if !ok || !s.isCommander(o) {
+		return
+	}
+	p, ok := s.Seats[e.TargetSeat]
+	if !ok {
+		return
+	}
+	if p.CommanderDamage == nil {
+		p.CommanderDamage = map[string]int{}
+	}
+	p.CommanderDamage[o.Identity.Card] += e.Amount
+}
+
+// leaveZone books a card out of a count-only zone: the hand counts down,
+// the library counts down and loses the named card from its composition
+// when the departure carried an identity.
+func leaveZone(p *Player, zone Zone, card string) {
+	switch zone {
+	case ZoneHand:
+		if p.Hand.Known {
+			p.Hand.N--
+			if p.Hand.N < 0 {
+				p.Hand.N = 0
+			}
+		}
+	case ZoneLibrary:
+		if p.Library.Known {
+			p.Library.N--
+			if p.Library.N < 0 {
+				p.Library.N = 0
+			}
+		}
+		if card != "" {
+			removeFromComp(p, card)
+		} else if len(p.LibraryComp) > 0 {
+			p.LibraryExact = false
+		}
+	}
+}
+
+// removeFromComp takes one named card out of a known composition, clamped
+// at zero — a total fold never produces negative knowledge.
+func removeFromComp(p *Player, card string) {
+	if p.LibraryComp == nil {
+		return
+	}
+	if p.LibraryComp[card] > 0 {
+		p.LibraryComp[card]--
+	}
+	if p.LibraryComp[card] <= 0 {
+		delete(p.LibraryComp, card)
+	}
+}
+
+// applyCounter folds one COUNTER_CHANGED into a counter map, delta or
+// absolute.
+func applyCounter(counters map[string]int, e Event) {
+	if e.To != nil {
+		counters[e.Name] = *e.To
+		return
+	}
+	counters[e.Name] += e.Delta
+}
+
+func dropUntilEOT(mods []Modifier) []Modifier {
+	out := mods[:0:0]
+	for _, m := range mods {
+		if m.Duration != UntilEOT {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func dropModifierID(mods []Modifier, id int64) []Modifier {
+	out := mods[:0:0]
+	for _, m := range mods {
+		if m.ID != id {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func containsID(ids []int64, id int64) bool {
+	for _, v := range ids {
+		if v == id {
+			return true
+		}
+	}
+	return false
+}
+
+func dropID(ids []int64, id int64) []int64 {
+	out := ids[:0:0]
+	for _, v := range ids {
+		if v != id {
+			out = append(out, v)
+		}
+	}
+	return out
+}
