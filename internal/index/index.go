@@ -24,12 +24,19 @@ type Store struct {
 }
 
 // Result is a single search hit.
+//
+// Anchor marks a hit the caller seeded deliberately rather than one the ranking
+// produced — the rule a term in the question resolves to, a number the asker
+// typed. Expansion weights those higher: a chapter named by the question's own
+// vocabulary is more likely to be the chapter the question is about than one
+// that merely collected keyword matches.
 type Result struct {
 	Number string
 	Title  string
 	Body   string
 	Source string
 	Score  float64
+	Anchor bool
 }
 
 // OpenDB opens the shared SQLite handle every store in the app sits on.
@@ -91,6 +98,9 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(readerSchema); err != nil {
 		return fmt.Errorf("migrate reader: %w", err)
 	}
+	if _, err := s.db.Exec(graphSchema); err != nil {
+		return fmt.Errorf("migrate graph: %w", err)
+	}
 	return nil
 }
 
@@ -124,7 +134,7 @@ CREATE TABLE IF NOT EXISTS entity_names (
 
 // Reset drops and rebuilds the docs tables (used on reindex).
 func (s *Store) Reset() error {
-	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names; DELETE FROM doc_vectors; DELETE FROM reader_nodes; DELETE FROM reader_guides;`)
+	_, err := s.db.Exec(`DELETE FROM docs; DELETE FROM corpus_meta; DELETE FROM card_names; DELETE FROM doc_vectors; DELETE FROM reader_nodes; DELETE FROM reader_guides; DELETE FROM rule_xrefs; DELETE FROM rule_terms;`)
 	return err
 }
 
@@ -164,12 +174,26 @@ CREATE VIRTUAL TABLE IF NOT EXISTS docs_build USING fts5(
 // run the same code.
 func (s *Store) Index(ctx context.Context, ds *data.Dataset) error {
 	if err := s.stageDocs(ctx, ds); err != nil {
-		// Drop the half-built staging table so a failed rebuild leaves no
+		// Drop the half-built staging tables so a failed rebuild leaves no
 		// partial copy bloating the file; the live index is untouched.
-		_, _ = s.db.ExecContext(context.Background(), `DROP TABLE IF EXISTS docs_build`)
+		s.dropStaging()
+		return err
+	}
+	// The cross-reference graph is derived from the same records, so it is
+	// staged in the same pass and swapped in the same transaction: a graph that
+	// cited a rule the index no longer held would send retrieval after
+	// paragraphs that do not exist.
+	if err := s.stageGraph(ctx, ds); err != nil {
+		s.dropStaging()
 		return err
 	}
 	return s.swapDocs(ctx, ds)
+}
+
+// dropStaging clears every shadow table a failed rebuild may have left behind.
+func (s *Store) dropStaging() {
+	_, _ = s.db.ExecContext(context.Background(),
+		`DROP TABLE IF EXISTS docs_build; DROP TABLE IF EXISTS rule_xrefs_build; DROP TABLE IF EXISTS rule_terms_build;`)
 }
 
 // stageDocs builds the shadow docs table chunk by chunk. Each chunk is its own
@@ -253,6 +277,9 @@ func (s *Store) swapDocs(ctx context.Context, ds *data.Dataset) error {
 	// The reader tree rides in the same transaction: an index build is
 	// all-or-nothing across the FTS tables and the reading tables.
 	if err := s.indexReader(ctx, tx, ds.Reader); err != nil {
+		return err
+	}
+	if err := swapGraph(ctx, tx); err != nil {
 		return err
 	}
 
@@ -424,6 +451,29 @@ func (s *Store) lookupNumber(ctx context.Context, corpus data.Corpus, number str
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// Rule returns the single rule with exactly this number, or nil when the
+// corpus holds no such rule. It is the exact-lookup counterpart to Search's
+// number path, for callers that already have a number in hand — a citation
+// being verified, a cross-reference being followed, a rule the model asked for
+// by name — and want that rule alone rather than a ranked list around it.
+func (s *Store) Rule(ctx context.Context, corpus data.Corpus, number string) (*Result, error) {
+	num := strings.TrimSpace(number)
+	if num == "" {
+		return nil, nil
+	}
+	hits, err := s.lookupNumber(ctx, corpus, num)
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range hits {
+		if h.Number == num {
+			r := h
+			return &r, nil
+		}
+	}
+	return nil, nil
 }
 
 // ruleNumberFullRe matches a numbered rule with at least one sub-level and an
@@ -637,15 +687,23 @@ func toFTSQueryOR(q string) (string, error) {
 }
 
 // maxGroundingDocs caps how many rules Expand hands back for one question.
-const maxGroundingDocs = 60
+//
+// Rules are short — a hundred of them is around 35KB, well under 10k tokens —
+// and this is a reference whose entire purpose is answering from the text
+// rather than from memory. Grounding is the cheapest thing in the request and
+// the only thing that decides whether the answer is right, so the budget is
+// set by what the tiers below can usefully fill, not by what is frugal.
+const maxGroundingDocs = 120
 
 // maxGroupDocs is the largest whole rule group we will pull in. Groups above
 // it (702, the keyword-ability list, is nearly 800 rules) fall back to
 // per-seed section expansion.
 const maxGroupDocs = 60
 
-// maxExpandGroups bounds how many whole rule groups one question pulls in.
-const maxExpandGroups = 2
+// maxExpandGroups bounds how many whole rule groups one question pulls in. An
+// interaction question is routinely about three chapters at once — the
+// keyword, the timing, and the zone it moves between.
+const maxExpandGroups = 3
 
 // maxChildDocs is the largest subsection tree one seed pulls in. A focused
 // section ("Equipment — Weapons", 9 records) and a whole class (29) both fit;
@@ -655,6 +713,25 @@ const maxChildDocs = 40
 // maxExpandChildren bounds how many seeds pull their subsection tree, so one
 // broad hit cannot spend the whole grounding budget on its descendants.
 const maxExpandChildren = 3
+
+// maxXrefDocs is the allowance reserved for the cross-reference hop. It is
+// deliberately small: following citations is precise, but a rule can cite half
+// a dozen others and every one of them drags in a whole section.
+const maxXrefDocs = 12
+
+// maxXrefFinal is the slice of the grounding budget held back for the second
+// cross-reference hop, which runs after every other tier has had its turn.
+const maxXrefFinal = 24
+
+// maxXrefFinalPerTarget bounds how much of the final reserve any one citation
+// may claim, so the hop reaches several of the rules the context points at
+// instead of the first one that happened to be large.
+const maxXrefFinalPerTarget = 6
+
+// maxXrefChapterDocs is the largest chapter a bare citation ("see rule 115")
+// will pull in whole. Chapter-sized citations are common in the glossary, and
+// most chapters are small; the handful that are not would swallow the budget.
+const maxXrefChapterDocs = 30
 
 // Expand grows a set of search hits into the grounding context handed to the
 // Q&A model.
@@ -677,16 +754,18 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 	}
 	out := make([]Result, 0, len(seeds))
 	seen := map[string]bool{}
+	// The coarse tiers stop short of the full budget so the final
+	// cross-reference hop still has room. Without the reservation they always
+	// spend it first — whole chapters are large — and the one rule a citation
+	// chain was pointing at never arrives.
+	budget := maxGroundingDocs - maxXrefFinal
 	// push adds a doc, reporting false once the budget is spent.
 	push := func(r Result) bool {
-		key := r.Number
-		if key == "" {
-			key = r.Title + "\x00" + r.Body // unnumbered corpora fallback
-		}
+		key := keyOf(r)
 		if seen[key] {
 			return true
 		}
-		if len(out) >= maxGroundingDocs {
+		if len(out) >= budget {
 			return false
 		}
 		seen[key] = true
@@ -695,7 +774,46 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 	}
 	for _, r := range seeds {
 		if !push(r) {
-			return out, nil
+			return s.finalXrefHop(ctx, corpus, out, seen, &budget)
+		}
+	}
+
+	// Cross-reference hop. A rule that decides an interaction is often named
+	// only by a citation from the rule the search matched — 115.10 points at
+	// 608 for when targets are rechecked, and nothing in the hexproof rules
+	// says it — so the rules the seeds cite come in before the coarser tiers
+	// below. Its own allowance keeps whole-group expansion from spending the
+	// budget first: these are the most precisely relevant rules in the set.
+	nums := make([]string, 0, len(seeds))
+	for _, r := range seeds {
+		if r.Number != "" {
+			nums = append(nums, r.Number)
+		}
+	}
+	cited, err := s.Xrefs(ctx, corpus, nums)
+	if err != nil {
+		return nil, err
+	}
+	spent := 0
+	for _, dst := range cited {
+		if spent >= maxXrefDocs || len(out) >= budget {
+			break
+		}
+		docs, err := s.citedDocs(ctx, corpus, dst)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range docs {
+			if spent >= maxXrefDocs {
+				break
+			}
+			if seen[keyOf(d)] {
+				continue
+			}
+			spent++
+			if !push(d) {
+				return s.finalXrefHop(ctx, corpus, out, seen, &budget)
+			}
 		}
 	}
 
@@ -715,7 +833,7 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 		if counts[g] == 0 {
 			order = append(order, g)
 		}
-		counts[g]++
+		counts[g] += seedWeight(r)
 	}
 	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
 
@@ -728,13 +846,30 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 		if err != nil {
 			return nil, err
 		}
-		if len(docs) == 0 || len(docs) > maxGroupDocs {
+		if len(docs) == 0 {
+			continue
+		}
+		if len(docs) > maxGroupDocs {
+			// A chapter too large to pull whole is not a dead end. 702, the
+			// keyword-ability list, is nearly 800 rules — and no question is
+			// ever about all of them; it is about the one keyword the seeds
+			// clustered in. Expanding the most-hit sections instead gives an
+			// equip question the whole of 702.6 rather than whichever
+			// sub-rules happened to rank, and it ranks those sections rather
+			// than leaving them to whatever budget the later tiers have left.
+			ok, err := s.pushRankedSections(ctx, corpus, g, seeds, push)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return s.finalXrefHop(ctx, corpus, out, seen, &budget)
+			}
 			continue
 		}
 		expanded[g] = true
 		for _, d := range docs {
 			if !push(d) {
-				return out, nil
+				return s.finalXrefHop(ctx, corpus, out, seen, &budget)
 			}
 		}
 	}
@@ -756,7 +891,7 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 		}
 		for _, d := range sec {
 			if !push(d) {
-				return out, nil
+				return s.finalXrefHop(ctx, corpus, out, seen, &budget)
 			}
 		}
 	}
@@ -795,11 +930,143 @@ func (s *Store) Expand(ctx context.Context, corpus data.Corpus, seeds []Result) 
 		trees++
 		for _, d := range kids {
 			if !push(d) {
-				return out, nil
+				return s.finalXrefHop(ctx, corpus, out, seen, &budget)
 			}
 		}
 	}
+	return s.finalXrefHop(ctx, corpus, out, seen, &budget)
+}
+
+// finalXrefHop follows citations out of everything gathered so far, spending
+// the reserve held back for it.
+//
+// One hop from the seeds is not always enough. The rule that decides an
+// interaction can sit two citations away — a hexproof question reaches the
+// targeting chapter, and it is 115.10, pulled in by that chapter, that names
+// rule 608 and when a spell's targets are rechecked. The first hop cannot see
+// 115.10 because it was not a seed; this one can, because by now it is in the
+// context.
+func (s *Store) finalXrefHop(ctx context.Context, corpus data.Corpus, out []Result, seen map[string]bool, budget *int) ([]Result, error) {
+	*budget = maxGroundingDocs
+	nums := make([]string, 0, len(out))
+	for _, r := range out {
+		if r.Number != "" {
+			nums = append(nums, r.Number)
+		}
+	}
+	cited, err := s.citedByFrequency(ctx, corpus, nums)
+	if err != nil {
+		return out, err
+	}
+	for _, dst := range cited {
+		if len(out) >= maxGroundingDocs {
+			break
+		}
+		docs, err := s.citedDocs(ctx, corpus, dst)
+		if err != nil {
+			return out, err
+		}
+		// Spread the reserve across several citations rather than letting the
+		// first large one swallow it. A chapter citation resolves to dozens of
+		// rules, and the ones that matter lead: a citation of "rule 608" is
+		// answered by 608.1 and 608.2, not by the end of the chapter.
+		taken := 0
+		for _, d := range docs {
+			if taken >= maxXrefFinalPerTarget || len(out) >= maxGroundingDocs {
+				break
+			}
+			key := keyOf(d)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			taken++
+			out = append(out, d)
+		}
+	}
 	return out, nil
+}
+
+// keyOf identifies a doc for de-duplication: its rule number, or its text for
+// the corpora that number nothing.
+func keyOf(r Result) string {
+	if r.Number != "" {
+		return r.Number
+	}
+	return r.Title + "\x00" + r.Body
+}
+
+// citedDocs resolves one cross-reference target into the docs worth pulling in.
+// A dotted citation ("608.2b") brings its whole section, because a sub-rule
+// read without its parent is routinely unusable; a bare chapter citation
+// ("rule 115, \"Targets\"") brings the chapter when it is small enough to
+// afford, and nothing when it is one of the giants.
+func (s *Store) citedDocs(ctx context.Context, corpus data.Corpus, number string) ([]Result, error) {
+	if isBareChapter(number) {
+		docs, err := s.groupDocs(ctx, corpus, number)
+		if err != nil || len(docs) > maxXrefChapterDocs {
+			return nil, err
+		}
+		return docs, nil
+	}
+	return s.Section(ctx, corpus, number)
+}
+
+// anchorWeight is how many ranked hits one anchored seed is worth when
+// choosing which groups to expand whole. An anchor is the rule a term in the
+// question resolves to, so it speaks for the question's subject in a way a
+// keyword match does not — but not loudly enough to outvote a chapter the
+// search kept landing in.
+const anchorWeight = 3
+
+// seedWeight is a seed's vote when ranking groups for expansion.
+func seedWeight(r Result) int {
+	if r.Anchor {
+		return anchorWeight
+	}
+	return 1
+}
+
+// maxExpandSections bounds how many sections of one oversized chapter are
+// pulled in whole. Two keywords in one question is common ("equip" and
+// "hexproof"); five is a question that has stopped being about a keyword.
+const maxExpandSections = 3
+
+// pushRankedSections expands the sections of one oversized chapter that the
+// seeds landed in, most-hit first. It reports false when the grounding budget
+// ran out mid-way, matching push's contract.
+func (s *Store) pushRankedSections(ctx context.Context, corpus data.Corpus, group string, seeds []Result, push func(Result) bool) (bool, error) {
+	counts := map[string]int{}
+	var order []string
+	for _, r := range seeds {
+		if ruleGroup(r.Number) != group {
+			continue
+		}
+		key := sectionKey(r.Number)
+		if key == "" {
+			continue
+		}
+		if counts[key] == 0 {
+			order = append(order, key)
+		}
+		counts[key] += seedWeight(r)
+	}
+	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
+	if len(order) > maxExpandSections {
+		order = order[:maxExpandSections]
+	}
+	for _, key := range order {
+		docs, err := s.Section(ctx, corpus, key)
+		if err != nil {
+			return false, err
+		}
+		for _, d := range docs {
+			if !push(d) {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
 }
 
 // ruleGroup returns the chapter token of a numbered rule ("613.6c" -> "613").

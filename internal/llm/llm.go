@@ -188,6 +188,14 @@ type Request struct {
 	Unresolved []string
 	History    []Turn
 	Question   string
+	// Fetcher, when set, lets the model look rules up mid-answer instead of
+	// reporting that the rule it needs was not retrieved. Nil keeps the
+	// single-round behaviour.
+	Fetcher RuleFetcher
+	// OnLookup, when set, is called as each lookup starts. A mid-answer lookup
+	// is a pause with nothing arriving on the wire; announcing it is the
+	// difference between "the sage is checking 608.2b" and a stalled answer.
+	OnLookup func(tool, arg string)
 }
 
 // Answer runs a Messages API call and returns the complete answer.
@@ -269,7 +277,7 @@ func chatMessages(turns []Turn) []message {
 			continue
 		}
 		if n := len(msgs); n > 0 && msgs[n-1].Role == role {
-			msgs[n-1].Content += "\n\n" + t.Content
+			msgs[n-1].Content = msgs[n-1].text() + "\n\n" + t.Content
 			continue
 		}
 		msgs = append(msgs, message{Role: role, Content: t.Content})
@@ -283,11 +291,22 @@ func chatMessages(turns []Turn) []message {
 
 // run builds the Q&A exchange from a Request and sends it.
 func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error) (string, error) {
-	streaming := onDelta != nil
-	out, _, err := c.callMessages(ctx,
-		systemPrompt(r.CorpusName, len(r.Cards) > 0, len(r.Entities) > 0, len(r.Rulings) > 0),
-		buildMessages(r), streaming, onDelta)
-	return out, err
+	system := systemPrompt(r.CorpusName, len(r.Cards) > 0, len(r.Entities) > 0, len(r.Rulings) > 0, r.Fetcher != nil)
+	msgs := buildMessages(r)
+	if r.Fetcher == nil {
+		out, _, err := c.callMessages(ctx, system, msgs, onDelta != nil, onDelta)
+		return out, err
+	}
+	return c.runWithTools(ctx, r, system, msgs, onDelta)
+}
+
+// exchange is one completed round trip: the text the model produced, any rule
+// lookups it asked for before finishing, why it stopped, and what it cost.
+type exchange struct {
+	Text       string
+	Tools      []toolUse
+	StopReason string
+	Usage      Usage
 }
 
 // callMessages performs one exchange, walking the provider chain until one
@@ -302,13 +321,19 @@ func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error)
 // already emitted a delta never fails over, and neither does one whose reader
 // went away (a browser closing the connection is not a provider fault).
 func (c *Client) callMessages(ctx context.Context, system string, msgs []message, streaming bool, onDelta func(string) error) (string, Usage, error) {
+	ex, err := c.exchangeMessages(ctx, system, msgs, nil, streaming, onDelta)
+	return ex.Text, ex.Usage, err
+}
+
+// exchangeMessages is callMessages with tools attached and the full result
+// returned, for the grounded Q&A path that may answer in several rounds.
+func (c *Client) exchangeMessages(ctx context.Context, system string, msgs []message, tools []tool, streaming bool, onDelta func(string) error) (exchange, error) {
 	providers := c.active()
 	if len(providers) == 0 {
-		return "", Usage{}, ErrNotConfigured
+		return exchange{}, ErrNotConfigured
 	}
 
-	var lastOut string
-	var lastUsage Usage
+	var last exchange
 	var lastErr error
 	for i, p := range providers {
 		emitted, readerGone := false, false
@@ -324,11 +349,11 @@ func (c *Client) callMessages(ctx context.Context, system string, msgs []message
 			}
 		}
 
-		out, usage, err := c.callProvider(ctx, p, system, msgs, streaming, delta)
+		ex, err := c.callProvider(ctx, p, system, msgs, tools, streaming, delta)
 		if err == nil {
-			return out, usage, nil
+			return ex, nil
 		}
-		lastOut, lastUsage, lastErr = out, usage, err
+		last, lastErr = ex, err
 
 		last := i == len(providers)-1
 		if last || emitted || readerGone || ctx.Err() != nil || !shouldFailOver(err) {
@@ -338,30 +363,31 @@ func (c *Client) callMessages(ctx context.Context, system string, msgs []message
 		log.Printf("llm: provider %s (%s) failed, falling back to %s (%s): %v",
 			hostOf(p.BaseURL), p.Model, hostOf(next.BaseURL), next.Model, err)
 	}
-	return lastOut, lastUsage, lastErr
+	return last, lastErr
 }
 
 // callProvider runs one exchange against a single provider. With onDelta nil it
 // reads a single JSON body; otherwise it asks for SSE and decodes the event
 // stream. Usage is filled on the JSON path; the SSE path does not read the
 // usage events and reports zero.
-func (c *Client) callProvider(ctx context.Context, cfg Config, system string, msgs []message, streaming bool, onDelta func(string) error) (string, Usage, error) {
+func (c *Client) callProvider(ctx context.Context, cfg Config, system string, msgs []message, tools []tool, streaming bool, onDelta func(string) error) (exchange, error) {
 	reqBody := messagesRequest{
 		Model:     cfg.Model,
 		MaxTokens: maxAnswerTokens,
 		System:    system,
 		Messages:  msgs,
 		Stream:    streaming,
+		Tools:     tools,
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", Usage{}, err
+		return exchange{}, err
 	}
 
 	url := strings.TrimRight(cfg.BaseURL, "/") + "/v1/messages"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return "", Usage{}, err
+		return exchange{}, err
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -375,38 +401,43 @@ func (c *Client) callProvider(ctx context.Context, cfg Config, system string, ms
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", Usage{}, fmt.Errorf("llm request: %w", err)
+		return exchange{}, fmt.Errorf("llm request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", Usage{}, &apiError{status: resp.StatusCode, statusText: resp.Status, body: string(raw)}
+		return exchange{}, &apiError{status: resp.StatusCode, statusText: resp.Status, body: string(raw)}
 	}
 	if streaming {
-		out, err := readStream(resp.Body, onDelta)
-		return out, Usage{}, err
+		return readStream(resp.Body, onDelta)
 	}
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", Usage{}, err
+		return exchange{}, err
 	}
 	var mr messagesResponse
 	if err := json.Unmarshal(raw, &mr); err != nil {
-		return "", Usage{}, fmt.Errorf("decode llm response: %w", err)
+		return exchange{}, fmt.Errorf("decode llm response: %w", err)
 	}
+	ex := exchange{StopReason: mr.StopReason, Usage: mr.Usage}
 	var b strings.Builder
 	for _, block := range mr.Content {
-		if block.Type == "text" {
+		switch block.Type {
+		case "text":
 			b.WriteString(block.Text)
+		case "tool_use":
+			ex.Tools = append(ex.Tools, toolUse{ID: block.ID, Name: block.Name, Input: block.Input})
 		}
 	}
-	out := strings.TrimSpace(b.String())
-	if out == "" {
-		return "", Usage{}, fmt.Errorf("llm returned no text")
+	ex.Text = strings.TrimSpace(b.String())
+	// A turn that only asks for a lookup carries no text, and that is not a
+	// failure — the answer comes in the round after the lookup returns.
+	if ex.Text == "" && len(ex.Tools) == 0 {
+		return ex, fmt.Errorf("llm returned no text")
 	}
-	return out, mr.Usage, nil
+	return ex, nil
 }
 
 // apiError is a non-2xx response from a provider, kept structured so the
@@ -493,7 +524,7 @@ func buildMessages(r Request) []message {
 	merged := msgs[:0]
 	for _, m := range msgs {
 		if n := len(merged); n > 0 && merged[n-1].Role == m.Role {
-			merged[n-1].Content += "\n\n" + m.Content
+			merged[n-1].Content = merged[n-1].text() + "\n\n" + m.text()
 			continue
 		}
 		merged = append(merged, m)
@@ -502,22 +533,35 @@ func buildMessages(r Request) []message {
 
 	user := buildUserMessage(r.CorpusName, r.Docs, r.Cards, r.Entities, r.Rulings, r.Unresolved, r.Question)
 	if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
-		msgs[n-1].Content += "\n\n" + user
+		msgs[n-1].Content = msgs[n-1].text() + "\n\n" + user
 		return msgs
 	}
 	return append(msgs, message{Role: "user", Content: user})
 }
 
 // readStream decodes an Anthropic SSE body, forwarding text deltas as they
-// arrive. Event framing is "data: {json}" lines separated by blank lines; we
-// only care about content_block_delta payloads and inline error events.
-func readStream(body io.Reader, onDelta func(string) error) (string, error) {
+// arrive. Event framing is "data: {json}" lines separated by blank lines.
+//
+// Tool calls are reassembled alongside the text: a content_block_start names
+// the tool and opens a block, its arguments arrive as partial JSON fragments
+// on that block's index, and content_block_stop closes it. Tracking them by
+// index is what lets an answer stream to the reader and ask for a rule lookup
+// in the same turn, rather than having to choose between the two.
+func readStream(body io.Reader, onDelta func(string) error) (exchange, error) {
 	sc := bufio.NewScanner(body)
 	// Long single-line JSON payloads are normal here; the default 64KB scanner
 	// limit would truncate one and desync the decode.
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	var ex exchange
 	var full strings.Builder
+	// Open tool blocks by stream index, with their arguments accumulating.
+	type pending struct {
+		id, name string
+		args     strings.Builder
+	}
+	open := map[int]*pending{}
+
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || !strings.HasPrefix(line, "data:") {
@@ -532,36 +576,60 @@ func readStream(body io.Reader, onDelta func(string) error) (string, error) {
 			continue // ignore keep-alives and any framing we don't model
 		}
 		switch ev.Type {
+		case "content_block_start":
+			if ev.ContentBlock.Type == "tool_use" {
+				open[ev.Index] = &pending{id: ev.ContentBlock.ID, name: ev.ContentBlock.Name}
+			}
 		case "content_block_delta":
+			if p := open[ev.Index]; p != nil {
+				p.args.WriteString(ev.Delta.PartialJSON)
+				continue
+			}
 			if ev.Delta.Type != "" && ev.Delta.Type != "text_delta" {
-				continue // thinking / tool deltas are not answer text
+				continue // thinking deltas are not answer text
 			}
 			if ev.Delta.Text == "" {
 				continue
 			}
 			full.WriteString(ev.Delta.Text)
 			if err := onDelta(ev.Delta.Text); err != nil {
-				return full.String(), err
+				ex.Text = full.String()
+				return ex, err
+			}
+		case "content_block_stop":
+			if p := open[ev.Index]; p != nil {
+				args := p.args.String()
+				if strings.TrimSpace(args) == "" {
+					args = "{}"
+				}
+				ex.Tools = append(ex.Tools, toolUse{ID: p.id, Name: p.name, Input: json.RawMessage(args)})
+				delete(open, ev.Index)
+			}
+		case "message_delta":
+			if ev.Delta.StopReason != "" {
+				ex.StopReason = ev.Delta.StopReason
 			}
 		case "error":
 			msg := ev.Error.Message
 			if msg == "" {
 				msg = "stream error"
 			}
-			return full.String(), fmt.Errorf("llm stream: %s", msg)
+			ex.Text = full.String()
+			return ex, fmt.Errorf("llm stream: %s", msg)
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return full.String(), fmt.Errorf("read llm stream: %w", err)
+		ex.Text = full.String()
+		return ex, fmt.Errorf("read llm stream: %w", err)
 	}
-	out := strings.TrimSpace(full.String())
-	if out == "" {
-		return "", fmt.Errorf("llm returned no text")
+	ex.Text = strings.TrimSpace(full.String())
+	if ex.Text == "" && len(ex.Tools) == 0 {
+		return ex, fmt.Errorf("llm returned no text")
 	}
-	return out, nil
+	return ex, nil
 }
 
-func systemPrompt(corpusName string, hasCards bool, hasEntities bool, hasRulings bool) string {
+func systemPrompt(corpusName string, hasCards bool, hasEntities bool, hasRulings bool, hasTools bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		`You are the Grimoire, a knowledgeable keeper of %s rules. Answer like a careful judge: precise, grounded, and unmoved by pressure.
@@ -597,7 +665,13 @@ GROUNDING RULES — follow these strictly:
 		fmt.Fprintf(&b, "\n%d. If a ruling is relevant to a named card but no ruling for that card was provided, say plainly that no official ruling was available — do NOT invent one from memory.", rule)
 		rule++
 	}
-	fmt.Fprintf(&b, "\n%d. If the provided excerpts do not contain the answer, say so plainly rather than inventing anything.", rule)
+	if hasTools {
+		fmt.Fprintf(&b, "\n%d. If the rule you need is not among the excerpts, LOOK IT UP — use lookup_rule for a rule you can name by number (including any rule an excerpt cites, e.g. \"see rule 608.2b\") and search_rules to find one you cannot. Never write that a rule is missing from the excerpts without searching for it first, and never fill the gap from memory.", rule)
+		rule++
+		fmt.Fprintf(&b, "\n%d. If a lookup comes back empty, say plainly that the rules index has nothing on it rather than inventing anything.", rule)
+	} else {
+		fmt.Fprintf(&b, "\n%d. If the provided excerpts do not contain the answer, say so plainly rather than inventing anything.", rule)
+	}
 
 	b.WriteString("\n\nREASONING DISCIPLINE — apply to every answer:")
 	b.WriteString(`
@@ -626,6 +700,15 @@ GROUNDING RULES — follow these strictly:
 	}
 
 	b.WriteString("\n\nKeep answers concise and practical for a player or judge at the table.")
+
+	// The follow-up line is consumed by the UI, which turns each question into
+	// a one-click branch. Answers already end in caveats — "this only works
+	// while the spell is still on the stack" — and every one of those is a
+	// question the reader should not have to retype the scenario to ask.
+	b.WriteString("\n\nEnd every answer with one final line, exactly:\n" +
+		"FOLLOW-UPS: <question> | <question>\n" +
+		"Two or three short questions this asker would plausibly ask next — the variations and edge cases your answer raises. " +
+		"Each must stand alone as a question. Write nothing after that line, and never refer to it in your prose.")
 	return strings.TrimSpace(b.String())
 }
 
@@ -750,27 +833,79 @@ type messagesRequest struct {
 	System    string    `json:"system,omitempty"`
 	Messages  []message `json:"messages"`
 	Stream    bool      `json:"stream,omitempty"`
+	Tools     []tool    `json:"tools,omitempty"`
 }
 
+// message is one turn of the exchange. Content is a plain string for ordinary
+// turns and a []contentBlock once tools are in play, because a turn that asks
+// for a rule lookup carries the model's text and its tool_use blocks together
+// and a tool result must name the request it answers.
 type message struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+// text returns a message's content when it is plain text, and "" when the turn
+// is made of blocks.
+func (m message) text() string {
+	s, _ := m.Content.(string)
+	return s
+}
+
+// contentBlock is one block of a structured turn.
+type contentBlock struct {
+	Type string `json:"type"`
+
+	Text string `json:"text,omitempty"`
+
+	// tool_use
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
+
+	// tool_result
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   string `json:"content,omitempty"`
+	IsError   bool   `json:"is_error,omitempty"`
+}
+
+// toolUse is one lookup the model asked for.
+type toolUse struct {
+	ID    string
+	Name  string
+	Input json.RawMessage
+}
+
+// tool is a tool definition sent with the request.
+type tool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"input_schema"`
 }
 
 type messagesResponse struct {
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
-	Usage Usage `json:"usage"`
+	Content    []contentBlock `json:"content"`
+	StopReason string         `json:"stop_reason"`
+	Usage      Usage          `json:"usage"`
 }
 
-// streamEvent is the subset of the Anthropic SSE event shape we consume.
+// streamEvent is the subset of the Anthropic SSE event shape we consume. Tool
+// calls arrive spread across events — the block start names the tool, and its
+// arguments trickle in as partial JSON — so a streamed answer that wants a rule
+// lookup can only be reassembled by tracking blocks by index.
 type streamEvent struct {
-	Type  string `json:"type"`
-	Delta struct {
+	Type         string `json:"type"`
+	Index        int    `json:"index"`
+	ContentBlock struct {
 		Type string `json:"type"`
-		Text string `json:"text"`
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"content_block"`
+	Delta struct {
+		Type        string `json:"type"`
+		Text        string `json:"text"`
+		PartialJSON string `json:"partial_json"`
+		StopReason  string `json:"stop_reason"`
 	} `json:"delta"`
 	Error struct {
 		Message string `json:"message"`

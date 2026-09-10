@@ -25,13 +25,6 @@
 	--frame-tab: url("/static/assets/ui/tab.png");
 	--frame-tab-active: url("/static/assets/ui/tab-active.png");
 	--frame-titleplate: url("/static/assets/ui/titleplate.png");
-
-	/* One transform, applied to both the scene layers and the sky behind them
-	   so the two cannot drift apart. Light on the sepia — each scene keeps its
-	   own colour now that the chrome is retinted to match it — and darkened
-	   rather than desaturated, so the art stays a place you can read instead
-	   of a texture. */
-	--scene-filter: sepia(0.16) saturate(0.92) brightness(0.62) contrast(1.02);
 }
 
 /* ---------- Sprites (Shikashi, 16 columns of 32px) ---------- */
@@ -339,8 +332,15 @@
       invisible. Nearly every layer tiles horizontally, so repeat-x covers the
       rest for free.
 
-   2. The layers are tinted, not blended. Sepia pulls each scene toward
-      Grimoire's warmth while leaving its form and its own hue legible.
+   2. The layers are tinted, not blended: a light sepia pulls each scene
+      toward Grimoire's warmth while leaving its form and its own hue
+      legible. That tint is baked into the shipped PNGs and into
+      --scene-sky by scripts/build-assets.py, not applied here. It was a
+      CSS `filter` once. Chrome folds a filter into the layer's cached
+      texture, so the parallax stayed free; Firefox re-runs the chain every
+      composite, and eight full-viewport layers of it — resampled again by
+      the backdrop-filter on .rail and .topbar — dropped scrolling to a
+      crawl. Do not put it back: change SCENE_TINT and rebuild.
 
    3. Travel is generous and non-linear — see DRIFT in scene.js. */
 
@@ -353,13 +353,12 @@
 	background: var(--stone-900);
 }
 
-/* The sky above the art. Same filter as the layers, so the two cannot drift
-   apart no matter how the tint is tuned. */
+/* The sky above the art. --scene-sky is sampled from the tinted layer, so
+   the two cannot drift apart no matter how the tint is tuned. */
 .scene-sky {
 	position: absolute;
 	inset: 0;
 	background: var(--scene-sky, var(--stone-900));
-	filter: var(--scene-filter);
 }
 
 .scene-layer {
@@ -373,7 +372,6 @@
 	background-position: 50% 100%;
 	background-size: auto calc(216px * var(--scene-scale, 3));
 	image-rendering: pixelated;
-	filter: var(--scene-filter);
 	will-change: transform;
 	transition: opacity 0.4s ease;
 }

@@ -630,6 +630,54 @@ kbd {
    treatment, because to the reader they are the same kind of citation. */
 .chip.chip-entity { color: var(--accent-deep); font-weight: 600; }
 
+/* Rule numbers and citations are buttons, and a button is unselectable by
+   default in WebKit and Gecko — so copying an answer dropped every rule number
+   in it and every chip beneath it. "referenced in rule :" is what landed in
+   the paste, which is precisely the opposite of what a cited answer is for.
+   These are text the reader is meant to be able to take with them. */
+.rule-ref,
+.chip {
+	-webkit-user-select: text;
+	user-select: text;
+}
+
+/* A rule number that does not exist in the index. Verification runs after an
+   answer renders (see verifyRuleRefs), and a number that resolves to nothing
+   is marked as an invention rather than dressed up as a citation. */
+.rule-ref[data-cite="unknown"] {
+	color: var(--ember-deep);
+	text-decoration: line-through;
+	filter: saturate(0.6);
+}
+
+/* The questions the sage says a reader would ask next, as one-click branches.
+   They carry whole sentences, so unlike other chips they wrap. */
+.followups {
+	margin-top: var(--sp-2);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1);
+	font-family: var(--font-ui);
+	font-size: var(--fs-xs);
+}
+.chip.chip-followup {
+	max-width: 100%;
+	white-space: normal;
+	text-align: left;
+	color: var(--accent-deep);
+}
+
+/* Named while the sage is fetching a rule mid-answer: the wire goes quiet for
+   as long as the lookup takes, and silence reads as a stall. */
+.lookup-note {
+	margin-top: var(--sp-2);
+	font-family: var(--font-ui);
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	font-style: italic;
+}
+
 /* rulings — official precedent citations under an answer */
 .rulings {
 	margin-top: var(--sp-3);
@@ -2751,6 +2799,7 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .msg-actions {
 	display: flex;
 	align-items: center;
+	gap: var(--sp-1);
 	margin-top: var(--sp-1);
 }
 .msg-action {

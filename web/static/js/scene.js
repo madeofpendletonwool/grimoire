@@ -103,11 +103,12 @@ function build(name) {
 			const layer = el("div", { class: "scene-layer" });
 			layer.style.backgroundImage = `url("/static/assets/scenes/${name}/${i}.png")`;
 			// Depth 1 is the foreground and travels furthest; 0 is the sky and
-			// holds still.
+			// holds still. Kept beside the element rather than on a data
+			// attribute: apply() runs on every pointer frame, and re-reading
+			// and re-parsing an attribute per layer per frame is pure waste.
 			const depth = 1 - i / Math.max(1, scene.layers - 1);
-			layer.dataset.depth = String(Math.pow(depth, DEPTH_CURVE));
 			root.append(layer);
-			state.layers.push(layer);
+			state.layers.push({ el: layer, depth: Math.pow(depth, DEPTH_CURVE), x: null, y: null });
 		}
 	}
 	root.append(el("div", { class: "scene-veil" }), el("div", { class: "scene-glow" }));
@@ -118,10 +119,19 @@ function build(name) {
 function apply() {
 	state.frame = 0;
 	for (const layer of state.layers) {
-		const depth = Number(layer.dataset.depth);
-		const x = state.target.x * DRIFT * depth;
-		const y = state.target.y * DRIFT * depth * 0.4;
-		layer.style.transform = `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)`;
+		// Whole pixels only. A fractional translate leaves the compositor
+		// resampling the art, which on 384x216 pixel art reads as a smear —
+		// the same reason --scene-scale is an integer.
+		const x = Math.round(state.target.x * DRIFT * layer.depth);
+		const y = Math.round(state.target.y * DRIFT * layer.depth * 0.4);
+		// The depth curve leaves the back of the stack travelling a pixel or
+		// less end to end, so most layers are unmoved on most frames. Writing
+		// the transform anyway would invalidate a full-viewport layer for
+		// nothing.
+		if (x === layer.x && y === layer.y) continue;
+		layer.x = x;
+		layer.y = y;
+		layer.el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
 	}
 }
 

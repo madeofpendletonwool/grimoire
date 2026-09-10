@@ -225,7 +225,7 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g, err := s.ground(r.Context(), corpus, req.Question)
+	g, err := s.ground(r.Context(), corpus, req.Question, history)
 	if err != nil {
 		sse.send("error", map[string]any{"error": fmt.Sprintf("retrieval failed: %v", err), "title": title})
 		return
@@ -277,12 +277,25 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
 	defer cancel()
 
-	answer, streamErr := s.llm.Stream(ctx, g.request(corpus, req.Question, history), func(text string) error {
+	llmReq := g.request(corpus, req.Question, history)
+	// A mid-answer lookup is dead air on the wire; say what is being consulted
+	// so the pause reads as work rather than a stall.
+	llmReq.OnLookup = func(tool, arg string) {
+		sse.send("lookup", map[string]any{"tool": tool, "arg": arg})
+	}
+	answer, streamErr := s.llm.Stream(ctx, llmReq, func(text string) error {
 		if err := ctx.Err(); err != nil {
 			return err // reader is gone or we ran out of time; stop pulling tokens
 		}
 		return sse.send("delta", map[string]any{"text": text})
 	})
+
+	// Rules the model fetched while answering are citations like any other, and
+	// the reader only learns about them now — the meta frame went out before
+	// the first token.
+	if extra := g.fetcher.sources(); len(extra) > 0 {
+		sse.send("sources", map[string]any{"sources": extra})
+	}
 
 	answer = strings.TrimSpace(answer)
 	if answer == "" && streamErr != nil {
@@ -319,8 +332,11 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 
 // marshalCitations encodes the citation payloads stored alongside an answer.
 func marshalCitations(g grounded) (sources, cardsJSON, entitiesJSON, rulingsJSON json.RawMessage) {
-	if len(g.sources) > 0 {
-		if b, err := json.Marshal(g.sources); err == nil {
+	// The cached citations are the ones the reader saw, which includes any rule
+	// the model fetched mid-answer — a replay that dropped them would show a
+	// different set of sources under the same answer.
+	if all := g.citations(); len(all) > 0 {
+		if b, err := json.Marshal(all); err == nil {
 			sources = b
 		}
 	}

@@ -5,7 +5,7 @@
 // resolve is stateless and not saved, so the transcript is cleared on entry.
 
 import { $, el, clear, isNarrow } from "./dom.js";
-import { streamResolve } from "./api.js";
+import { streamResolve, resolveScaffold } from "./api.js";
 import { state, activeCorpus, supportsResolve } from "./state.js";
 import { renderAnswer, bindRuleRefs, renderCitations } from "./render.js";
 import { closeDrawer } from "./drawer.js";
@@ -144,6 +144,35 @@ export function renderWelcome() {
 }
 
 /* ---------- Resolve flow ---------- */
+
+/**
+ * Hand a chat question to the resolver.
+ *
+ * The resolver walks a board and a sequence step by step, which is exactly
+ * what a stack question is — but stated as a sentence, in a mode the reader is
+ * already in. This transcribes the question into the resolver's notation,
+ * switches modes with the form filled in, and runs it. The form stays editable,
+ * because a transcription can be wrong and the reader must be able to see that
+ * and fix it rather than be quietly walked through the wrong board.
+ */
+export async function walkFromQuestion(question, history) {
+	if (!supportsResolve(activeCorpus())) return;
+	setFoot("Transcribing the scenario…");
+	let scaffold;
+	try {
+		scaffold = await resolveScaffold(activeCorpus(), question, history);
+	} catch (err) {
+		setFoot(`That scenario could not be transcribed: ${err.message}`, true);
+		return;
+	}
+	setMode("resolve");
+	$("resolver-board").value = scaffold.board || "";
+	$("resolver-sequence").value = scaffold.sequence || "";
+	$("resolver-note").value = scaffold.note || "";
+	for (const id of ["resolver-board", "resolver-sequence", "resolver-note"]) autosize($(id));
+	setFoot("");
+	submitResolver();
+}
 
 function submitResolver() {
 	if (state.streaming) return;

@@ -1332,6 +1332,14 @@ func runServe() error {
 		return fmt.Errorf("ensure index: %w", err)
 	}
 
+	// The cross-reference graph is derived from the indexed rules, so an index
+	// built before it existed can grow one locally — no refetch, no reindex.
+	if built, err := store.EnsureGraph(ctx); err != nil {
+		log.Printf("rule graph backfill failed (retrieval unaffected): %v", err)
+	} else if built {
+		log.Println("derived the rule cross-reference graph from the existing index")
+	}
+
 	// An install whose index predates the reading surface has an FTS index but
 	// empty reader tables. Backfill it in the background (same rebuild the
 	// admin button runs) so the books appear without a terminal session; the

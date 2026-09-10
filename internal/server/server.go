@@ -248,6 +248,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/card", s.handleCard)
 	mux.HandleFunc("GET /api/card/search", s.handleCardSearch)
 	mux.HandleFunc("POST /api/ask", s.handleAsk)
+	mux.HandleFunc("POST /api/citations", s.handleCitations)
+	mux.HandleFunc("POST /api/resolve/scaffold", s.handleResolveScaffold)
 	mux.HandleFunc("POST /api/resolve", s.handleResolve)
 	mux.HandleFunc("GET /api/chats", s.handleListChats)
 	mux.HandleFunc("POST /api/chats", s.handleCreateChat)
@@ -880,7 +882,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g, err := s.ground(r.Context(), corpus, req.Question)
+	g, err := s.ground(r.Context(), corpus, req.Question, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -926,7 +928,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		"configured":       true,
 		"cached":           false,
 		"answer":           answer,
-		"sources":          g.sources,
+		"sources":          g.citations(),
 		"cards":            g.cards,
 		"entities":         g.entities,
 		"rulings":          g.rulings,
@@ -946,10 +948,19 @@ type grounded struct {
 	entities   []entityView
 	rulings    []rulingView
 	unresolved []string
+	// fetcher answers the model's mid-answer rule lookups and collects what it
+	// returned, so those rules join the citations after the answer is done.
+	fetcher *ruleFetcher
+}
+
+// citations returns the sources the reader is shown: what retrieval found,
+// followed by anything the model went and fetched while answering.
+func (g grounded) citations() []searchHit {
+	return append(append([]searchHit{}, g.sources...), g.fetcher.sources()...)
 }
 
 func (g grounded) request(corpus data.Corpus, question string, history []llm.Turn) llm.Request {
-	return llm.Request{
+	req := llm.Request{
 		CorpusName: corpusDisplayName(corpus),
 		Docs:       g.docs,
 		Cards:      g.cardDocs,
@@ -959,18 +970,39 @@ func (g grounded) request(corpus data.Corpus, question string, history []llm.Tur
 		History:    history,
 		Question:   question,
 	}
+	// A nil *ruleFetcher in the interface would be a non-nil interface holding
+	// a nil pointer — the trap this codebase already has regression tests for
+	// on the embeddings path. Assign it only when there is one.
+	if g.fetcher != nil {
+		req.Fetcher = g.fetcher
+	}
+	return req
 }
 
 // ground runs retrieval for a question: a lenient OR match seeds the citation
 // list, those seeds are grown out to whole rule sections for the model (so a
 // mechanic arrives complete rather than as the one sub-rule that ranked), and
 // any card mentions are resolved to real oracle text.
-func (s *Server) ground(ctx context.Context, corpus data.Corpus, question string) (grounded, error) {
+func (s *Server) ground(ctx context.Context, corpus data.Corpus, question string, history []llm.Turn) (grounded, error) {
 	var g grounded
-	results, err := s.store.Retrieve(ctx, corpus, question, retrieveSeeds)
+	g.fetcher = &ruleFetcher{store: s.store, corpus: corpus}
+
+	// Cards are resolved before retrieval, not after: their type lines and
+	// oracle text name the mechanics the question is about, and anchoring
+	// reads those names to seed the rules that define them.
+	g.cardDocs, g.cards, g.unresolved = s.lookupQuestionCards(ctx, corpus, question)
+
+	// A follow-up ("the equipment gives it hexproof") is six words about one
+	// half of an interaction; searching for those six words alone finds the
+	// rules for that half and none of the rules that decide it. The query
+	// carries the earlier turns' subject matter so it doesn't.
+	results, err := s.store.Retrieve(ctx, corpus, retrievalQuery(question, history), retrieveSeeds)
 	if err != nil {
 		return g, err
 	}
+	anchors := s.anchorSeeds(ctx, corpus, s.anchorNumbers(ctx, corpus, question, g.cardDocs, history), results)
+	results = append(results, anchors...)
+
 	expanded, err := s.store.Expand(ctx, corpus, results)
 	if err != nil {
 		return g, err
@@ -980,7 +1012,6 @@ func (s *Server) ground(ctx context.Context, corpus data.Corpus, question string
 		g.docs = append(g.docs, llm.ContextDoc{Number: res.Number, Title: res.Title, Body: res.Body, Source: res.Source})
 	}
 	g.sources = toSources(results)
-	g.cardDocs, g.cards, g.unresolved = s.lookupQuestionCards(ctx, corpus, question)
 	g.rulingDocs, g.rulings = s.lookupCardRulings(ctx, corpus, g.cards)
 	// Neutral entity grounding (D&D/Open5e and future corpora). MTG's Scryfall
 	// resolver projects cards rather than neutral entities, so it is routed

@@ -41,7 +41,7 @@ html[data-scene="deadforest"] {
 	--stone-500: #3e3323;
 	--stone-line: #4a3d2a;
 	--stone-400: #584832;
-	--scene-sky: #bcc4af;
+	--scene-sky: #7b7d6e;
 	--frame-stone: url("/static/assets/ui/deadforest/panel-stone.png");
 	--frame-stone-active: url("/static/assets/ui/deadforest/panel-stone-active.png");
 	--frame-field: url("/static/assets/ui/deadforest/field.png");
@@ -61,7 +61,7 @@ html[data-scene="plains"] {
 	--stone-500: #222d40;
 	--stone-line: #29354c;
 	--stone-400: #303f5a;
-	--scene-sky: #6caff1;
+	--scene-sky: #506e8a;
 	--frame-stone: url("/static/assets/ui/plains/panel-stone.png");
 	--frame-stone-active: url("/static/assets/ui/plains/panel-stone-active.png");
 	--frame-field: url("/static/assets/ui/plains/field.png");
@@ -81,7 +81,7 @@ html[data-scene="snowy"] {
 	--stone-500: #2a2e38;
 	--stone-line: #323743;
 	--stone-400: #3b414f;
-	--scene-sky: #bab9b9;
+	--scene-sky: #797672;
 	--frame-stone: url("/static/assets/ui/snowy/panel-stone.png");
 	--frame-stone-active: url("/static/assets/ui/snowy/panel-stone-active.png");
 	--frame-field: url("/static/assets/ui/snowy/field.png");

@@ -1249,6 +1249,17 @@ async function postSSE(url, payload, handlers, signal) {
 	if (buffer.trim()) dispatch(buffer, handlers);
 }
 
+/** Check cited rule numbers against the index, so an answer's citations are
+ *  verified rather than trusted. Returns a check per number: "indexed" with the
+ *  rule's own title and text, or "unknown" for a number that does not exist. */
+export function verifyCitations(corpus, numbers) {
+	return fetch("/api/citations", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ corpus, numbers }),
+	}).then(json);
+}
+
 /** Post a chat question and consume the answer as server-sent events. */
 export function streamAnswer(chatID, question, handlers, signal) {
 	return postSSE(`/api/chats/${encodeURIComponent(chatID)}/messages`, { question }, handlers, signal);
@@ -1271,6 +1282,17 @@ export function streamCampaignAnswer(cid, chatID, question, handlers, signal) {
 export function streamCopilotAnswer(cid, question, sceneID, handlers, signal) {
 	return postSSE(`/api/campaigns/${encodeURIComponent(cid)}/ask`,
 		{ question, scene_id: sceneID || "" }, handlers, signal);
+}
+
+/** Transcribe a prose question into the resolver's board/sequence notation, so
+ *  a stack question asked in the chat can be walked step by step without the
+ *  reader restating it in another mode's form. */
+export function resolveScaffold(corpus, question, history) {
+	return fetch("/api/resolve/scaffold", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ corpus, question, history: history || [] }),
+	}).then(json);
 }
 
 /** Post a board + sequence to the resolver and consume the trace as SSE. */
@@ -1314,6 +1336,12 @@ function dispatch(frame, handlers) {
 	switch (event) {
 		case "meta": handlers.onMeta?.(payload); break;
 		case "delta": handlers.onDelta?.(payload.text || ""); break;
+		// The sage looked a rule up mid-answer: nothing arrives on the wire
+		// while it does, so the UI says what is being consulted.
+		case "lookup": handlers.onLookup?.(payload.tool || "", payload.arg || ""); break;
+		// Rules fetched during the answer, which the meta frame could not have
+		// carried — it went out before the first token.
+		case "sources": handlers.onSources?.(payload.sources || []); break;
 		case "done": handlers.onDone?.(payload); break;
 		case "error": handlers.onError?.(payload.error || "unknown error", payload); break;
 	}

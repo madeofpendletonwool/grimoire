@@ -4,14 +4,19 @@ import { openTool } from "./wm/wm.js";
 import { $, el, clear, isNarrow } from "./dom.js";
 import { api, streamAnswer } from "./api.js";
 import { state, activeCorpus, corpusLabel, supportsCards, saveCorpusPreference } from "./state.js";
-import { renderAnswer, bindRuleRefs, renderCitations, renderRulings } from "./render.js";
+import { renderAnswer, bindRuleRefs, renderCitations, renderRulings, verifyRuleRefs, copyAnswerButton, splitFollowUps, renderFollowUps } from "./render.js";
 import { openRule, openCard, closeDrawer } from "./drawer.js";
 import { openPalette } from "./palette.js";
-import { syncModeChrome, renderWelcome, isResolveMode } from "./resolve.js";
+import { syncModeChrome, renderWelcome, isResolveMode, walkFromQuestion } from "./resolve.js";
 import { shareButton } from "./shares.js";
 import { sprite, gi } from "./icons.js";
 
 let abortStream = null;
+
+// The open conversation as plain turns. The resolver handoff transcribes a
+// scenario that is usually built across several messages ("...and the
+// equipment gives it hexproof"), so it needs the turns, not just the last one.
+let transcript = [];
 
 const SUGGESTIONS = {
 	mtg: [
@@ -68,6 +73,7 @@ export function startNewChat() {
 	if (state.streaming) stopStreaming();
 	state.mode = "ask"; // "New chat" is a saved conversation; leave resolve mode.
 	state.chat = null;
+	transcript = [];
 	closeDrawer();
 	clear($("messages"));
 	$("welcome").hidden = false;
@@ -83,10 +89,14 @@ export async function openChat(id) {
 	try {
 		const data = await api.getChat(id);
 		state.chat = data.chat;
+		transcript = [];
 		$("welcome").hidden = true;
 		const list = clear($("messages"));
+		let lastQuestion = "";
 		for (const m of data.messages || []) {
-			list.append(m.role === "user" ? userMessage(m.content) : sageMessage(m));
+			if (m.role === "user") lastQuestion = m.content;
+			list.append(m.role === "user" ? userMessage(m.content) : sageMessage(m, lastQuestion));
+			transcript.push({ role: m.role, content: m.content });
 		}
 		syncChrome();
 		highlightHistory();
@@ -237,6 +247,7 @@ async function ask(question) {
 	$("welcome").hidden = true;
 	const list = $("messages");
 	list.append(userMessage(question));
+	transcript.push({ role: "user", content: question });
 
 	const { row, bubble, prose } = pendingSage();
 	list.append(row);
@@ -266,14 +277,25 @@ async function ask(question) {
 				renderAnswer(prose, text, corpus);
 				stick();
 			},
+			// The sage went back to the index mid-answer. Say what it is
+			// consulting, so the pause reads as work rather than a stall.
+			onLookup: (tool, arg) => {
+				showLookup(bubble, tool, arg);
+				stick();
+			},
+			// Rules fetched during the answer are citations too; the meta
+			// frame went out before the first token and could not carry them.
+			onSources: (extra) => {
+				meta = { ...meta, sources: [...(meta.sources || []), ...extra] };
+			},
 			onDone: (payload) => {
-				finishSage(row, bubble, prose, text, meta, corpus, payload.message_id);
+				finishSage(row, bubble, prose, text, meta, corpus, question, payload.message_id);
 			},
 			onError: (message) => {
 				if (text) {
 					// A partial answer is on screen and stored; note the cut-off
 					// rather than discarding what the reader already has.
-					finishSage(row, bubble, prose, text, meta, corpus);
+					finishSage(row, bubble, prose, text, meta, corpus, question);
 					row.append(el("p", { class: "drawer-note", text: message }));
 				} else {
 					row.classList.add("is-error");
@@ -286,7 +308,7 @@ async function ask(question) {
 	} catch (err) {
 		if (err.name === "AbortError") {
 			// Stopped on purpose: keep whatever text arrived.
-			finishSage(row, bubble, prose, text || "(stopped)", meta, corpus);
+			finishSage(row, bubble, prose, text || "(stopped)", meta, corpus, question);
 		} else {
 			row.classList.add("is-error");
 			prose.innerHTML = "";
@@ -333,28 +355,30 @@ function sageWho() {
 	return el("div", { class: "who" }, sprite("staff"), el("span", { text: "The Sage" }));
 }
 
-function sageMessage(m) {
+function sageMessage(m, question) {
 	const corpus = state.chat ? state.chat.corpus : activeCorpus();
 	const prose = el("div", { class: "prose" });
 	renderAnswer(prose, m.content, corpus);
 	const bubble = el("div", { class: "bubble" }, prose);
 	const row = el("div", { class: "msg msg-sage" }, sageWho(), bubble);
-	if (state.chat) {
-		const share = shareButton(state.chat.id, m.id);
-		if (share) row.append(el("div", { class: "msg-actions" }, share));
-	}
 	bindRuleRefs(prose, corpus);
 	const cites = renderCitations(m.sources, m.cards, m.entities, null, corpus);
 	if (cites) bubble.append(cites);
 	const rules = renderRulings(m.rulings);
 	if (rules) bubble.append(rules);
+	const { body, followUps } = splitFollowUps(m.content);
+	const branches = renderFollowUps(followUps, askFollowUp);
+	if (branches) bubble.append(branches);
+	attachActions(row, prose, body, corpus, m.id, question || "");
 	return row;
 }
 
 // finishSage seals a streamed answer. messageID is the stored assistant
 // message id from the done event — zero when the stream never completed, in
 // which case there is nothing durable to share.
-function finishSage(row, bubble, prose, text, meta, corpus, messageID) {
+function finishSage(row, bubble, prose, text, meta, corpus, question, messageID) {
+	clearLookup(bubble);
+	const { body, followUps } = splitFollowUps(text);
 	renderAnswer(prose, text, corpus);
 	bindRuleRefs(prose, corpus);
 	bubble.classList.remove("is-streaming");
@@ -362,10 +386,82 @@ function finishSage(row, bubble, prose, text, meta, corpus, messageID) {
 	if (cites) bubble.append(cites);
 	const rules = renderRulings(meta.rulings);
 	if (rules) bubble.append(rules);
+	const branches = renderFollowUps(followUps, askFollowUp);
+	if (branches) bubble.append(branches);
+	transcript.push({ role: "assistant", content: body });
+	attachActions(row, prose, body, corpus, messageID, question);
+}
+
+/**
+ * The actions under an answer: copy, and a share link once the turn is stored.
+ *
+ * The copy action waits on verification because it quotes the rules it cites,
+ * and those come back from the same check that marks the references — one
+ * request serving both.
+ */
+function attachActions(row, prose, body, corpus, messageID, question) {
+	const actions = el("div", { class: "msg-actions" });
+	let checks = [];
+	actions.append(copyAnswerButton(() => body, () => checks));
+	if (describesInteraction(corpus, question)) {
+		actions.append(el("button", {
+			class: "msg-action",
+			text: "Walk the stack",
+			attrs: { type: "button", "aria-label": "Walk this interaction step by step in the resolver" },
+			on: { click: () => walkFromQuestion(question, turnsBefore(question)) },
+		}));
+	}
 	if (state.chat && messageID) {
 		const share = shareButton(state.chat.id, messageID);
-		if (share) row.append(el("div", { class: "msg-actions" }, share));
+		if (share) actions.append(share);
 	}
+	row.append(actions);
+	verifyRuleRefs(prose, corpus).then((result) => { checks = result; });
+}
+
+// The turns that came before one question, so the resolver transcribes the
+// board as it stood when that question was asked rather than as the rest of
+// the conversation later left it.
+function turnsBefore(question) {
+	for (let i = transcript.length - 1; i >= 0; i--) {
+		if (transcript[i].role === "user" && transcript[i].content === question) {
+			return transcript.slice(0, i);
+		}
+	}
+	return transcript.slice();
+}
+
+// The resolver only has something to say about a question that describes
+// things happening in an order. "What does hexproof mean" has no stack to
+// walk; "can I equip in response to their instant" is a board and a sequence
+// written as a sentence, and that is the case the handoff exists for.
+const INTERACTION_RE = /\b(respond|response|stack|trigger(s|ed|ing)?|resolv(e|es|ed|ing)|counter(s|ed)?|target(s|ed|ing)?|attack(s|ing)?|block(s|ing)?|priority|sacrific|before|after|first|then|while)\b/i;
+
+function describesInteraction(corpus, question) {
+	return corpus === "mtg" && !!question && INTERACTION_RE.test(question);
+}
+
+/** Ask one of the sage's suggested follow-ups, as though it were typed. */
+function askFollowUp(question) {
+	const input = $("composer-input");
+	input.value = question;
+	autosize(input);
+	submitComposer();
+}
+
+/** A note under the streaming answer naming the rule being fetched. */
+function showLookup(bubble, tool, arg) {
+	let note = bubble.querySelector(".lookup-note");
+	if (!note) {
+		note = el("div", { class: "lookup-note" });
+		bubble.append(note);
+	}
+	const what = tool === "lookup_rule" ? `rule ${arg}` : `"${arg}"`;
+	note.textContent = `Consulting ${what}…`;
+}
+
+function clearLookup(bubble) {
+	bubble.querySelector(".lookup-note")?.remove();
 }
 
 /* ---------- Composer behaviour ---------- */

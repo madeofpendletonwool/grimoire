@@ -18,7 +18,6 @@ import colorsys
 import collections
 import math
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -285,8 +284,85 @@ def build_frames(ui, rpg, themes):
 
 # ------------------------------------------------------------------ scenes
 
+# The tint the backdrops ship with, baked into the pixels here instead of
+# applied by the browser.
+#
+# This used to be `filter: sepia(.16) saturate(.92) brightness(.62)
+# contrast(1.02)` on every .scene-layer. Chrome folds a filter into the
+# layer's cached texture and a parallax nudge then costs nothing; Firefox
+# re-runs the chain per composite, and eight full-viewport layers of it —
+# under two backdrop-filtered panels that resample the lot — is enough to
+# make scrolling stutter. The tint never varies at runtime, so the pixels are
+# where it belongs. pixel.css no longer applies it: changing it here is the
+# only way to move it.
+SCENE_TINT = (("sepia", 0.16), ("saturate", 0.92),
+              ("brightness", 0.62), ("contrast", 1.02))
+
+
+def _sepia_matrix(a):
+    s = 1 - a
+    return (0.393 + 0.607 * s, 0.769 - 0.769 * s, 0.189 - 0.189 * s,
+            0.349 - 0.349 * s, 0.686 + 0.314 * s, 0.168 - 0.168 * s,
+            0.272 - 0.272 * s, 0.534 - 0.534 * s, 0.131 + 0.869 * s)
+
+
+def _saturate_matrix(k):
+    return (0.213 + 0.787 * k, 0.715 - 0.715 * k, 0.072 - 0.072 * k,
+            0.213 - 0.213 * k, 0.715 + 0.285 * k, 0.072 - 0.072 * k,
+            0.213 - 0.213 * k, 0.715 - 0.715 * k, 0.072 + 0.928 * k)
+
+
+def filter_rgb(rgb, chain=SCENE_TINT):
+    """Apply a chain of CSS filter functions to one sRGB triple.
+
+    The shorthand filter functions are defined with
+    `color-interpolation-filters: sRGB`, so this is arithmetic straight on the
+    0..1 channel values — no linearisation, which is the usual way to get a
+    result that is close but visibly too dark. Each function is its own filter
+    primitive producing an image, so the value is clamped between steps and
+    not only at the end; sepia's matrix rows sum above 1, and without the
+    intermediate clamp the brightest pixels come out a shade hot.
+    """
+    c = [v / 255 for v in rgb]
+    for name, amount in chain:
+        if name in ("sepia", "saturate"):
+            m = (_sepia_matrix if name == "sepia" else _saturate_matrix)(amount)
+            c = [m[0] * c[0] + m[1] * c[1] + m[2] * c[2],
+                 m[3] * c[0] + m[4] * c[1] + m[5] * c[2],
+                 m[6] * c[0] + m[7] * c[1] + m[8] * c[2]]
+        elif name == "brightness":
+            c = [v * amount for v in c]
+        elif name == "contrast":
+            c = [v * amount + (0.5 - 0.5 * amount) for v in c]
+        else:
+            sys.exit(f"unknown filter function: {name}")
+        c = [min(1.0, max(0.0, v)) for v in c]
+    return tuple(round(v * 255) for v in c)
+
+
+def tinted(img, chain=SCENE_TINT):
+    """A copy of `img` with the filter chain applied.
+
+    Alpha is left alone — every function in the chain leaves it alone — and
+    fully transparent pixels are skipped so the tint cannot bleed a colour
+    into the packs' cleared regions. Colours are memoised: these are pixel art
+    with a few dozen shades apiece, so the whole set costs one pass.
+    """
+    out = pngkit.Image(img.w, img.h, bytearray(img.px))
+    cache = {}
+    for i in range(0, len(out.px), 4):
+        if not out.px[i + 3]:
+            continue
+        key = (out.px[i], out.px[i + 1], out.px[i + 2])
+        v = cache.get(key)
+        if v is None:
+            v = cache[key] = filter_rgb(key, chain)
+        out.px[i], out.px[i + 1], out.px[i + 2] = v
+    return out
+
+
 def build_scenes(scenes):
-    """Copy the layers and read each scene's colour back out of its own art."""
+    """Tint the layers and read each scene's colour back out of its own art."""
     themes = {}
     for key, src in scenes.items():
         dst = os.path.join(OUT, "scenes", key)
@@ -296,9 +372,14 @@ def build_scenes(scenes):
         if not layers:
             sys.exit(f"scene {key}: no numbered layers in {src}")
         for f in layers:
-            shutil.copyfile(os.path.join(src, f), os.path.join(dst, f))
+            pngkit.write(os.path.join(dst, f),
+                         tinted(pngkit.read(os.path.join(src, f))))
 
-        hue, sat = scene_hue(dst, layers)
+        # Measured on the untinted art: the chrome takes its hue from what the
+        # artist painted, not from what Grimoire's tint left of it. The sky
+        # below is read the other way round, off the tinted copy, because it
+        # has to butt up against the shipped pixels without a seam.
+        hue, sat = scene_hue(src, layers)
         themes[key] = {
             "layers": len(layers),
             "hue": hue,
