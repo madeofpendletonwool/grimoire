@@ -277,6 +277,24 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 }
 .wm-empty-title { margin: 0; font-family: var(--font-display); font-size: var(--fs-lg); color: var(--parchment); }
 .wm-empty-sub { margin: 0; font-size: var(--fs-sm); color: var(--parchment-2); opacity: 0.75; }
+/* It used to say "pick one from the rail, or press Ctrl+G" — which stopped
+   being true when the rail stopped listing tools, and was never an offer a
+   phone could take. */
+.wm-empty-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); justify-content: center; }
+.wm-empty-btn {
+	padding: 0.45rem var(--sp-3);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	background: var(--stone-700);
+	color: var(--parchment);
+	font-family: var(--font-display);
+	font-size: var(--fs-sm);
+	letter-spacing: 0.06em;
+	cursor: pointer;
+	transition: border-color 0.15s ease, color 0.15s ease;
+}
+.wm-empty-btn:hover { border-color: var(--accent); color: var(--gold-bright); }
+.wm-empty-btn.is-primary { border-color: var(--gold-dim); color: var(--gold-bright); }
 
 /* ---------- the leader's hint bar ---------- */
 
@@ -512,6 +530,21 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 }
 .wm-menu-empty { margin: var(--sp-3) 0; font-size: var(--fs-sm); opacity: 0.6; }
 
+.wm-prompt-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); margin-top: var(--sp-3); }
+.wm-prompt-btn {
+	padding: 0.4rem var(--sp-3);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	background: var(--stone-700);
+	color: var(--parchment);
+	font-family: var(--font-display);
+	font-size: var(--fs-sm);
+	letter-spacing: 0.06em;
+	cursor: pointer;
+}
+.wm-prompt-btn:hover { border-color: var(--accent); color: var(--gold-bright); }
+.wm-prompt-btn.is-primary { border-color: var(--gold-dim); color: var(--gold-bright); }
+
 /* ---------- workspaces ---------- */
 
 .wm-strip {
@@ -541,6 +574,41 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 .wm-ws.is-active { opacity: 1; color: var(--gold-bright); }
 .wm-ws-slot { color: var(--gold); opacity: 0.7; }
 
+/* The strip is navigation now, not a read-out, so it carries the verbs that
+   go with a workspace. All nine slots always existed; five of them were
+   invisible here and reachable only by Alt+N. */
+.wm-ws-wrap { flex: none; display: flex; align-items: center; }
+.wm-ws-wrap.is-active { background: rgba(255, 255, 255, 0.05); border-radius: var(--r-sm); }
+
+.wm-ws-more,
+.wm-ws-new {
+	flex: none;
+	display: grid;
+	place-items: center;
+	/* 32px square: the smallest a thumb reliably hits, and the reason these
+	   are not the 18px affordances the desktop layout would allow. */
+	min-width: 32px;
+	min-height: 32px;
+	padding: 0 var(--sp-1);
+	border: none;
+	border-radius: var(--r-sm);
+	background: none;
+	color: var(--parchment-2);
+	font-family: var(--font-pixel);
+	font-size: var(--fs-sm);
+	line-height: 1;
+	opacity: 0.55;
+	cursor: pointer;
+	transition: opacity 0.12s ease, color 0.12s ease;
+}
+.wm-ws-more:hover,
+.wm-ws-new:hover { opacity: 1; color: var(--gold-bright); background: rgba(255, 255, 255, 0.06); }
+.wm-ws-wrap.is-active .wm-ws-more { opacity: 0.8; color: var(--gold-bright); }
+.wm-ws-more-dots { font-size: var(--fs-md); letter-spacing: 0.05em; }
+
+.wm-ws-picker { gap: var(--sp-2); }
+.wm-ws-caret { color: var(--gold); opacity: 0.7; }
+
 /* ---------- narrow ---------- */
 
 /* Splits are ignored rather than shrunk — two 160px columns is not a layout.
@@ -549,6 +617,11 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
 	.wm-root { padding: 0; }
 	.wm-window { margin: 0; }
 	.wm-tabs.is-narrow > .wm-tabstrip { padding: var(--sp-1); }
+	/* One workspace button instead of a scrolling row of tabs plus a "+" —
+	   see renderWorkspaces. It is the only control here, so it gets the
+	   whole width and a real tap target. */
+	.wm-strip { padding: var(--sp-1) var(--sp-2); }
+	.wm-ws-picker { min-height: 32px; padding: var(--sp-1) var(--sp-2); }
 	.wm-hint { bottom: 0; border-radius: 0; }
 	.wm-sheet-body { grid-template-columns: 1fr; }
 }

@@ -271,7 +271,14 @@ export function initSettings() {
 	const btn = $("rail-settings");
 	if (!btn) return;
 
-	btn.replaceChildren(gi("settings"), el("span", { text: "Settings" }));
+	// The username slot is built here rather than in the template: this call
+	// replaces the button's children, so a span authored in index.html would
+	// be wiped before app.js ever filled it in.
+	btn.replaceChildren(
+		gi("settings"),
+		el("span", { text: "Settings" }),
+		el("span", { class: "rail-user", attrs: { id: "rail-user" } }),
+	);
 	// Build once up front rather than on first open: the popup then has content
 	// whenever it is shown, and opening it costs no layout.
 	buildPopup();

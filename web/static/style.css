@@ -323,22 +323,16 @@ kbd {
 .rail-action .gi { color: var(--gold-dim); }
 .rail-action:hover .gi { color: var(--gold-bright); }
 
+/* On the Settings row rather than its own: the foot is four rows shorter for
+   it, and "signed in as" belongs with the rest of this-account-this-install. */
 .rail-user {
 	margin-left: auto;
-	max-width: 9rem;
+	max-width: 8rem;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-size: var(--fs-xs);
 	opacity: 0.55;
-}
-.model-badge {
-	margin: var(--sp-2) var(--sp-2) 0;
-	font-family: var(--font-pixel);
-	font-size: 0.68rem;
-	letter-spacing: 0.02em;
-	opacity: 0.35;
-	line-height: 1.5;
 }
 
 .rail-scrim { display: none; }
@@ -2307,6 +2301,47 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .set-credit a { color: inherit; text-decoration: none; }
 .set-credit a:hover { color: var(--gold-bright); text-decoration: underline; }
 
+/* ---------- Account (settings popup) ----------
+   Sign-out and the corpus counts used to be two rows and a paragraph pinned
+   to the bottom of the rail, in a column that does not scroll. */
+.set-account { border-top: 1px solid var(--stone-line); padding-top: var(--sp-2); }
+.set-account-user {
+	margin: 0 0 var(--sp-2);
+	padding: 0 var(--sp-2);
+	font-size: var(--fs-sm);
+	color: var(--gold-bright);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.set-signout {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	width: 100%;
+	padding: 0.45rem var(--sp-2);
+	border: none;
+	border-radius: var(--r-sm);
+	background: none;
+	color: inherit;
+	font-size: var(--fs-sm);
+	cursor: pointer;
+	opacity: 0.75;
+}
+.set-signout:hover { background: rgba(255, 255, 255, 0.06); opacity: 1; color: var(--ember); }
+.set-signout .gi { color: var(--gold-dim); }
+.set-signout:hover .gi { color: var(--ember); }
+.set-signout[disabled] { opacity: 0.4; cursor: default; }
+.set-build {
+	margin: var(--sp-2) 0 0;
+	padding: 0 var(--sp-2);
+	font-family: var(--font-pixel);
+	font-size: 0.68rem;
+	letter-spacing: 0.02em;
+	opacity: 0.35;
+	line-height: 1.5;
+}
+
 /* ---------- Invitations (admin section of the settings popup) ---------- */
 .set-hint {
 	margin: var(--sp-1) 0 0;
@@ -3819,39 +3854,30 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .camp-place-field .enc-field { width: 100%; }
 .camp-place-field textarea { resize: vertical; }
 
-/* ---------- Registry-built rail ---------- */
+/* ---------- The way into the tools ----------
+   One button where fifteen used to be. At the D&D seat the registry-built
+   list was ~720px tall in a column with overflow:hidden, so the history and
+   the whole footer below it were clipped off the bottom of the rail. */
 
-.rail-tools {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
+/* This is the only pointer route to the tools, so it has to read as a control
+   rather than as one more line of text. Bordered, not gold: the gold in this
+   column belongs to New chat, and two primaries is no primary. */
+.rail-tools-btn {
+	margin: 0 var(--sp-3) var(--sp-3);
+	width: auto;
+	padding: var(--sp-2);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-md);
+	background: var(--stone-700);
+	opacity: 0.9;
+	transition: border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
-/* A tool already on screen reads as a destination you are at, not one you can
-   go to — the rail reflects the workspace rather than listing possibilities. */
-.rail-tools .rail-action.is-open { color: var(--gold-bright); }
-.rail-tools .rail-action.is-open::before {
-	content: "";
-	position: absolute;
-	left: 0;
-	top: 50%;
-	width: 3px;
-	height: 1.1em;
-	margin-top: -0.55em;
-	background: var(--gold);
+.rail-tools-btn:hover {
+	border-color: var(--accent);
+	background: var(--stone-700);
+	opacity: 1;
 }
-.rail-tools .rail-action { position: relative; }
-
-.rail-accel {
-	margin-left: auto;
-	font-family: var(--font-pixel);
-	font-size: var(--fs-xs);
-	color: var(--gold-dim);
-	opacity: 0;
-	transition: opacity 0.12s ease;
-	white-space: nowrap;
-}
-.rail-tools .rail-action:hover .rail-accel,
-.rail-tools .rail-action:focus-visible .rail-accel { opacity: 1; }
+.rail-tools-btn kbd { margin-left: auto; }
 
 /* ---------- The conversation's own header ----------
    This was the app's topbar, back when the chat was the page and every other
@@ -3872,10 +3898,6 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 }
 .chat-actions { margin-left: auto; display: flex; gap: var(--sp-1); flex: none; }
 .chat-head .conv-title { flex: none; }
-
-@media (prefers-reduced-motion: reduce) {
-	.rail-accel { transition: none; }
-}
 
 /* ---------- Tools at window width ----------
    Every rule above that says `@media (max-width: 55rem)` is answering the

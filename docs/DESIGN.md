@@ -170,9 +170,12 @@ seats: {
 },
 ```
 
-That one entry gives it a rail button (filtered to its game), a command-menu
-row, a `Ctrl+G` accelerator, a line in the keyboard cheat sheet, and permission
-to appear in a saved layout. `corpus` is the whole of Magic/D&D separation —
+That one entry gives it a row in the tool picker (filtered to its game), a
+command-menu row, a `Ctrl+G` accelerator, a line in the keyboard cheat sheet,
+and permission to appear in a saved layout. The picker is reached from the
+rail's **Open a tool…**, from a window's ⋯ menu and from `Ctrl+G` — the rail
+itself does not list tools, because at the D&D seat that list was taller than
+the rail and clipped the history and footer off the bottom of it. `corpus` is the whole of Magic/D&D separation —
 there is no list of surfaces to close on a game switch, and no
 `html[data-corpus]` rule to write.
 

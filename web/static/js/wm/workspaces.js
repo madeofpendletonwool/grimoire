@@ -24,14 +24,36 @@ import * as wm from "./wm.js";
 const SLOTS = 9;
 const SAVE_DELAY = 600;   // a gutter drag emits a change per frame
 
-const emptySlot = (slot) => ({ slot, name: `Workspace ${slot}`, tree: null, focus: null, seeded: false });
+/**
+ * A slot with nothing in it.
+ *
+ * `seeded` means a preset put something here; `saved` means the server has a
+ * row for it. The strip needs both: a slot that is neither has never been
+ * touched by anyone and stays out of the way, while a slot the user emptied
+ * on purpose is still theirs and must keep its place in the strip.
+ */
+const emptySlot = (slot) => ({
+	slot, name: `Workspace ${slot}`, tree: null, focus: null, zoom: null,
+	seeded: false, saved: false,
+});
 
 /** Build a slot from its preset, or an empty one if it has none. */
 function seed(corpus, seat, slot) {
 	const preset = presetFor(corpus, seat, slot);
 	if (!preset) return emptySlot(slot);
-	return { slot, name: preset.name, tree: preset.build(), focus: null, seeded: true };
+	return { slot, name: preset.name, tree: preset.build(), focus: null, zoom: null, seeded: true, saved: false };
 }
+
+/**
+ * Does this slot belong in the workspace strip?
+ *
+ * Pure, and exported for the test: an emptied-but-saved slot used to fail
+ * this and vanish from the strip on the next load, which left the workspace
+ * reachable only by Alt+N — a keyboard-only escape from a state a single
+ * mouse click (close the last window) could put you in.
+ */
+export const showsInStrip = (entry, active) =>
+	!!entry && (!!entry.tree || entry.seeded || entry.saved || entry.slot === active);
 
 /* ---------- state ---------- */
 
@@ -86,7 +108,10 @@ export async function loadSet(corpus) {
 	for (const row of saved) {
 		const { root, dropped } = T.parse(row.tree, { isKnownTool: knownTool });
 		if (dropped.length) state.dropped.push(...dropped);
-		set.set(row.slot, { slot: row.slot, name: row.name, tree: root, focus: null, seeded: false });
+		set.set(row.slot, {
+			slot: row.slot, name: row.name, tree: root, focus: null, zoom: null,
+			seeded: false, saved: true,
+		});
 	}
 
 	// Only seed slots the account has never saved. A user who deliberately
@@ -123,17 +148,26 @@ function applyActive() {
 	const slot = activeSlot();
 	const entry = setFor(state.corpus).get(slot) || emptySlot(slot);
 	setFor(state.corpus).set(slot, entry);
-	wm.setLayout(entry.tree, { focusTool: entry.focus });
+	wm.setLayout(entry.tree, { focusTool: entry.focus, zoomTool: entry.zoom });
 	state.onUpdate();
 }
 
-/** Copy the live tree back into the slot before leaving it. */
+/**
+ * Copy the live tree back into the slot before leaving it.
+ *
+ * Zoom is captured by tool name rather than by leaf id, the way focus already
+ * is: ids are regenerated whenever a tree is parsed, so an id would survive
+ * exactly as long as the session and silently stop matching after a reload.
+ * It is deliberately not serialised — zoom is a "make this big for a minute"
+ * gesture, and a saved one would be a surprise on the next sign-in.
+ */
 function captureCurrent() {
 	const slot = activeSlot();
 	const set = setFor(state.corpus);
 	const entry = set.get(slot) || emptySlot(slot);
 	entry.tree = wm.currentTree();
 	entry.focus = wm.focusedTool();
+	entry.zoom = wm.zoomedTool();
 	set.set(slot, entry);
 }
 
@@ -148,6 +182,73 @@ export function rename(slot, name) {
 	set.set(slot, entry);
 	save(slot);
 	state.onUpdate();
+}
+
+/** The lowest slot nobody is using, or 0 when all nine are spoken for. */
+export function freeSlot() {
+	const set = setFor(state.corpus);
+	for (let slot = 1; slot <= SLOTS; slot++) {
+		const entry = set.get(slot);
+		if (!showsInStrip(entry, activeSlot())) return slot;
+	}
+	return 0;
+}
+
+/** Does this slot have a preset to reset back to? A slot the user made has
+    none, so the UI offers it "close" where a seeded slot offers "reset". */
+export const hasPreset = (slot) => !!presetFor(state.corpus, state.seat, slot);
+
+/**
+ * Make a new workspace holding one tool, and switch to it.
+ *
+ * This is the answer to "I just want Chat open": a workspace with a single
+ * leaf is exactly that, it persists, and it costs one Alt+N to come back to.
+ * Before this existed the five spare slots were real but unreachable without
+ * the keyboard — `list()` returned them and the strip filtered them out.
+ */
+export function create(name, tool) {
+	const slot = freeSlot();
+	if (!slot) return 0;
+
+	captureCurrent();
+	setFor(state.corpus).set(slot, {
+		slot,
+		name: String(name || `Workspace ${slot}`).trim().slice(0, 80),
+		tree: tool ? T.leaf(tool) : null,
+		focus: tool || null,
+		zoom: null,
+		seeded: false,
+		saved: false,
+	});
+	state.active.set(state.corpus, slot);
+	applyActive();
+	save(slot);
+	return slot;
+}
+
+/**
+ * Throw a workspace away.
+ *
+ * The slot goes back to being untouched — no row on the server, nothing in
+ * the strip — unless it has a preset, in which case emptying it would only
+ * re-seed it on the next load and the honest thing is to reset it instead.
+ */
+export function remove(slot) {
+	if (slot < 1 || slot > SLOTS) return;
+	if (hasPreset(slot)) return reset(slot);
+
+	setFor(state.corpus).delete(slot);
+	api.uiDeleteLayout(state.corpus, slot).catch(() => { /* gone from the UI either way */ });
+
+	if (slot === activeSlot()) {
+		// Land somewhere real rather than on an empty slot the strip is
+		// about to stop drawing.
+		const next = list().find((e) => e.slot !== slot && showsInStrip(e, 0));
+		state.active.set(state.corpus, next ? next.slot : 1);
+		applyActive();
+	} else {
+		state.onUpdate();
+	}
 }
 
 /** Put a slot back to its preset — the escape hatch from a wrecked layout. */
@@ -177,6 +278,9 @@ function save(slot) {
 			if (!entry) return;
 			try {
 				await api.uiSaveLayout(corpus, s, entry.name, T.serialize(entry.tree));
+				// It has a row now, so the strip must keep drawing it even
+				// once the user empties it (see showsInStrip).
+				entry.saved = true;
 			} catch (err) {
 				// A layout that did not reach the server is a lost arrangement,
 				// never a lost window — the live tree is unaffected.

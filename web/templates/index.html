@@ -44,12 +44,16 @@
 				<span data-ico="scroll"></span> New chat
 			</button>
 
-		<!-- Tools. Built from web/static/js/wm/registry.js and filtered by the
-		     active game, which is the whole of corpus separation now: this
-		     used to be nine hardcoded buttons plus a block of
-		     html[data-corpus] display:none rules in style.css, both of which
-		     had to be edited by hand for every new tool. -->
-		<nav class="rail-tools" id="rail-tools" aria-label="Tools"></nav>
+		<!-- One button, not fifteen. The rail listed every tool the registry
+		     offered, which at the D&D seat was ~720px of buttons in a column
+		     that does not scroll: the history and the footer below it were
+		     simply clipped off. Tools are reached from here, from the
+		     workspace strip, and from Ctrl+G — three routes to the same
+		     registry, none of them a wall. -->
+			<button type="button" class="rail-action rail-tools-btn" id="rail-tools-btn">
+				<span data-gi="menu"></span> Open a tool…
+				<kbd id="tools-kbd">Ctrl G</kbd>
+			</button>
 
 			<nav class="history" id="history" aria-label="Chat history"></nav>
 
@@ -60,11 +64,6 @@
 				</button>
 				<button type="button" class="rail-action" id="rail-settings"
 					aria-expanded="false" aria-controls="settings-popup">Settings</button>
-				<button type="button" class="rail-action" id="rail-signout" hidden>
-					<span data-gi="signout"></span> Sign out
-					<span class="rail-user" id="rail-user"></span>
-				</button>
-				<p class="model-badge" id="model-badge"></p>
 				<div class="settings-popup" id="settings-popup" role="dialog" aria-label="Settings" hidden></div>
 			</div>
 		</aside>
@@ -80,6 +79,7 @@
 				<div class="wm-strip" id="wm-strip" role="tablist" aria-label="Workspaces"></div>
 				<div class="topbar-actions">
 					<button type="button" class="icon-btn" id="topbar-search" aria-label="Search rules and cards" title="Search rules and cards" data-gi="search"></button>
+					<button type="button" class="icon-btn" id="topbar-commands" aria-label="Commands" title="Commands" data-gi="wand"></button>
 					<button type="button" class="icon-btn" id="wm-help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" data-gi="ask"></button>
 				</div>
 			</header>

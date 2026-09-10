@@ -9,11 +9,11 @@
 // once.
 //
 // Now: one entry here plus one module exporting `tool`. Everything else — the
-// rail, the command menu, the keyboard cheat sheet, corpus filtering, what a
-// saved layout is allowed to name — reads this table.
+// tool picker, the command menu, the keyboard cheat sheet, corpus filtering,
+// what a saved layout is allowed to name — reads this table.
 //
 // Fields
-//   title      what the titlebar, rail and command menu call it
+//   title      what the titlebar, the picker and the command menu call it
 //   icon       a sprite name from ICONS in icons.js (32px pixel art)
 //   corpus     "dnd", "mtg", or "*" for the tools both games share
 //   role       "dm" for the tools that belong to the DM's seat only; absent
@@ -147,7 +147,7 @@ export const TOOLS = Object.freeze({
 	// with corpus: "mtg". Nothing outside this object changes.
 });
 
-/** Ids in a stable order — the rail, the command menu and Ctrl+G all use it. */
+/** Ids in a stable order — the picker, the command menu and Ctrl+G all use it. */
 export const TOOL_IDS = Object.freeze(Object.keys(TOOLS));
 
 export const isTool = (id) => Object.hasOwn(TOOLS, id);
@@ -174,7 +174,7 @@ export function inSeat(id, seat) {
  * The tools one game offers one seat, in registry order.
  *
  * This is the whole of corpus separation, and now of seat separation too: the
- * rail, the command menu, the cheat sheet and preset seeding all read it. It
+ * picker, the command menu, the cheat sheet and preset seeding all read it. It
  * replaced closeForeignSurfaces() — a hand-maintained list of DOM ids to close
  * when the game changed — and the html[data-corpus] display:none rules that
  * hid the other game's rail buttons. Both were lists that had to be edited per

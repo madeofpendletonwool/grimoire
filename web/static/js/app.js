@@ -18,73 +18,190 @@ import { initVoice } from "./voice.js";
 import { initAdmin } from "./admin.js";
 import { initLibrary } from "./library.js";
 import { initShares } from "./shares.js";
-import { hydrate, sprite } from "./icons.js";
-import { initScene, initSettings } from "./scene.js";
+import { hydrate, gi } from "./icons.js";
+import { initScene, initSettings, addSettingsSection, rebuildSettings } from "./scene.js";
 import { initDice } from "./dice.js";
 import { initBoard } from "./board.js";
 
-import { TOOLS, toolsFor, inSeat } from "./wm/registry.js";
+import { TOOLS, inSeat } from "./wm/registry.js";
 import { loadSeat, seatRole } from "./seat.js";
 import * as wm from "./wm/wm.js";
 import { initWM, openTool } from "./wm/wm.js";
 import { initDrag } from "./wm/drag.js";
-import { initKeys, pushModal, popModal, refreshSheet, pretty } from "./wm/keys.js";
-import { openMenu, closeMenu, toolItems } from "./wm/menu.js";
+import { initKeys, pushModal, popModal, refreshSheet } from "./wm/keys.js";
+import { openMenu, closeMenu, closePrompt, openPrompt, openConfirm, toolItems } from "./wm/menu.js";
 import * as ws from "./wm/workspaces.js";
-
-/* ---------- the rail ---------- */
-
-/**
- * Build the tool list for one game at one seat. This replaced nine hardcoded
- * buttons in index.html and the html[data-corpus] display:none block in
- * style.css — two hand-maintained lists that both had to be edited for every
- * new tool. The seat (ADR 22) is the second dimension: a member-only account
- * is offered the member tools, not a DM cockpit with failing buttons.
- */
-function renderTools(corpus) {
-	const nav = clear($("rail-tools"));
-	for (const id of toolsFor(corpus, seatRole())) {
-		const def = TOOLS[id];
-		nav.append(el("button", {
-			class: "rail-action",
-			attrs: { type: "button", "data-tool": id, title: def.blurb || def.title },
-			on: { click: () => openTool(id) },
-		},
-			sprite(def.icon),
-			el("span", { text: def.title }),
-			el("kbd", { class: "rail-accel", text: pretty("mod+g") + " " + def.accel.toUpperCase() }),
-		));
-	}
-	markOpenTools();
-}
-
-/** A dot on the tools already on screen, so the rail reflects the workspace. */
-function markOpenTools() {
-	const open = wm.openTools();
-	for (const btn of $("rail-tools").children) {
-		btn.classList.toggle("is-open", open.has(btn.dataset.tool));
-	}
-}
 
 /* ---------- the workspace strip ---------- */
 
+/**
+ * The strip is the app's navigation now that the rail has stopped listing
+ * every tool, so it has to carry the things that were previously keyboard-only
+ * or missing outright: making a workspace, naming one, and throwing one away.
+ *
+ * On a narrow screen a row of tabs plus a "+" is more chrome than a phone can
+ * spare, so it collapses to the active workspace's name and opens the same
+ * actions as a menu.
+ */
 function renderWorkspaces() {
 	const strip = clear($("wm-strip"));
 	const active = ws.activeSlot();
-	for (const entry of ws.list()) {
-		// Slots with nothing in them and no preset stay out of the way until
-		// something is moved into them.
-		if (!entry.tree && entry.slot !== active && !entry.seeded) continue;
+	const entries = ws.list().filter((entry) => ws.showsInStrip(entry, active));
+
+	if (isNarrow()) {
+		const current = entries.find((e) => e.slot === active);
 		strip.append(el("button", {
-			class: `wm-ws${entry.slot === active ? " is-active" : ""}`,
-			attrs: { type: "button", role: "tab", "aria-selected": String(entry.slot === active) },
-			on: { click: () => ws.switchTo(entry.slot) },
+			class: "wm-ws is-active wm-ws-picker",
+			attrs: { type: "button", "aria-label": `Workspace: ${current?.name || active}. Switch or edit` },
+			on: { click: () => openWorkspaceSwitcher() },
 		},
-			el("span", { class: "wm-ws-slot", text: String(entry.slot) }),
-			el("span", { text: entry.name }),
+			el("span", { class: "wm-ws-slot", text: String(active) }),
+			el("span", { text: current?.name || `Workspace ${active}` }),
+			el("span", { class: "wm-ws-caret", attrs: { "aria-hidden": "true" }, text: "\u25be" }),
 		));
+		wm.setEmptyActions({ reset: ws.hasPreset(active) ? () => ws.reset() : null });
+		return;
 	}
-	markOpenTools();
+
+	for (const entry of entries) {
+		const on = entry.slot === active;
+		const tab = el("div", { class: `wm-ws-wrap${on ? " is-active" : ""}` },
+			el("button", {
+				class: `wm-ws${on ? " is-active" : ""}`,
+				attrs: { type: "button", role: "tab", "aria-selected": String(on) },
+				on: {
+					click: () => ws.switchTo(entry.slot),
+					// A rename is one gesture for anyone who expects tabs to
+					// behave like tabs; the ⋯ menu is the one that has to work
+					// on a touchscreen, and does.
+					dblclick: () => renameWorkspace(entry.slot),
+				},
+			},
+				el("span", { class: "wm-ws-slot", text: String(entry.slot) }),
+				el("span", { text: entry.name }),
+			),
+		);
+		// Only the workspace you are looking at offers its actions: every one
+		// of them acts on the active layout anyway, and nine ⋯ buttons in a
+		// row is noise.
+		if (on) {
+			tab.append(el("button", {
+				class: "wm-ws-more",
+				attrs: { type: "button", "aria-label": `Options for ${entry.name}`, title: "Workspace options" },
+				on: { click: () => openWorkspaceMenu(entry.slot) },
+			}, el("span", { class: "wm-ws-more-dots", attrs: { "aria-hidden": "true" }, text: "\u22ef" })));
+		}
+		strip.append(tab);
+	}
+
+	// Re-offered per workspace rather than wired once at boot: only a seeded
+	// slot has a preset to go back to, and offering "reset" on a slot the user
+	// made would delete its row and drop it out of the strip.
+	wm.setEmptyActions({ reset: ws.hasPreset(active) ? () => ws.reset() : null });
+
+	strip.append(el("button", {
+		class: "wm-ws wm-ws-new",
+		attrs: { type: "button", "aria-label": "New workspace", title: "New workspace" },
+		on: { click: () => newWorkspace() },
+	}, el("span", { attrs: { "aria-hidden": "true" }, text: "+" })));
+}
+
+/* ---------- workspace actions ---------- */
+
+/**
+ * Make a workspace holding one tool.
+ *
+ * Picking the tool first is the point: "I just want Chat open" is a real and
+ * common want, and it is one click, one pick, and a workspace that persists —
+ * rather than a mode, or an empty slot you then have to furnish.
+ */
+function newWorkspace() {
+	if (!ws.freeSlot()) {
+		return notice("All nine workspaces are in use", "Close one from its ⋯ menu to free a slot.");
+	}
+	pickTool("New workspace — pick a tool", (id) => {
+		ws.create(TOOLS[id]?.title || "Workspace", id);
+		renderWorkspaces();
+	});
+}
+
+function renameWorkspace(slot) {
+	const entry = ws.list().find((e) => e.slot === slot);
+	openPrompt({
+		title: `Rename workspace ${slot}`,
+		label: "Workspace name",
+		value: entry?.name || "",
+		placeholder: "At the table",
+		onSubmit: (name) => {
+			ws.rename(slot, name);
+			renderWorkspaces();
+		},
+		onClose: popModal,
+	});
+	pushModal();
+}
+
+/** Everything you can do to one workspace, on one button a thumb can hit. */
+function openWorkspaceMenu(slot) {
+	const entry = ws.list().find((e) => e.slot === slot);
+	const name = entry?.name || `Workspace ${slot}`;
+	const items = [
+		{ label: "Rename…", hint: "Workspace", run: () => renameWorkspace(slot) },
+		{ label: "Open a tool…", hint: "Workspace", run: () => pickTool("Open a tool", (id) => openTool(id)) },
+		{ label: "Close every window", hint: "Workspace", run: () => wm.closeAll() },
+	];
+	// A seeded slot resets; a slot the user made has no preset to go back to,
+	// so the honest offer there is to throw it away.
+	if (ws.hasPreset(slot)) {
+		items.push({
+			label: "Reset to preset", hint: "Workspace",
+			run: () => confirmDestroy(`Reset “${name}” to its preset?`, "Reset it", () => {
+				ws.reset(slot);
+				renderWorkspaces();
+			}),
+		});
+	} else {
+		items.push({
+			label: "Close workspace", hint: "Workspace",
+			run: () => confirmDestroy(`Close “${name}”?`, "Close it", () => {
+				ws.remove(slot);
+				renderWorkspaces();
+			}),
+		});
+	}
+	openMenu({ title: name, items, onClose: popModal });
+	pushModal();
+}
+
+/** The narrow-screen strip: switch, or reach the same actions. */
+function openWorkspaceSwitcher() {
+	const active = ws.activeSlot();
+	const items = ws.list()
+		.filter((entry) => ws.showsInStrip(entry, active))
+		.map((entry) => ({
+			label: entry.name,
+			hint: entry.slot === active ? "Current" : `Workspace ${entry.slot}`,
+			run: () => {
+				ws.switchTo(entry.slot);
+				renderWorkspaces();
+			},
+		}));
+	items.push({ label: "New workspace…", hint: "Workspace", run: () => newWorkspace() });
+	items.push({ label: `Options for “${ws.list().find((e) => e.slot === active)?.name || active}”…`, hint: "Workspace", run: () => openWorkspaceMenu(active) });
+	openMenu({ title: "Workspaces", items, onClose: popModal });
+	pushModal();
+}
+
+function confirmDestroy(title, confirmText, onConfirm) {
+	openConfirm({ title, confirmText, onConfirm, onClose: popModal });
+	pushModal();
+}
+
+/** A dead end with an exit — the menu is the only dialog that reads well on
+    a phone, so a message uses it rather than a fourth kind of box. */
+function notice(title, detail) {
+	openMenu({ title, items: [{ label: detail, hint: "", run: () => {} }], onClose: popModal });
+	pushModal();
 }
 
 /* ---------- the cheat sheet ---------- */
@@ -118,7 +235,6 @@ async function pickCorpus(corpus) {
 	api.uiSavePrefs({ corpus }).catch(() => { /* localStorage still has it */ });
 
 	await ws.switchCorpus(corpus);
-	renderTools(corpus);
 	renderWorkspaces();
 	refreshSheet(corpus, seatRole());
 }
@@ -144,6 +260,13 @@ function initRail() {
 	// rather than in the chat module's own one-shot wiring.
 	$("new-chat").addEventListener("click", () => startNewChat());
 
+	// The one pointer route to every tool, now that the rail does not list
+	// them. It opens the same registry-built picker the keyboard does.
+	$("rail-tools-btn").addEventListener("click", () => pickTool("Open a tool", (id) => openTool(id)));
+	if (/mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || "")) {
+		$("tools-kbd").textContent = "\u2318 G";
+	}
+
 	$("rail-search").addEventListener("click", () => openPalette());
 	$("topbar-search").addEventListener("click", () => openPalette());
 }
@@ -164,6 +287,29 @@ function pickTool(title, run) {
 	pushModal();
 }
 
+/**
+ * What you can do to one window.
+ *
+ * Split, move, zoom and tab/untab existed only as chords — Alt+F and the
+ * leader's Shift pairs — which means they did not exist at all on a phone or
+ * for anyone who has not read the cheat sheet. The titlebar's ⋯ calls this.
+ */
+function openWindowMenu() {
+	const items = [
+		{ label: "Zoom", hint: "Fill the workspace", run: () => wm.toggleZoom() },
+		{ label: "Split right…", hint: "Window", run: () => pickTool("Split right", (id) => wm.splitFocused("row", id)) },
+		{ label: "Split down…", hint: "Window", run: () => pickTool("Split down", (id) => wm.splitFocused("col", id)) },
+		{ label: "Tab / untab", hint: "Window", run: () => wm.toggleTabsOnFocused() },
+		{ label: "Move left", hint: "Move", run: () => wm.moveWindow("left") },
+		{ label: "Move right", hint: "Move", run: () => wm.moveWindow("right") },
+		{ label: "Move up", hint: "Move", run: () => wm.moveWindow("up") },
+		{ label: "Move down", hint: "Move", run: () => wm.moveWindow("down") },
+		{ label: "Close window", hint: "Window", run: () => wm.closeWindow() },
+	];
+	openMenu({ title: "Window", items, onClose: popModal });
+	pushModal();
+}
+
 /** Everything the shell can do, in one list. */
 function openCommandMenu(cmd) {
 	const items = [
@@ -174,10 +320,14 @@ function openCommandMenu(cmd) {
 		{ label: "Zoom window", hint: "Window", run: cmd.zoom },
 		{ label: "Close window", hint: "Window", run: cmd.close },
 		{ label: "Close every window", hint: "Window", run: cmd.closeAll },
+		{ label: "New workspace…", hint: "Workspace", run: cmd.newWorkspace },
+		{ label: "Rename this workspace…", hint: "Workspace", run: cmd.renameWorkspace },
 		{ label: "Reset workspace to preset", hint: "Workspace", run: cmd.resetWorkspace },
-		...ws.list().map((entry) => ({
-			label: entry.name, hint: `Workspace ${entry.slot}`, run: () => ws.switchTo(entry.slot),
-		})),
+		...ws.list()
+			.filter((entry) => ws.showsInStrip(entry, ws.activeSlot()))
+			.map((entry) => ({
+				label: entry.name, hint: `Workspace ${entry.slot}`, run: () => ws.switchTo(entry.slot),
+			})),
 		{ label: "Keyboard shortcuts", hint: "Help", run: () => toggleSheet(true) },
 	];
 	openMenu({ title: "Commands", items, onClose: popModal });
@@ -197,6 +347,7 @@ function commands() {
 		help: () => toggleSheet(),
 		// Escape unwinds one layer at a time, topmost first.
 		dismiss: () => {
+			if (closePrompt()) return;
 			if (closeMenu()) return;
 			if (!$("wm-sheet-layer").hidden) return toggleSheet(false);
 			closePalette();
@@ -224,12 +375,56 @@ function commands() {
 
 		workspace: (n) => ws.switchTo(n),
 		resetWorkspace: () => ws.reset(),
+		newWorkspace: () => newWorkspace(),
+		renameWorkspace: () => renameWorkspace(ws.activeSlot()),
 	};
 	cmd.commands = () => openCommandMenu(cmd);
 	return cmd;
 }
 
 /* ---------- account, meta ---------- */
+
+// Who is signed in, for the settings popup's account section. The section is
+// rebuilt on every theme change, so it reads this rather than closing over a
+// value that was only correct the first time.
+let account = null;
+
+/**
+ * Sign-out and the corpus counts, in the settings popup.
+ *
+ * They used to be two more rows and a paragraph at the bottom of the rail —
+ * a column that does not scroll and was already overflowing. They describe
+ * this account and this install, which is what the popup is for.
+ */
+function accountSection() {
+	if (!account?.username && !state.meta) return null;
+	const box = el("div", { class: "set-group set-account" });
+
+	if (account?.username) {
+		box.append(el("p", { class: "set-label", text: "Signed in" }));
+		box.append(el("p", { class: "set-account-user", text: account.username }));
+		box.append(el("button", {
+			class: "set-signout",
+			attrs: { type: "button" },
+			on: {
+				click: async (e) => {
+					e.currentTarget.disabled = true;
+					try {
+						await api.logout();
+					} catch (_) { /* the cookie is gone either way; land on the gate */ }
+					window.location.assign("/");
+				},
+			},
+		}, gi("signout"), el("span", { text: "Sign out" })));
+	}
+
+	const counts = (state.meta?.corpora || [])
+		.map((c) => `${c.name}: ${c.count.toLocaleString()} entries`)
+		.join(" · ");
+	if (counts) box.append(el("p", { class: "set-build", text: counts }));
+
+	return box;
+}
 
 async function initAccount() {
 	let auth;
@@ -240,29 +435,22 @@ async function initAccount() {
 	}
 	if (!auth.username) return;
 
-	$("rail-user").textContent = auth.username;
-	const button = $("rail-signout");
-	button.hidden = false;
-	button.addEventListener("click", async () => {
-		button.disabled = true;
-		try {
-			await api.logout();
-		} catch (_) { /* the cookie is gone either way; land on the gate */ }
-		window.location.assign("/");
-	});
+	account = auth;
+	// scene.js owns this button's contents; a failed settings init must not
+	// take the account section down with it.
+	const slot = $("rail-user");
+	if (slot) slot.textContent = auth.username;
+	rebuildSettings();
 }
 
 async function loadMeta() {
 	try {
 		state.meta = await api.meta();
 	} catch (_) {
-		return; // non-fatal: the app works without the badge
+		return; // non-fatal: the app works without the counts
 	}
 	const meta = state.meta;
-	const counts = (meta.corpora || [])
-		.map((c) => `${c.name}: ${c.count.toLocaleString()} entries`)
-		.join(" · ");
-	$("model-badge").textContent = counts;
+	rebuildSettings();
 
 	if (meta.chat_configured === false) {
 		setFoot("The sage is asleep — set ANTHROPIC_API_KEY on the server to enable chat. Rule search still works.", true);
@@ -328,8 +516,27 @@ async function start() {
 	// The window manager, then the layouts it renders.
 	safe("wm", () => initWM(state.corpus));
 	safe("drag", initDrag);
-	safe("keys", () => initKeys(commands(), { corpus: state.corpus, seat: seatRole() }));
-	wm.onChange(markOpenTools);
+	const cmd = commands();
+	safe("keys", () => initKeys(cmd, { corpus: state.corpus, seat: seatRole() }));
+	// Ctrl+Shift+P was the command menu's only door. A shell whose commands
+	// are reachable one way, by chord, is a shell that does not exist on a
+	// phone.
+	safe("commands-button", () => {
+		$("topbar-commands").addEventListener("click", () => openCommandMenu(cmd));
+	});
+
+	// The window manager owns no navigation of its own: an empty workspace and
+	// a window's ⋯ both ask the shell, which is the only thing that knows what
+	// this seat may open.
+	safe("wm-hooks", () => {
+		wm.setWindowMenu(() => openWindowMenu());
+		// `reset` is set per workspace by renderWorkspaces; only the opener is
+		// constant.
+		wm.setEmptyActions({ open: () => pickTool("Open a tool", (id) => openTool(id)) });
+	});
+	// The strip shows which slots hold something, so it follows the layout.
+	wm.onChange(renderWorkspaces);
+	safe("account-section", () => addSettingsSection(accountSection));
 
 	try {
 		await ws.initWorkspaces(state.corpus, seatRole(), renderWorkspaces);
@@ -337,8 +544,16 @@ async function start() {
 		console.error("workspaces failed to load:", err);
 		safe("fallback-chat", () => openTool("chat"));
 	}
-	safe("tools", () => renderTools(state.corpus));
 	safe("workspaces", renderWorkspaces);
+
+	// Crossing the narrow threshold swaps the strip between tabs and a single
+	// picker, so it is the one resize the shell redraws for.
+	let wasNarrow = isNarrow();
+	window.addEventListener("resize", () => {
+		if (isNarrow() === wasNarrow) return;
+		wasNarrow = isNarrow();
+		renderWorkspaces();
+	});
 
 	safe("chrome", syncChrome);
 	safe("account", initAccount);

@@ -68,6 +68,12 @@ export const focusedTool = () => {
 	return leaf ? leaf.tool : null;
 };
 export const openTools = () => T.toolsIn(wm.root);
+/** The zoomed window's tool, for a workspace to carry across a switch. Leaf
+    ids are regenerated on parse; tool names are not. */
+export const zoomedTool = () => {
+	const leaf = wm.zoom && T.find(wm.root, wm.zoom);
+	return leaf ? leaf.tool : null;
+};
 /** Is this tool already on screen? Navigation helpers need to know whether
     opening it will mount it (and run its own load) or merely focus it. */
 export const isOpen = (tool) => !!T.findByTool(wm.root, tool);
@@ -91,12 +97,13 @@ export function initWM(corpus) {
  * Replace the whole layout — switching workspace, or loading a saved one.
  * Tools that survive the swap keep their mounted state; the rest are torn down.
  */
-export function setLayout(tree, { focusTool = null } = {}) {
+export function setLayout(tree, { focusTool = null, zoomTool = null } = {}) {
 	wm.root = tree;
 	reconcileMounts();
 
 	const wanted = focusTool && T.findByTool(wm.root, focusTool);
 	wm.focus = wanted ? wanted.id : (T.firstLeaf(wm.root)?.id ?? null);
+	wm.zoom = (zoomTool && T.findByTool(wm.root, zoomTool)?.id) ?? null;
 	render();
 	changed();
 }
@@ -391,9 +398,20 @@ function createWindow(leaf) {
 	return rec;
 }
 
+/**
+ * Who to ask for a window's action list.
+ *
+ * Split, move, zoom and tab/untab were keyboard-only: Alt+F, the leader's
+ * Shift pairs, and nothing a pointer could reach. That is fine for a shell
+ * you live in and useless on a phone or for someone who opens the app twice
+ * a month, so the titlebar now asks app.js for a menu of them.
+ */
+let windowMenu = null;
+export const setWindowMenu = (fn) => { windowMenu = fn; };
+
 function titlebar(leaf, def) {
 	const controls = el("div", { class: "wm-controls" },
-		iconBtn("tab", "Tab this window with its neighbour", "menu"),
+		iconBtn("menu", "Window options", "menu"),
 		iconBtn("close", "Close window", "close"),
 	);
 	return el("header", { class: "wm-titlebar f-titleplate" },
@@ -548,12 +566,51 @@ function renderNarrow() {
 		strip, el("div", { class: "wm-tabbody" }, ...panels));
 }
 
+/**
+ * What an empty workspace offers.
+ *
+ * Injected rather than imported: the window manager has no opinion about
+ * where tools come from, and app.js owns the picker. It used to tell people
+ * to "pick one from the rail" — which stopped being true when the rail
+ * stopped listing tools — and otherwise only offered a keyboard chord, which
+ * is no offer at all on a phone.
+ */
+let emptyActions = { open: null, reset: null };
+export function setEmptyActions(actions) {
+	const next = { ...emptyActions, ...actions };
+	// renderWorkspaces re-offers these on every structural change, and that
+	// runs from changed() — i.e. straight after a render. Repainting for an
+	// unchanged offer would double every render of an empty workspace.
+	const same = Object.keys(next).every((k) => !!next[k] === !!emptyActions[k]);
+	emptyActions = next;
+	if (!same && !wm.root) render();
+}
+
 function emptyState() {
-	return el("div", { class: "wm-empty" },
+	const node = el("div", { class: "wm-empty" },
 		safeSprite("spellbook", { scale: 3 }),
 		el("p", { class: "wm-empty-title", text: "No tools open" }),
-		el("p", { class: "wm-empty-sub", text: "Pick one from the rail, or press Ctrl+G then a letter." }),
+		el("p", { class: "wm-empty-sub", text: "This workspace is empty." }),
 	);
+	const actions = el("div", { class: "wm-empty-actions" });
+	if (emptyActions.open) {
+		actions.append(el("button", {
+			class: "wm-empty-btn is-primary",
+			attrs: { type: "button" },
+			on: { click: () => emptyActions.open() },
+			text: "Open a tool",
+		}));
+	}
+	if (emptyActions.reset) {
+		actions.append(el("button", {
+			class: "wm-empty-btn",
+			attrs: { type: "button" },
+			on: { click: () => emptyActions.reset() },
+			text: "Reset to preset",
+		}));
+	}
+	if (actions.childElementCount) node.append(actions);
+	return node;
 }
 
 /** Focus is a class, not a rebuild — the frame swaps to panel-stone-active. */
@@ -589,7 +646,12 @@ function onHostClick(e) {
 		const win = ctl.closest(".wm-window");
 		const id = win?.dataset.node;
 		if (ctl.dataset.wm === "close") closeWindow(id);
-		else if (ctl.dataset.wm === "tab") { setFocus(id); toggleTabsOnFocused(); }
+		else if (ctl.dataset.wm === "menu") {
+			// Focus first: every command in the menu acts on the focused
+			// window, and tapping another window's ⋯ must retarget them.
+			setFocus(id);
+			windowMenu?.(id);
+		}
 		return;
 	}
 

@@ -170,3 +170,106 @@ export function toolItems(corpus, seat = SEAT_DM, run) {
 		run: () => run(id),
 	}));
 }
+
+/* ---------- prompt ---------- */
+
+// A rename needs a text field, which the menu above cannot be: it filters a
+// fixed list. Rather than a second dialog system, this borrows the menu's
+// layer, scrim and frame, so both dismiss the same way and a caller has one
+// thing to reason about.
+let prompting = null;
+
+/**
+ * Ask for one line of text.
+ *
+ * `onSubmit` receives the trimmed value and is not called for an empty one:
+ * every caller renames something that already has a name, and clearing it is
+ * never what the user meant — ws.rename would reject it anyway.
+ */
+export function openPrompt({ title, label, value = "", placeholder = "", submitText = "Save", onSubmit, onClose }) {
+	closePrompt();
+
+	const input = el("input", {
+		class: "wm-menu-input",
+		attrs: { type: "text", value, placeholder, "aria-label": label || title, autocomplete: "off" },
+	});
+
+	const submit = () => {
+		const next = input.value.trim();
+		closePrompt();
+		if (next) onSubmit?.(next);
+	};
+
+	const layer = el("div", {
+		class: "wm-menu-layer",
+		attrs: { role: "dialog", "aria-modal": "true", "aria-label": title },
+	},
+		el("div", { class: "wm-menu-scrim", attrs: { "data-prompt-close": "" } }),
+		el("form", { class: "wm-menu f-stone", on: { submit: (e) => { e.preventDefault(); submit(); } } },
+			el("header", { class: "wm-menu-head" },
+				el("h2", { class: "wm-menu-title", text: title }),
+			),
+			input,
+			el("div", { class: "wm-prompt-actions" },
+				el("button", {
+					class: "wm-prompt-btn",
+					attrs: { type: "button", "data-prompt-close": "" },
+					text: "Cancel",
+				}),
+				el("button", { class: "wm-prompt-btn is-primary", attrs: { type: "submit" }, text: submitText }),
+			),
+		),
+	);
+
+	prompting = { layer, onClose };
+	document.body.append(layer);
+
+	layer.addEventListener("click", (e) => {
+		if (e.target.closest("[data-prompt-close]")) closePrompt();
+	});
+	input.addEventListener("keydown", (e) => {
+		// Escape is stopped here as well as handled: the shell's dispatcher
+		// would otherwise unwind a second layer behind this one in the same
+		// keystroke.
+		if (e.key !== "Escape") return;
+		e.preventDefault();
+		e.stopPropagation();
+		closePrompt();
+	});
+
+	input.focus();
+	input.select();
+	return true;
+}
+
+export const isPromptOpen = () => !!prompting;
+
+export function closePrompt() {
+	if (!prompting) return false;
+	const { layer, onClose } = prompting;
+	prompting = null;
+	layer.remove();
+	onClose?.();
+	return true;
+}
+
+/**
+ * A yes/no question, as a menu of two.
+ *
+ * Throwing away a layout someone arranged deserves a confirmation, but not a
+ * third dialog primitive — the menu already answers arrows, Enter, Escape and
+ * touch, which is the whole requirement.
+ *
+ * The safe answer is listed first because the menu pre-selects row zero and
+ * focuses its filter box: a stray Enter must not destroy the workspace.
+ */
+export function openConfirm({ title, confirmText, cancelText = "Keep it", onConfirm, onClose }) {
+	return openMenu({
+		title,
+		items: [
+			{ label: cancelText, hint: "", run: () => {} },
+			{ label: confirmText, hint: "", icon: "close", run: () => onConfirm?.() },
+		],
+		onClose,
+	});
+}
