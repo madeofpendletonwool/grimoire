@@ -18,20 +18,37 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/madeofpendletonwool/grimoire/internal/pubsub"
 )
 
 // Store persists games, seats and the event log.
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	db     *sql.DB
+	now    func() time.Time
+	broker *pubsub.Broker
 }
 
-// New builds a store on an open database handle.
+// New builds a store on an open database handle. The store carries its
+// own broker: game writes wake the game's SSE readers (MAD-326), and no
+// campaign topic ever collides with a game id.
 func New(db *sql.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("engine: nil database handle")
 	}
-	return &Store{db: db, now: time.Now().UTC}, nil
+	return &Store{db: db, now: time.Now().UTC, broker: pubsub.New()}, nil
+}
+
+// Subscribe wakes when anything writes this game — an append, a setup
+// change or a rewind. The returned cancel must be called when the
+// reader goes away.
+func (s *Store) Subscribe(gameID string) (<-chan struct{}, func()) {
+	return s.broker.Subscribe(gameID)
+}
+
+// notify pings the game's readers. Pings carry no data — a wake just
+// means "re-query", so the push channel cannot widen what a reader sees.
+func (s *Store) notify(gameID string) {
+	s.broker.Notify(gameID)
 }
 
 // DB exposes the handle for callers wiring transactions around store
@@ -73,6 +90,7 @@ func (s *Store) CreateGame(ctx context.Context, owner, name, format string, star
 		g.CreatedAt.UnixMilli(), g.UpdatedAt.UnixMilli()); err != nil {
 		return nil, fmt.Errorf("insert mtg game: %w", err)
 	}
+	s.notify(g.ID)
 	return g, nil
 }
 
@@ -110,6 +128,71 @@ func (s *Store) GetGame(ctx context.Context, id string) (*Game, error) {
 // ErrNotFound marks a game id that does not exist for the caller.
 var ErrNotFound = errors.New("mtg game not found")
 
+// ListGames reads one owner's games, most recently updated first — the
+// account's game list. Another owner's games are absent from the rows,
+// not filtered after the fact.
+func (s *Store) ListGames(ctx context.Context, owner string) ([]*Game, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at
+		  FROM mtg_games WHERE owner_id = ? ORDER BY updated_at DESC, id`, owner)
+	if err != nil {
+		return nil, fmt.Errorf("list mtg games: %w", err)
+	}
+	defer rows.Close()
+	var out []*Game
+	for rows.Next() {
+		g := &Game{}
+		var (
+			status           string
+			created, updated int64
+			started, ended   sql.NullInt64
+		)
+		if err := rows.Scan(&g.ID, &g.OwnerID, &g.Name, &g.Format, &g.StartingLife, &status,
+			&created, &updated, &started, &ended); err != nil {
+			return nil, err
+		}
+		g.Status = Status(status)
+		g.CreatedAt, g.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
+		if started.Valid {
+			t := time.UnixMilli(started.Int64).UTC()
+			g.StartedAt = &t
+		}
+		if ended.Valid {
+			t := time.UnixMilli(ended.Int64).UTC()
+			g.EndedAt = &t
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// LatestOrd reads the log head — the ordinal a stream resumes from when
+// it has no cursor of its own.
+func (s *Store) LatestOrd(ctx context.Context, gameID string) (int64, error) {
+	var ord int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(ord), 0) FROM mtg_events WHERE game_id = ?`, gameID).Scan(&ord); err != nil {
+		return 0, fmt.Errorf("latest ord: %w", err)
+	}
+	return ord, nil
+}
+
+// EventIDAt reads one row's id at an ordinal — the stream's rewind
+// sentinel: the row a cursor points at must still be the row the reader
+// last saw, or the log was rewound and re-appended past it.
+func (s *Store) EventIDAt(ctx context.Context, gameID string, ord int64) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM mtg_events WHERE game_id = ? AND ord = ?`, gameID, ord).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("mtg event %d: %w", ord, ErrNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("read event id: %w", err)
+	}
+	return id, nil
+}
+
 // SeatPlayer writes a seat row: position in turn order, a display name,
 // optionally a bound user, an attached deck and the denormalized
 // commander. Setup only — once the log begins, seats are what
@@ -124,6 +207,17 @@ func (s *Store) SeatPlayer(ctx context.Context, gameID string, position int, nam
 	}
 	if g.Status != StatusSetup {
 		return fmt.Errorf("%w: cannot seat players once the game is %s", ErrInvalid, g.Status)
+	}
+	// A taken position is a rejected request, not a constraint violation
+	// surfacing as a broken pipe — the API maps it onto ErrInvalid.
+	var taken string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id FROM mtg_seats WHERE game_id = ? AND position = ?`, gameID, position).Scan(&taken)
+	if err == nil {
+		return fmt.Errorf("%w: seat %d is already taken", ErrInvalid, position)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("load seat: %w", err)
 	}
 	// A seated deck with no explicit commander adopts the deck's own:
 	// commander damage and tax bookkeeping need it on every cast.
@@ -148,6 +242,7 @@ func (s *Store) SeatPlayer(ctx context.Context, gameID string, position int, nam
 		commander, life, s.now().UnixMilli()); err != nil {
 		return fmt.Errorf("seat player: %w", err)
 	}
+	s.notify(gameID)
 	return nil
 }
 
@@ -187,6 +282,7 @@ func (s *Store) AttachDeck(ctx context.Context, gameID string, position int, dec
 		deckID, seatCommander, gameID, position); err != nil {
 		return fmt.Errorf("attach deck: %w", err)
 	}
+	s.notify(gameID)
 	return nil
 }
 
@@ -308,6 +404,7 @@ func (s *Store) Submit(ctx context.Context, gameID string, action Action) ([]Eve
 	if err != nil {
 		return nil, nil, err
 	}
+	s.notify(gameID)
 	next := state.FoldInto(persisted)
 	return persisted, next, nil
 }
@@ -508,6 +605,7 @@ func (s *Store) RewindTo(ctx context.Context, gameID string, ord int64) (*State,
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("rewind commit: %w", err)
 	}
+	s.notify(gameID)
 	return s.State(ctx, gameID)
 }
 

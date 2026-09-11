@@ -110,6 +110,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/table"
+	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/internal/uistate"
 )
@@ -1702,6 +1703,14 @@ func runServe() error {
 		return err
 	}
 
+	// The Magic table engine (MAD-326, stage 3 of MAD-321): games, seats
+	// and the append-only ordinal log. Its store carries its own broker —
+	// game writes wake the game's stream readers and no one else's.
+	magicEngine, err := engine.New(store.DB())
+	if err != nil {
+		return err
+	}
+
 	// The state-aware encounter director (MAD-427): advisory monster
 	// tactics grounded in the live battle — the statblocks the tracker
 	// resolves plus the ledger's, effects engine's and tracker's own
@@ -1756,6 +1765,7 @@ func runServe() error {
 	srv = srv.WithDirector(directorEngine)
 	srv = srv.WithStats(statsEngine)
 	srv = srv.WithLeveling(levelingEngine)
+	srv = srv.WithGames(magicEngine)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	srv = srv.WithHandouts(handoutOptions())
