@@ -84,8 +84,8 @@ func (s *State) sbaRound(sba Action) []Event {
 
 	// CR 704.5f/g/i: creatures die at zero toughness or of lethal marked
 	// damage (indestructible says no), planeswalkers at no loyalty.
-	// Deathtouch-aware lethality needs per-source damage tracking, which
-	// is MAD-325's combat arithmetic.
+	// Lethal damage includes the deathtouch rule (CR 702.2c): any nonzero
+	// damage from a deathtouch source is lethal, tracked per source.
 	for _, id := range s.objectIDs() {
 		o, ok := s.Objects[id]
 		if !ok || o.Zone != ZoneBattlefield || o.Phased {
@@ -97,7 +97,8 @@ func (s *State) sbaRound(sba Action) []Event {
 			if *c.Toughness <= 0 {
 				return s.deathEvents(sba, o, causeZeroToughness)
 			}
-			if o.Damage >= *c.Toughness && !hasString(c.Keywords, "Indestructible") {
+			if !hasString(c.Keywords, "Indestructible") &&
+				(o.Damage >= *c.Toughness || s.deathtouchMarked(o)) {
 				return s.deathEvents(sba, o, causeLethalDamage)
 			}
 		}
@@ -216,6 +217,23 @@ func (s *State) leaveEvents(a Action, seat int, cause, card string) []Event {
 			a.stamp(Event{Kind: EventStepEntered, Phase: "beginning", Step: "untap"}))
 	}
 	return evs
+}
+
+// deathtouchMarked reports whether the object carries nonzero damage
+// from a deathtouch source — lethal for any toughness (CR 702.2c). The
+// check reads the source's computed keywords, so printed deathtouch
+// survives the source's own death.
+func (s *State) deathtouchMarked(o *Object) bool {
+	for srcID, dmg := range o.DamageBySource {
+		if dmg <= 0 {
+			continue
+		}
+		if src, ok := s.Objects[srcID]; ok && !src.Phased &&
+			hasString(s.Keywords(srcID), "Deathtouch") {
+			return true
+		}
+	}
+	return false
 }
 
 // CommanderTax returns the commander tax owed for the next cast of a
