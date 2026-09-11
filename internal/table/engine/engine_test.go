@@ -70,6 +70,16 @@ func summon(t *testing.T, s *State, seat int, name string, power, toughness int)
 	return id
 }
 
+// perm puts a non-creature permanent token (an artifact, an aura entering
+// attached, equipment) on a seat's battlefield. summon is for creatures;
+// a 0/0 "creature" stand-in would be a zero-toughness state-based action.
+func perm(t *testing.T, s *State, seat int, spec TokenSpec, host int64) int64 {
+	t.Helper()
+	id := s.NextObject
+	act(t, s, Action{Kind: ActionCreateToken, Seat: seat, Token: &spec, AttachTo: host})
+	return id
+}
+
 // land puts a land on the battlefield (playing from an unknown hand keeps
 // the count honest: unknown stays unknown).
 func land(t *testing.T, s *State, seat int, name string) int64 {
@@ -78,6 +88,26 @@ func land(t *testing.T, s *State, seat int, name string) int64 {
 	act(t, s, Action{Kind: ActionPlayLand, Seat: seat, Card: name,
 		Base: &BaseChars{Name: name, Types: []string{"Land"}}})
 	return id
+}
+
+// toMain walks the turn skeleton to the precombat main phase, where the
+// active player holds priority and the play actions are ungated by step.
+func toMain(t *testing.T, s *State) {
+	t.Helper()
+	toStep(t, s, "precombat_main", "main")
+}
+
+// toStep advances until the game reaches a phase/step. ADVANCE is the
+// walk control and needs no priority.
+func toStep(t *testing.T, s *State, phase, step string) {
+	t.Helper()
+	for i := 0; i < len(turnStructure)+1; i++ {
+		if s.Phase == phase && s.Step == step {
+			return
+		}
+		act(t, s, Action{Kind: ActionAdvance, Seat: s.TurnSeat})
+	}
+	t.Fatalf("never reached %s/%s (at %s/%s)", phase, step, s.Phase, s.Step)
 }
 
 func TestStartGame(t *testing.T) {
@@ -113,8 +143,15 @@ func TestStartGame(t *testing.T) {
 	if s.Turn != 1 || s.TurnSeat != 1 || s.Phase != "beginning" || s.Step != "untap" {
 		t.Fatalf("turn = %d/%d phase = %s/%s", s.Turn, s.TurnSeat, s.Phase, s.Step)
 	}
+	// The untap step grants priority to no one (CR 502.3); zero is that
+	// sentinel, not seat zero.
+	if s.PrioritySeat != 0 {
+		t.Fatalf("priority during untap = %d", s.PrioritySeat)
+	}
+	// The first step that grants priority hands it to the active player.
+	act(t, s, Action{Kind: ActionAdvance, Seat: 1})
 	if s.PrioritySeat != 1 {
-		t.Fatalf("priority = %d", s.PrioritySeat)
+		t.Fatalf("priority in upkeep = %d", s.PrioritySeat)
 	}
 }
 
@@ -203,6 +240,7 @@ func TestZoneTrackingLevels(t *testing.T) {
 
 func TestPlayLand(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	id := land(t, s, 1, "Forest")
 	if o := s.Objects[id]; o.Zone != ZoneBattlefield || o.Controller != 1 || o.Identity.Card != "Forest" {
 		t.Fatalf("land = %+v", o)
@@ -211,18 +249,25 @@ func TestPlayLand(t *testing.T) {
 		t.Fatalf("lands this turn = %d", s.Seats[1].LandsThisTurn)
 	}
 	rejected(t, s, Action{Kind: ActionPlayLand, Seat: 1, Card: "Second Forest"})
-	// Seat 2 can still drop theirs.
-	land(t, s, 2, "Mountain")
-	// A known-empty hand vetoes the drop.
+	// Seat 2 can drop theirs — in seat 1's upkeep, after a pass gives
+	// them priority. (A land on another player's turn is unusual but
+	// legal; what matters to the engine is the priority window.)
 	s2 := start(t, nil)
-	act(t, s2, Action{Kind: ActionSetZoneCount, Seat: 1, Zone: ZoneHand, To: intPtr(0)})
-	rejected(t, s2, Action{Kind: ActionPlayLand, Seat: 1, Card: "Forest"})
+	act(t, s2, Action{Kind: ActionAdvance, Seat: 1})
+	act(t, s2, Action{Kind: ActionPassPriority, Seat: 1})
+	land(t, s2, 2, "Mountain")
+	// A known-empty hand vetoes the drop.
+	s3 := start(t, nil)
+	toMain(t, s3)
+	act(t, s3, Action{Kind: ActionSetZoneCount, Seat: 1, Zone: ZoneHand, To: intPtr(0)})
+	rejected(t, s3, Action{Kind: ActionPlayLand, Seat: 1, Card: "Forest"})
 }
 
 func intPtr(n int) *int { return &n }
 
 func TestCastAndResolve(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	act(t, s, Action{Kind: ActionSetZoneCount, Seat: 1, Zone: ZoneHand, To: intPtr(7)})
 	id := s.NextObject
 	act(t, s, Action{Kind: ActionCast, Seat: 1, Card: "Grizzly Bears",
@@ -255,6 +300,7 @@ func TestCastAndResolve(t *testing.T) {
 
 func TestCastSorceryResolvesToGraveyard(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	act(t, s, Action{Kind: ActionCast, Seat: 1, Card: "Divination",
 		Base: &BaseChars{Types: []string{"Sorcery"}}})
 	for seat := 1; seat <= 3; seat++ {
@@ -267,6 +313,7 @@ func TestCastSorceryResolvesToGraveyard(t *testing.T) {
 
 func TestCastCommanderFromCommand(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	act(t, s, Action{Kind: ActionCast, Seat: 1, FromZone: ZoneCommand,
 		Card: "Atraxa, Praetors' Voice",
 		Base: &BaseChars{Types: []string{"Creature"}, Power: intPtr(4), Toughness: intPtr(4)}})
@@ -285,8 +332,10 @@ func TestCastCommanderFromCommand(t *testing.T) {
 
 func TestCastRejections(t *testing.T) {
 	s := start(t, nil)
-	rejected(t, s, Action{Kind: ActionCast, Seat: 1})                   // no card
-	rejected(t, s, Action{Kind: ActionCast, Seat: 9, Card: "Anything"}) // no seat
+	toMain(t, s)
+	rejected(t, s, Action{Kind: ActionCast, Seat: 1})                        // no card
+	rejected(t, s, Action{Kind: ActionCast, Seat: 9, Card: "Anything"})      // no seat
+	rejected(t, s, Action{Kind: ActionCast, Seat: 2, Card: "Grizzly Bears"}) // not the priority holder
 	act(t, s, Action{Kind: ActionSetZoneCount, Seat: 1, Zone: ZoneHand, To: intPtr(0)})
 	rejected(t, s, Action{Kind: ActionCast, Seat: 1, Card: "Grizzly Bears"}) // empty hand
 	// Casting from a graveyard that does not hold the card.
@@ -295,6 +344,7 @@ func TestCastRejections(t *testing.T) {
 
 func TestActivate(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	id := land(t, s, 1, "Sol Ring")
 	act(t, s, Action{Kind: ActionActivate, Seat: 1, Object: id,
 		Ability: "{T}: Add {C}{C}", Targets: nil})

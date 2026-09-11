@@ -1,10 +1,13 @@
-// Package engine is the Magic table's deterministic core (MAD-323, stage 2a
-// of MAD-321): players, zones, objects, counters, modifiers, the reducer and
-// the fold. docs/table/model.md is the contract and ADR 9 is the shape — the
-// event log is the only writer, state is a fold, and nothing here does I/O,
-// reads a clock, or calls a model. Card behaviour is declared, never
-// simulated (ADR 11): base characteristics arrive as data on the actions, and
-// everything else is a modifier or a counter.
+// Package engine is the Magic table's deterministic core (MAD-323 and
+// MAD-324, stage 2 of MAD-321): players, zones, objects, counters,
+// modifiers, the reducer and the fold, plus the turn structure they run
+// in — the CR priority windows, state-based actions (CR 704), multiplayer
+// elimination (CR 800.4), and commander bookkeeping. docs/table/model.md
+// is the contract and ADR 9 is the shape — the event log is the only
+// writer, state is a fold, and nothing here does I/O, reads a clock, or
+// calls a model. Card behaviour is declared, never simulated (ADR 11):
+// base characteristics arrive as data on the actions, and everything else
+// is a modifier or a counter.
 //
 // The package lives at internal/table/engine rather than the bare
 // internal/table the ADR 9 naming note describes, because MAD-425's D&D
@@ -158,8 +161,9 @@ type State struct {
 	Format       string          `json:"format,omitempty"`
 	StartingLife int             `json:"starting_life,omitempty"`
 	Seats        map[int]*Player `json:"seats"`
-	// Order is turn order: seat positions ascending. Multiplayer elimination
-	// (MAD-324) prunes it; stage 2a cycles it as seated.
+	// Order is turn order: the alive seats in seating order. Elimination
+	// prunes it (CR 800.4) so nextSeat and the priority rotation walk
+	// only the living; the seat row itself stays for history.
 	Order        []int             `json:"order,omitempty"`
 	Objects      map[int64]*Object `json:"objects"`
 	NextObject   int64             `json:"next_object"`
@@ -168,17 +172,22 @@ type State struct {
 	TurnSeat     int               `json:"turn_seat,omitempty"`
 	Phase        string            `json:"phase,omitempty"`
 	Step         string            `json:"step,omitempty"`
-	PrioritySeat int               `json:"priority_seat,omitempty"`
+	// PrioritySeat is who may act right now (CR 117): the turn seat on
+	// entering most steps, the caster after a cast or activation, the
+	// next seat in order after a pass, the active player after the stack
+	// top resolves. Zero is CR 502.3/514.3a — untap and cleanup grant no
+	// priority to anyone.
+	PrioritySeat int `json:"priority_seat,omitempty"`
 	// Passed is the seats that passed priority in succession, in order.
-	// All alive seats passing either resolves the stack top or ends the
-	// step; any STACK_PUSHED clears it. The finer priority windows are
-	// MAD-324's; these two CR rules are enough for the log to be honest.
+	// All alive seats passing either resolves the stack top (priority
+	// then returning to the active player, CR 117.3b) or ends the step
+	// (CR 117.4); any STACK_PUSHED clears it.
 	Passed        []int       `json:"passed,omitempty"`
 	Stack         []StackItem `json:"stack,omitempty"`
 	LandsThisTurn int         `json:"lands_this_turn,omitempty"`
 	// CommanderCasts counts casts from the command zone per commander
-	// name. Commander tax is derived from it (MAD-324); the count itself
-	// is the fold's to keep, never a stored field.
+	// name. Commander tax is derived from it (CommanderTax); the count
+	// itself is the fold's to keep, never a stored field.
 	CommanderCasts map[string]int `json:"commander_casts,omitempty"`
 	// Attackers and Blockers are the current combat declarations, kept so
 	// the board can render them between declaration and resolution. The
@@ -203,6 +212,93 @@ func NewState() *State {
 		Passed:       []int{},
 		Stack:        []StackItem{},
 	}
+}
+
+// clone deep-copies the state so the state-based-action sweep can fold its
+// own consequences against the post-action position without mutating the
+// caller's state — Apply stays pure (MAD-324). Every map and slice is
+// copied: sharing a backing array with the original would let folds in the
+// clone write through to it.
+func (s *State) clone() *State {
+	if s == nil {
+		return NewState()
+	}
+	out := &State{
+		Status: s.Status, Format: s.Format, StartingLife: s.StartingLife,
+		Seats:        make(map[int]*Player, len(s.Seats)),
+		Order:        append([]int{}, s.Order...),
+		Objects:      make(map[int64]*Object, len(s.Objects)),
+		NextObject:   s.NextObject,
+		NextModifier: s.NextModifier,
+		Turn:         s.Turn, TurnSeat: s.TurnSeat, Phase: s.Phase, Step: s.Step,
+		PrioritySeat:  s.PrioritySeat,
+		Passed:        append([]int{}, s.Passed...),
+		Stack:         make([]StackItem, len(s.Stack)),
+		LandsThisTurn: s.LandsThisTurn,
+		LastOrd:       s.LastOrd,
+	}
+	for seat, p := range s.Seats {
+		q := *p
+		q.Counters = copyIntMap(p.Counters)
+		q.Flags = copyStringMap(p.Flags)
+		q.HandKnown = append([]string{}, p.HandKnown...)
+		q.LibraryComp = copyIntMap(p.LibraryComp)
+		q.CommanderDamage = copyIntMap(p.CommanderDamage)
+		out.Seats[seat] = &q
+	}
+	for id, o := range s.Objects {
+		n := *o
+		n.Base.Types = append([]string{}, o.Base.Types...)
+		n.Base.Colors = append([]string{}, o.Base.Colors...)
+		n.Base.Keywords = append([]string{}, o.Base.Keywords...)
+		n.Counters = copyIntMap(o.Counters)
+		n.Modifiers = make([]Modifier, len(o.Modifiers))
+		for i, m := range o.Modifiers {
+			mm := m
+			mm.Delta.AddTypes = append([]string{}, m.Delta.AddTypes...)
+			mm.Delta.RemoveTypes = append([]string{}, m.Delta.RemoveTypes...)
+			mm.Delta.AddColors = append([]string{}, m.Delta.AddColors...)
+			mm.Delta.RemoveColors = append([]string{}, m.Delta.RemoveColors...)
+			mm.Delta.AddKeywords = append([]string{}, m.Delta.AddKeywords...)
+			mm.Delta.RemoveKeywords = append([]string{}, m.Delta.RemoveKeywords...)
+			n.Modifiers[i] = mm
+		}
+		n.Attachments = append([]int64{}, o.Attachments...)
+		out.Objects[id] = &n
+	}
+	for i, item := range s.Stack {
+		item.Targets = append([]Target{}, item.Targets...)
+		out.Stack[i] = item
+	}
+	out.CommanderCasts = copyIntMap(s.CommanderCasts)
+	out.Attackers = append([]AttackAssignment{}, s.Attackers...)
+	out.Blockers = append([]BlockAssignment{}, s.Blockers...)
+	for i := range out.Blockers {
+		out.Blockers[i].Attackers = append([]int64{}, out.Blockers[i].Attackers...)
+	}
+	return out
+}
+
+func copyIntMap(m map[string]int) map[string]int {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]int, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func copyStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // player looks a seat up, wrapping the miss in ErrInvalid so callers can

@@ -128,6 +128,10 @@ func TestStoreSubmitPersistsContiguousOrdinals(t *testing.T) {
 		t.Fatalf("start events = %d", len(start))
 	}
 	var all []Event
+	// The turn starts in untap, where no one holds priority: walk to the
+	// main phase before the play actions.
+	all = append(all, mustSubmit(t, s, ctx, gameID, Action{Kind: ActionAdvance, Seat: 1})...)
+	all = append(all, mustSubmit(t, s, ctx, gameID, Action{Kind: ActionAdvance, Seat: 1})...)
 	all = append(all, mustSubmit(t, s, ctx, gameID, Action{Kind: ActionDraw, Seat: 1, Count: 2, Cards: []string{"Forest", "Cultivate"}})...)
 	all = append(all, mustSubmit(t, s, ctx, gameID, Action{Kind: ActionPlayLand, Seat: 1, Card: "Forest"})...)
 	all = append(all, mustSubmit(t, s, ctx, gameID, Action{Kind: ActionCast, Seat: 1, Card: "Cultivate"})...)
@@ -177,6 +181,9 @@ func TestStoreRefoldFromDatabaseIsIdentical(t *testing.T) {
 	}
 	// Drive a representative slice of the engine through the writer.
 	script := []Action{
+		// Untap grants no priority: reach the main phase first.
+		{Kind: ActionAdvance, Seat: 1},
+		{Kind: ActionAdvance, Seat: 1},
 		{Kind: ActionDraw, Seat: 1, Count: 3, Cards: []string{"Forest", "Forest", "Cultivate"}},
 		{Kind: ActionPlayLand, Seat: 1, Card: "Forest"},
 		{Kind: ActionCast, Seat: 1, Card: "Cultivate"},

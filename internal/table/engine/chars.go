@@ -125,7 +125,14 @@ func (s *State) Characteristics(id int64) Characteristics {
 	}
 
 	c.Types, c.Colors, c.Keywords = types, colors, keywords
-	c.Power, c.Toughness, c.Loyalty = power, toughness, o.Base.Loyalty
+	c.Power, c.Toughness = power, toughness
+	// Loyalty: the printed base plus loyalty counters — the same
+	// shape as P/T counters, and what the zero-loyalty state-based
+	// action reads (CR 704.5i).
+	if o.Base.Loyalty != nil {
+		l := *o.Base.Loyalty + counterValue(o.Counters, "loyalty")
+		c.Loyalty = &l
+	}
 	return c
 }
 

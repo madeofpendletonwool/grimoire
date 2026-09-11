@@ -2,9 +2,10 @@ package engine
 
 // The turn skeleton: phases and steps in Comprehensive Rules order. The
 // sequence itself is fixed by the CR and depends on no card text, which is
-// why ADVANCE can walk it deterministically. The priority window rules on
-// top of it — who may act when, the two-boomerang check, state-based
-// actions at every grant — are MAD-324's; this file owns the order.
+// why ADVANCE can walk it deterministically. MAD-324 adds the priority
+// windows on top of it — untap and cleanup grant no priority (CR 502.3,
+// 514.3a), every other step grants it to the active player as it is
+// entered, and the holder-only action gates live in apply.go.
 
 import "sort"
 
@@ -30,6 +31,18 @@ var turnStructure = []stepRef{
 	{"postcombat_main", "main"},
 	{"end", "end"},
 	{"end", "cleanup"},
+}
+
+// stepGrantsPriority reports whether entering the step hands priority to
+// the active player. Untap and cleanup are the two that never do.
+func stepGrantsPriority(phase, step string) bool {
+	if phase == "beginning" && step == "untap" {
+		return false
+	}
+	if phase == "end" && step == "cleanup" {
+		return false
+	}
+	return true
 }
 
 // stepIndex finds a phase/step pair in the structure; -1 when absent.
@@ -61,8 +74,9 @@ func nextStep(s *State) (phase, step string, turnEnds bool) {
 	return "", "", true
 }
 
-// nextSeat walks turn order forward from a seat. Stage 2a cycles the seats
-// as seated; elimination pruning is MAD-324's.
+// nextSeat walks turn order forward from a seat over the alive seats —
+// Order is pruned when a player leaves the game, so the walk needs no
+// extra skipping.
 func nextSeat(s *State, from int) int {
 	if len(s.Order) == 0 {
 		return from
@@ -74,6 +88,9 @@ func nextSeat(s *State, from int) int {
 	}
 	return s.Order[0]
 }
+
+// aliveCount counts the seats still in the game.
+func (s *State) aliveCount() int { return len(s.Order) }
 
 // sortSeats orders a seat list ascending — turn order is position
 // ascending, and GAME_STARTED's echo is stored sorted so the fold is

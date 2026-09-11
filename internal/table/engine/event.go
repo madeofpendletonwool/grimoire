@@ -4,9 +4,9 @@ package engine
 // model doc marks the structural kinds — the ones fixed by the Comprehensive
 // Rules that the trigger registry (MAD-335) can fire on. The full
 // vocabulary is defined here even where a later stage is the producer
-// (DIED's sba_* causes are MAD-324's, TRIGGER_FIRED is MAD-325's): the
-// vocabulary lives in the Go type system and grows with the engine, which
-// is why kind is not CHECK-constrained in SQL.
+// (TRIGGER_FIRED is MAD-325's): the vocabulary lives in the Go type system
+// and grows with the engine, which is why kind is not CHECK-constrained in
+// SQL.
 
 // EventKind is one row kind in the log.
 type EventKind string
@@ -17,6 +17,8 @@ const (
 	EventTurnStarted       EventKind = "TURN_STARTED"
 	EventStepEntered       EventKind = "STEP_ENTERED" // ★
 	EventTurnEnded         EventKind = "TURN_ENDED"
+	EventPlayerLeft        EventKind = "PLAYER_LEFT"   // elimination or concession
+	EventObjectCeased      EventKind = "OBJECT_CEASED" // a token off the battlefield (CR 704.5d)
 	EventPriorityPassed    EventKind = "PRIORITY_PASSED"
 	EventStackPushed       EventKind = "STACK_PUSHED"
 	EventStackResolved     EventKind = "STACK_RESOLVED"
@@ -24,7 +26,7 @@ const (
 	EventZoneChanged       EventKind = "ZONE_CHANGED"
 	EventLandPlayed        EventKind = "LAND_PLAYED"        // ★
 	EventCreatureETB       EventKind = "CREATURE_ETB"       // ★
-	EventDied              EventKind = "DIED"               // ★ (MAD-324 asserts the sba_* causes)
+	EventDied              EventKind = "DIED"               // ★ (sba_* causes asserted by the sweep)
 	EventCast              EventKind = "CAST"               // ★
 	EventAttackersDeclared EventKind = "ATTACKERS_DECLARED" // ★
 	EventBlockersDeclared  EventKind = "BLOCKERS_DECLARED"

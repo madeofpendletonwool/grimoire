@@ -56,6 +56,14 @@ func (s *State) foldEvent(e Event) {
 		s.Phase = e.Phase
 		s.Step = e.Step
 		s.Passed = nil
+		// Entering most steps grants priority to the active player
+		// (CR 117.2a); untap and cleanup grant it to no one (CR 502.3,
+		// 514.3a). Zero is the no-priority sentinel.
+		if stepGrantsPriority(e.Phase, e.Step) {
+			s.PrioritySeat = s.TurnSeat
+		} else {
+			s.PrioritySeat = 0
+		}
 	case EventTurnEnded:
 		// The expiry anchor: everything that lasts until end of turn ends
 		// here — modifiers by computation, marked damage with them, the
@@ -72,25 +80,56 @@ func (s *State) foldEvent(e Event) {
 	case EventStackPushed:
 		s.Stack = append(s.Stack, StackItem{Object: e.Object, Mode: e.Mode, Ability: e.Ability,
 			Controller: e.Controller, Targets: e.Targets})
+		// The player who put it there receives priority (CR 117.2c —
+		// casting, activating, and special actions return priority to
+		// the actor) and the pass cycle starts over.
+		if e.Controller != 0 {
+			s.PrioritySeat = e.Controller
+		}
 		s.Passed = nil
 	case EventStackResolved:
 		if len(s.Stack) > 0 {
 			s.Stack = s.Stack[:len(s.Stack)-1]
 		}
+		// CR 117.3b: after the top object resolves the active player
+		// receives priority, and everyone may respond again.
+		s.PrioritySeat = s.TurnSeat
 		s.Passed = nil
 	case EventObjectCreated:
 		s.foldObjectCreated(e)
 	case EventZoneChanged:
 		s.foldZoneChanged(e)
+	case EventDied:
+		// A death asserted by the engine (CR 704) or declared at the
+		// table: it is a battlefield → graveyard move, folded through
+		// the same bookkeeping any zone change gets.
+		if o, ok := s.Objects[e.Object]; ok && o.Zone == ZoneBattlefield {
+			s.foldZoneChanged(Event{Kind: EventZoneChanged, Object: e.Object,
+				From: ZoneBattlefield, ToZone: ZoneGraveyard, Cause: e.Cause})
+		}
+	case EventPlayerLeft:
+		s.foldPlayerLeft(e)
+	case EventObjectCeased:
+		// A token off the battlefield ceases to exist (CR 704.5d); the
+		// row is the whole of it. Edges cannot survive to here — leaving
+		// the battlefield cleared them.
+		delete(s.Objects, e.Object)
 	case EventLandPlayed:
 		if p, ok := s.Seats[e.Controller]; ok {
 			p.LandsThisTurn++
 		}
 	case EventCast:
-		// Casts from the command zone are the commander tax base (the tax
-		// itself is derived, MAD-324).
+		// Casts from the command zone are the commander tax base
+		// (CommanderTax derives from it). A declared base on the cast
+		// is the card's characteristics — the commander object mints
+		// from config with none, so this is where it learns them.
 		if e.From == ZoneCommand && e.Card != "" {
 			s.CommanderCasts[e.Card]++
+		}
+		if e.Base != nil {
+			if o, ok := s.Objects[e.Object]; ok {
+				o.Base = *e.Base
+			}
 		}
 	case EventAttackersDeclared:
 		s.Attackers = e.Attackers
@@ -351,6 +390,83 @@ func (s *State) foldZoneChanged(e Event) {
 		delete(s.Objects, o.ID)
 	default:
 		o.Zone = e.ToZone
+	}
+}
+
+// foldPlayerLeft is CR 800.4: a player leaving the game. Their seat stays
+// for history but leaves turn order; every object they own leaves the
+// game with them (edges and dangling references sanitized); their spells
+// and abilities come off the stack; and if it was their turn, the next
+// player in the pruned order takes over at the untap step. The asserted
+// consequences (UNATTACHED, MODIFIER_REMOVED rows, the TURN_ENDED /
+// TURN_STARTED anchors) precede this row in the log — the recovery here
+// is the fold's safety net for logs that lack them.
+func (s *State) foldPlayerLeft(e Event) {
+	seat := e.TargetSeat
+	if p, ok := s.Seats[seat]; ok {
+		p.Alive = false
+	}
+	order := s.Order[:0:0]
+	for _, v := range s.Order {
+		if v != seat {
+			order = append(order, v)
+		}
+	}
+	s.Order = order
+	passed := s.Passed[:0:0]
+	for _, v := range s.Passed {
+		if v != seat {
+			passed = append(passed, v)
+		}
+	}
+	s.Passed = passed
+
+	// Owned objects leave the game; break any edge that pointed at them
+	// from either side so nothing dangles.
+	gone := map[int64]bool{}
+	for id, o := range s.Objects {
+		if o.Owner == seat {
+			gone[id] = true
+		}
+	}
+	for id := range gone {
+		delete(s.Objects, id)
+	}
+	for _, o := range s.Objects {
+		if gone[o.AttachedTo] {
+			o.AttachedTo = 0
+		}
+		keep := o.Attachments[:0:0]
+		for _, att := range o.Attachments {
+			if !gone[att] {
+				keep = append(keep, att)
+			}
+		}
+		o.Attachments = keep
+	}
+
+	// Their spells (owned objects now gone) and their abilities come off
+	// the stack.
+	stack := s.Stack[:0:0]
+	for _, item := range s.Stack {
+		if item.Controller == seat {
+			continue
+		}
+		if item.Object != 0 && gone[item.Object] {
+			continue
+		}
+		stack = append(stack, item)
+	}
+	s.Stack = stack
+
+	if s.TurnSeat == seat {
+		s.TurnSeat = nextSeat(s, seat)
+		s.Phase, s.Step = "beginning", "untap"
+		s.PrioritySeat = 0
+		s.Attackers = nil
+		s.Blockers = nil
+	} else if s.PrioritySeat == seat {
+		s.PrioritySeat = nextSeat(s, seat)
 	}
 }
 

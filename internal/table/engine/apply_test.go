@@ -7,6 +7,7 @@ import (
 
 func TestMoveZoneResetsBattlefieldState(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	// A resolved card (not a token — tokens cannot move to a count-only
 	// zone) carries the battlefield-only state that must end with a bounce.
 	act(t, s, Action{Kind: ActionCast, Seat: 1, Card: "Grizzly Bears",
@@ -38,6 +39,7 @@ func TestMoveZoneResetsBattlefieldState(t *testing.T) {
 
 func TestMoveZoneToLibraryAndTokenRule(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	// A deckless library's count is unknown; putting a card into it does
 	// not invent a total. Make the count known first, then move.
 	act(t, s, Action{Kind: ActionSetZoneCount, Seat: 1, Zone: ZoneLibrary, To: intPtr(0)})
@@ -59,6 +61,7 @@ func TestMoveZoneToLibraryAndTokenRule(t *testing.T) {
 
 func TestMoveZoneToBattlefieldAnnouncesETB(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	evs := act(t, s, Action{Kind: ActionCast, Seat: 1, Card: "Reclamation Sage",
 		Base: &BaseChars{Types: []string{"Creature"}, Power: intPtr(2), Toughness: intPtr(1)}})
 	for seat := 1; seat <= 3; seat++ {
@@ -101,6 +104,7 @@ func TestTokens(t *testing.T) {
 
 func TestTapUntap(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	a := summon(t, s, 1, "Bear A", 2, 2)
 	b := summon(t, s, 1, "Bear B", 2, 2)
 	act(t, s, Action{Kind: ActionTap, Seat: 1, Object: a})
@@ -146,8 +150,9 @@ func TestPhased(t *testing.T) {
 
 func TestAttachDetach(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	bear := summon(t, s, 1, "Bear", 2, 2)
-	sword := summon(t, s, 1, "Sword of Fire and Ice", 0, 0)
+	sword := perm(t, s, 1, TokenSpec{Name: "Sword of Fire and Ice", Types: []string{"Artifact"}}, 0)
 	act(t, s, Action{Kind: ActionAttach, Seat: 1, Object: sword, AttachTo: bear})
 	if s.Objects[sword].AttachedTo != bear || len(s.Objects[bear].Attachments) != 1 {
 		t.Fatal("edge not made")
@@ -179,16 +184,46 @@ func TestAttachDetach(t *testing.T) {
 func TestAttachmentFallsWhenHostLeaves(t *testing.T) {
 	s := start(t, nil)
 	bear := summon(t, s, 1, "Bear", 2, 2)
-	aura := summon(t, s, 1, "Rancor", 0, 0)
-	act(t, s, Action{Kind: ActionAttach, Seat: 1, Object: aura, AttachTo: bear})
-	act(t, s, Action{Kind: ActionMoveZone, Seat: 2, Object: bear, ToZone: ZoneGraveyard, Cause: "destroy"})
-	if s.Objects[aura].AttachedTo != 0 {
-		t.Fatal("aura stayed attached to a dead bear")
+	aura := perm(t, s, 1, TokenSpec{Name: "Rancor", Types: []string{"Enchantment", "Aura"}}, bear)
+	if s.Objects[aura].AttachedTo != bear {
+		t.Fatal("aura did not enter attached")
+	}
+	// Host dies: the fold breaks the edge, then the sweep puts the
+	// unattached aura (CR 704.5p) into the graveyard — and the token
+	// ceases to exist once it is off the battlefield (CR 704.5d).
+	evs := act(t, s, Action{Kind: ActionDealDamage, Seat: 2, Amount: 2, TargetObject: bear, CombatDmg: false})
+	sawUnattach, sawFall, sawCease := false, false, false
+	for _, e := range evs {
+		switch {
+		case e.Kind == EventDied && e.Object == bear:
+		case e.Kind == EventUnattached && e.Object == aura:
+			sawUnattach = true
+		case e.Kind == EventZoneChanged && e.Object == aura && e.Cause == causeUnattached:
+			sawFall = true
+		case e.Kind == EventObjectCeased && e.Object == aura:
+			sawCease = true
+		}
+	}
+	if !sawUnattach || !sawFall || !sawCease {
+		t.Fatalf("aura events = %+v", evs)
+	}
+	if _, ok := s.Objects[aura]; ok {
+		t.Fatal("token aura survived off the battlefield")
+	}
+	// Equipment outlives its host unattached.
+	s2 := start(t, nil)
+	bear2 := summon(t, s2, 1, "Bear", 2, 2)
+	sword := perm(t, s2, 1, TokenSpec{Name: "Sword", Types: []string{"Artifact"}}, 0)
+	act(t, s2, Action{Kind: ActionAttach, Seat: 1, Object: sword, AttachTo: bear2})
+	act(t, s2, Action{Kind: ActionDealDamage, Seat: 2, Amount: 2, TargetObject: bear2})
+	if o, ok := s2.Objects[sword]; !ok || o.AttachedTo != 0 || o.Zone != ZoneBattlefield {
+		t.Fatalf("equipment = %+v ok=%v", o, ok)
 	}
 }
 
 func TestWhileSourcePresentEndsWithSource(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	anthem := land(t, s, 1, "Glorious Anthem")
 	bear := summon(t, s, 1, "Bear", 2, 2)
 	act(t, s, Action{Kind: ActionAddModifier, Seat: 1, Object: bear, Modifier: &Modifier{
@@ -255,13 +290,27 @@ func TestLifeChanges(t *testing.T) {
 	if s.Seats[1].Life != 20 {
 		t.Fatal("absolute set failed")
 	}
-	// Life at zero or below is a representable state; the loss is a
-	// state-based action (MAD-324), not a write rejection here.
-	act(t, s, Action{Kind: ActionChangeLife, Seat: 1, Delta: -25})
+	rejected(t, s, Action{Kind: ActionChangeLife, Seat: 1})
+	// Life at zero or below is a representable state; the loss itself is
+	// a state-based action, asserted in the same batch as the change.
+	evs := act(t, s, Action{Kind: ActionChangeLife, Seat: 1, Delta: -25})
 	if s.Seats[1].Life != -5 {
 		t.Fatalf("life = %d", s.Seats[1].Life)
 	}
-	rejected(t, s, Action{Kind: ActionChangeLife, Seat: 1})
+	if s.Seats[1].Alive {
+		t.Fatal("seat 1 survived zero life")
+	}
+	sawLeft := false
+	for _, e := range evs {
+		if e.Kind == EventPlayerLeft && e.TargetSeat == 1 && e.Cause == causeZeroLife {
+			sawLeft = true
+		}
+	}
+	if !sawLeft {
+		t.Fatalf("no PLAYER_LEFT in %+v", evs)
+	}
+	// An eliminated seat is no longer a valid actor or target.
+	rejected(t, s, Action{Kind: ActionChangeLife, Seat: 1, Delta: 1})
 	rejected(t, s, Action{Kind: ActionChangeLife, Seat: 1, TargetSeat: 9, Delta: 1})
 }
 
@@ -474,6 +523,13 @@ func TestDeclareAttackersTapAndVigilance(t *testing.T) {
 	act(t, s, Action{Kind: ActionAddModifier, Seat: 1, Object: knight, Modifier: &Modifier{
 		Layer: LayerAbility, Duration: PermanentDuration, SourceCard: "Always Watching",
 		Delta: Delta{AddKeywords: []string{"Vigilance"}}}})
+	// Attackers are declared in the declare_attackers step (CR 508.1) —
+	// and only by the active player.
+	rejected(t, s, Action{Kind: ActionDeclareAttackers, Seat: 1, Attackers: []AttackAssignment{
+		{Object: bear, TargetSeat: 2}}}) // still the main phase
+	toStep(t, s, "combat", "declare_attackers")
+	rejected(t, s, Action{Kind: ActionDeclareAttackers, Seat: 2, Attackers: []AttackAssignment{
+		{Object: bear, TargetSeat: 1}}}) // not the active player
 	evs := act(t, s, Action{Kind: ActionDeclareAttackers, Seat: 1, Attackers: []AttackAssignment{
 		{Object: bear, TargetSeat: 2}, {Object: knight, TargetSeat: 3}}})
 	sawTap := false
@@ -495,8 +551,11 @@ func TestDeclareAttackersTapAndVigilance(t *testing.T) {
 	rejected(t, s, Action{Kind: ActionDeclareAttackers, Seat: 1, Attackers: []AttackAssignment{}})
 	rejected(t, s, Action{Kind: ActionDeclareAttackers, Seat: 1, Attackers: []AttackAssignment{{Object: 999, TargetSeat: 2}}})
 	rejected(t, s, Action{Kind: ActionDeclareAttackers, Seat: 1, Attackers: []AttackAssignment{{Object: knight}}})
-	// Blockers record and stay untapped.
+	// Blockers record in the declare_blockers step (CR 509.1) and stay
+	// untapped; declaring them a step early is rejected.
 	gob := summon(t, s, 2, "Goblin", 1, 1)
+	rejected(t, s, Action{Kind: ActionDeclareBlockers, Seat: 2, Blockers: []BlockAssignment{{Blocker: gob, Attackers: []int64{knight}}}})
+	toStep(t, s, "combat", "declare_blockers")
 	act(t, s, Action{Kind: ActionDeclareBlockers, Seat: 2, Blockers: []BlockAssignment{{Blocker: gob, Attackers: []int64{knight}}}})
 	if s.Objects[gob].Tapped {
 		t.Fatal("blocker tapped")
