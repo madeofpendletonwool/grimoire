@@ -931,6 +931,51 @@
 			</div>
 		</div>
 		</section>
+	<section class="guide" id="guide-view" hidden aria-label="Guide">
+			<header class="study-head">
+				<h2 class="study-title" id="guide-title">Guide</h2>
+				<div class="camp-picker">
+					<select id="guide-campaign" aria-label="Campaign">
+						<option value="">No campaigns yet…</option>
+					</select>
+				</div>
+				<p class="study-meta" id="guide-meta"></p>
+			</header>
+
+			<!-- The fork: the one question a brand-new account is asked, and the
+			     only card here that is not gated on server state. Until it is
+			     answered, "waiting on a join code" and "about to found a table"
+			     are the same empty campaign list. -->
+			<div class="guide-fork" id="guide-fork" hidden>
+				<div class="camp-panel">
+					<div class="guide-sigil" data-ico="lantern" data-ico-scale="2"></div>
+					<h3 class="enc-heading">Welcome to Grimoire</h3>
+					<p class="camp-status">Which are you here to do? Nothing is locked in — you can walk the other side later.</p>
+					<div class="guide-fork-actions">
+						<button type="button" class="enc-btn primary" id="guide-fork-dm">I run a table</button>
+						<button type="button" class="enc-btn" id="guide-fork-player">I'm joining one</button>
+					</div>
+					<form class="camp-new-form" id="guide-join-form" autocomplete="off" hidden>
+						<label class="camp-field"><span>Your join code</span>
+							<input id="guide-join-code" class="enc-field" type="text" required aria-label="Campaign join code">
+						</label>
+						<button type="submit" class="enc-btn">Take your seat</button>
+					</form>
+					<p class="camp-status" id="guide-fork-note" role="status"></p>
+				</div>
+			</div>
+
+			<div class="guide-body" id="guide-body" hidden>
+				<ol class="guide-steps" id="guide-steps"></ol>
+				<div class="guide-foot">
+					<p class="camp-status" id="guide-foot-note"></p>
+					<span class="guide-foot-actions">
+						<button type="button" class="enc-btn" id="guide-tour">Show me around</button>
+						<button type="button" class="enc-btn" id="guide-recheck">Check again</button>
+					</span>
+				</div>
+			</div>
+		</section>
 	<section class="cchat" id="cchat-view" hidden aria-label="Campaign chat">
 			<header class="study-head">
 				<h2 class="study-title" id="cchat-title">Campaign chat</h2>
@@ -966,6 +1011,7 @@
  				<div class="camp-panel">
  					<h3 class="enc-heading">No campaign yet</h3>
  					<p class="camp-status">The campaign Grimoire answers from a campaign's living record — what its people know, not what a model guesses. Found a campaign first, or take a seat with an invite.</p>
+					<button type="button" class="enc-btn" data-open-tool="guide">Show me how</button>
  					<button type="button" class="enc-btn" id="cchat-go-campaign">Open the campaign world</button>
  				</div>
  			</div>
@@ -1032,6 +1078,7 @@
 				<div class="camp-panel">
 					<h3 class="enc-heading">No campaign yet</h3>
 					<p class="camp-status">The shared feed belongs to a table — rolls land where the campaign can see them. Found a campaign first, or take a seat with an invite.</p>
+					<button type="button" class="enc-btn" data-open-tool="guide">Show me how</button>
 				</div>
 			</div>
 		</section>
@@ -1086,6 +1133,7 @@
 				<div class="camp-panel">
 					<h3 class="enc-heading">No campaign yet</h3>
 					<p class="camp-status">The board belongs to a table. Found a campaign first, or take a seat with an invite.</p>
+					<button type="button" class="enc-btn" data-open-tool="guide">Show me how</button>
 				</div>
 			</div>
 		</section>
@@ -1137,6 +1185,7 @@
 				<div class="camp-panel">
 					<h3 class="enc-heading">No campaign yet</h3>
 					<p class="camp-status">Handouts belong to a table. Found a campaign first, or take a seat with an invite.</p>
+					<button type="button" class="enc-btn" data-open-tool="guide">Show me how</button>
 				</div>
 			</div>
 		</section>
@@ -1268,6 +1317,7 @@
 				<div class="camp-panel">
 					<h3 class="enc-heading" id="scr-empty-title">No campaign yet</h3>
 					<p class="camp-status" id="scr-empty-text">The screen belongs to a table. Found a campaign first, or take a seat with an invite.</p>
+					<button type="button" class="enc-btn" data-open-tool="guide">Show me how</button>
 				</div>
 			</div>
 		</section>
@@ -1361,6 +1411,7 @@
 				<div class="camp-panel">
 					<h3 class="enc-heading">No campaign yet</h3>
 					<p class="camp-status">The tracker is the DM's screen — it needs a table. Found a campaign first, or take a seat with an invite.</p>
+					<button type="button" class="enc-btn" data-open-tool="guide">Show me how</button>
 				</div>
 			</div>
 
@@ -1406,6 +1457,7 @@
 				<div class="camp-panel">
 					<h3 class="enc-heading" id="dir-empty-title">No campaign yet</h3>
 					<p class="camp-status" id="dir-empty-text">The director advises at a table. Found a campaign first, or take a seat with an invite.</p>
+					<button type="button" class="enc-btn" data-open-tool="guide">Show me how</button>
 				</div>
 			</div>
 		</section>

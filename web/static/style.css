@@ -5994,3 +5994,148 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .handout-attach { display: inline-flex; align-items: center; gap: 0.5rem; font-size: var(--fs-xs); }
 
 .handout-file-name { color: var(--parchment-soft, #d8c9a8); opacity: 0.8; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The Guide — onboarding as a tool. Reading material with a checklist down
+   the side: the steps are plain rows rather than stacked frames, because six
+   nine-sliced panels in a column is a wall of borders and the thing being
+   communicated is a sequence, not six separate objects. Only the fork — the
+   one card that asks something — is framed. */
+
+.guide {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scroll-behavior: smooth;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+
+.guide-body,
+.guide-fork {
+	max-width: var(--measure, 48rem);
+	margin: 0 auto;
+}
+
+/* the fork: the one question a brand-new account is asked */
+
+.guide-fork .camp-panel { text-align: center; }
+.guide-sigil { display: flex; justify-content: center; margin-bottom: var(--sp-2); }
+
+.guide-fork-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: var(--sp-3);
+	margin: var(--sp-4) 0 var(--sp-2);
+}
+
+.guide-fork .camp-new-form { margin-top: var(--sp-4); text-align: left; }
+
+/* the track */
+
+.guide-steps {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.guide-step {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: var(--sp-3);
+	align-items: start;
+	padding: var(--sp-4) 0;
+	border-top: 1px solid var(--stone-line);
+}
+.guide-step:first-child { border-top: 0; }
+
+.guide-step-mark {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.75rem;
+	height: 1.75rem;
+	border: 1px solid var(--stone-line);
+	border-radius: 50%;
+	color: var(--parchment);
+	opacity: 0.55;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+}
+.guide-step.is-done .guide-step-mark {
+	border-color: var(--gold-dim, #8a7024);
+	color: var(--gold-bright, #ffd071);
+	opacity: 1;
+}
+.guide-step.is-next .guide-step-mark {
+	border-color: var(--accent);
+	color: var(--accent);
+	opacity: 1;
+}
+
+.guide-step-title {
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: var(--fs-lg);
+	color: var(--parchment);
+}
+.guide-step.is-done .guide-step-title { opacity: 0.7; }
+
+/* The state word carries what the checkmark shows, for anyone not reading
+   the colour — the mark itself is decorative (DESIGN.md invariant 8). */
+.guide-step-state {
+	margin: 0.1rem 0 var(--sp-2);
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--parchment);
+	opacity: 0.5;
+}
+.guide-step.is-done .guide-step-state { color: var(--gold-bright, #ffd071); opacity: 0.9; }
+.guide-step.is-next .guide-step-state { color: var(--accent); opacity: 1; }
+
+.guide-step-blurb {
+	margin: 0 0 var(--sp-3);
+	font-size: var(--fs-md);
+	line-height: 1.55;
+	color: var(--parchment);
+	opacity: 0.85;
+}
+
+/* the grain: the rules that make the app look broken when nobody says them */
+.guide-teaches {
+	display: flex;
+	gap: var(--sp-2);
+	align-items: flex-start;
+	margin: 0 0 var(--sp-3);
+	padding: var(--sp-2) var(--sp-3);
+	border-left: 2px solid var(--gold-dim, #8a7024);
+	font-size: var(--fs-sm);
+	line-height: 1.5;
+	color: var(--parchment);
+	opacity: 0.9;
+}
+
+.guide-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sp-3);
+	margin-top: var(--sp-5);
+	padding-top: var(--sp-4);
+	border-top: 1px solid var(--stone-line);
+}
+
+.camp-status.warn { color: var(--gold-bright, #ffd071); opacity: 1; }
+
+/* A narrow window, not a narrow screen: the tool is as wide as its pane. */
+@container tool (max-width: 560px) {
+	.guide { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
+	.guide-step { gap: var(--sp-2); }
+	.guide-fork-actions .enc-btn { flex: 1 1 100%; }
+}
+
+.guide-foot-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }

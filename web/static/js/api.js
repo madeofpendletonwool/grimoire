@@ -143,6 +143,13 @@ export const api = {
 			body: JSON.stringify({ prefs }),
 		}).then(json),
 
+	// The Guide's progress snapshot: which of a track's milestones have
+	// actually happened, as counts. The campaign is optional — a brand-new
+	// account stands in none, and that is the fork card's own signal.
+	onboardingState: (campaignID, signal) =>
+		fetch("/api/onboarding/state" + (campaignID ? `?campaign=${encodeURIComponent(campaignID)}` : ""),
+			{ signal }).then(json),
+
 	// Index rebuild — admin only. Start returns 202 and the rebuild continues
 	// in the background; poll status until running turns false.
 	reindexStart: () => fetch("/api/admin/reindex", { method: "POST" }).then(json),
@@ -283,7 +290,7 @@ export const api = {
 
 	// The campaign world. Every read runs at the caller's resolved scope on
 	// the server; writes are DM-only and the server enforces that too.
-	campaignList: () => fetch("/api/campaigns").then(json),
+	campaignList: (signal) => fetch("/api/campaigns", { signal }).then(json),
 
 	campaignCreate: (name, system, premise) =>
 		fetch("/api/campaigns", {

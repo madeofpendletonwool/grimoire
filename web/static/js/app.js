@@ -24,7 +24,9 @@ import { initDice } from "./dice.js";
 import { initBoard } from "./board.js";
 
 import { TOOLS, inSeat } from "./wm/registry.js";
-import { loadSeat, seatRole } from "./seat.js";
+import { loadSeat, seatRole, seatCampaigns } from "./seat.js";
+import { needsFork } from "./guidevm.js";
+import { closeTour } from "./tour.js";
 import * as wm from "./wm/wm.js";
 import { initWM, openTool } from "./wm/wm.js";
 import { initDrag } from "./wm/drag.js";
@@ -237,6 +239,50 @@ async function pickCorpus(corpus) {
 	await ws.switchCorpus(corpus);
 	renderWorkspaces();
 	refreshSheet(corpus, seatRole());
+	safe("guide", offerGuide);
+}
+
+/**
+ * Open the Guide for an account that has never answered the one question
+ * shaping the whole shell — run a table, or join one.
+ *
+ * `seatRoleOf` hands a campaign-less account the DM seat for want of any
+ * evidence (ADR 22). That is the right default and the wrong thing to leave
+ * unasked: a player who registered a minute ago lands in a cockpit of tools
+ * the server will refuse them. The Guide's first card asks, and remembers.
+ *
+ * Offered on arriving in D&D rather than only at boot, because campaigns are
+ * a D&D surface and a new account's first act is often to switch games.
+ */
+/**
+ * `data-open-tool="<id>"` anywhere in the app opens that tool.
+ *
+ * One delegated listener rather than a handler per button: the tools that
+ * carry these are the "no campaign yet" empty states, and every one of them
+ * lives in markup that is stashed, adopted and restashed as its window opens
+ * and closes. A listener bound at boot to a node inside a stashed section
+ * survives that round trip; seven of them, added by seven modules, is seven
+ * chances to bind twice or not at all.
+ */
+function initToolLinks() {
+	document.addEventListener("click", (e) => {
+		const btn = e.target.closest("[data-open-tool]");
+		if (!btn) return;
+		const id = btn.dataset.openTool;
+		// The shell only opens what it offers (ADR 22).
+		if (!inSeat(id, seatRole())) return;
+		openTool(id);
+	});
+}
+
+function offerGuide({ justJoined = false } = {}) {
+	if (state.corpus !== "dnd") return;
+	// Someone who has just spent an invite has answered the fork by doing it
+	// — they are a player, at a table, as of a second ago. They still arrive
+	// in a workspace they have never seen, so the Guide is offered on the
+	// strength of the join rather than the unanswered question.
+	if (!justJoined && !needsFork({ authenticated: true }, seatCampaigns(), uiPrefs)) return;
+	openTool("guide");
 }
 
 function initRail() {
@@ -345,8 +391,12 @@ function commands() {
 	const cmd = {
 		palette: () => openPalette(),
 		help: () => toggleSheet(),
-		// Escape unwinds one layer at a time, topmost first.
+		// Escape unwinds one layer at a time, topmost first. The tour scrims
+		// the whole shell, so nothing can sit above it — and it cannot catch
+		// the key itself: keys.js binds the document in the capture phase at
+		// boot, so a listener added later never sees it first.
 		dismiss: () => {
+			if (closeTour()) return;
 			if (closePrompt()) return;
 			if (closeMenu()) return;
 			if (!$("wm-sheet-layer").hidden) return toggleSheet(false);
@@ -469,11 +519,55 @@ async function loadMeta() {
 async function loadPrefs() {
 	try {
 		const { prefs } = await api.uiPrefs();
+		uiPrefs = prefs || {};
 		if (prefs?.corpus && prefs.corpus !== state.corpus) {
 			state.corpus = prefs.corpus;
 			saveCorpusPreference(prefs.corpus);
 		}
 	} catch (_) { /* the local preference is already applied */ }
+}
+
+// The preferences the shell itself reads after boot. Only the Guide's fork
+// answer so far; the corpus is applied above and lives in state.
+let uiPrefs = {};
+
+/* ---------- invite links ---------- */
+
+/**
+ * Spend an invite code that arrived in the URL.
+ *
+ * A campaign invite is already one link for everyone: a stranger following
+ * /?invite=CODE registers through the gate, which writes the membership in
+ * the same transaction (internal/server/auth.go). But a visitor who is
+ * *already signed in* is served the app rather than the gate
+ * (handleIndex), so auth.js never runs and the code used to sit in the
+ * address bar unspent — the DM's link silently doing nothing for exactly
+ * the people who already have an account. This is that case.
+ *
+ * It runs before the seat resolves: joining changes the account's standing,
+ * and the seat, the presets, the keyboard and the workspace set all hang
+ * off it (ADR 22).
+ */
+const inviteFromURL = () => {
+	const q = new URLSearchParams(window.location.search);
+	return (q.get("invite") || q.get("join") || "").trim();
+};
+
+async function claimInvite(code) {
+	// Clear it first, and unconditionally: a burned code must not be re-spent
+	// by a reload, and an invite secret has no business staying in the
+	// address bar, the history or a screenshot.
+	history.replaceState({}, "", window.location.pathname);
+	try {
+		await api.campaignJoin(code);
+	} catch (err) {
+		// "You are already a member" is a success from where the user sits:
+		// they clicked a link to a table they are already at.
+		if (/already a member/i.test(err.message || "")) return true;
+		notice("That invite could not be spent", `${err.message || "The code was refused."} — ask for a fresh link.`);
+		return false;
+	}
+	return true;
 }
 
 /* ---------- boot ---------- */
@@ -497,6 +591,12 @@ async function start() {
 	safe("settings", initSettings);
 	safe("corpus-preference", loadCorpusPreference);
 
+	// An invite link is spent before anything reads the account's standing,
+	// and only when one is actually present — the common boot pays nothing
+	// for this.
+	const invite = inviteFromURL();
+	const justJoined = invite ? await claimInvite(invite) : false;
+
 	// The seat runs alongside the prefs fetch: both must land before the
 	// keyboard and the workspace layer shape themselves, and neither waits
 	// on the other.
@@ -512,6 +612,19 @@ async function start() {
 
 	await prefs;
 	await seat;
+
+	// The corpus default is Magic (state.js), which is right for the app's
+	// older half and wrong for anyone who arrived through a campaign invite:
+	// a player who just took a seat at a D&D table would land in the Magic
+	// shell and have to work out that the game is a setting. Campaigns are a
+	// D&D surface, so an account that stands in one is a D&D account — but
+	// only decide this for someone who has never expressed a preference,
+	// because overriding a real choice is the worse failure.
+	if (!uiPrefs.corpus && seatCampaigns().length > 0 && state.corpus !== "dnd") {
+		state.corpus = "dnd";
+		saveCorpusPreference("dnd");
+		api.uiSavePrefs({ corpus: "dnd" }).catch(() => { /* localStorage has it */ });
+	}
 
 	// The window manager, then the layouts it renders.
 	safe("wm", () => initWM(state.corpus));
@@ -545,6 +658,8 @@ async function start() {
 		safe("fallback-chat", () => openTool("chat"));
 	}
 	safe("workspaces", renderWorkspaces);
+	safe("guide", () => offerGuide({ justJoined }));
+	safe("tool-links", initToolLinks);
 
 	// Crossing the narrow threshold swaps the strip between tabs and a single
 	// picker, so it is the one resize the shell redraws for.

@@ -109,6 +109,7 @@ nav:
       - Design System: DESIGN.md
       - Decisions: decisions.md
   - Campaign OS:
+      - The Guide: campaign/guide.md
       - Data Model: campaign/model.md
       - Character Sheets: campaign/sheet.md
       - The Resource Ledger: campaign/ledger.md

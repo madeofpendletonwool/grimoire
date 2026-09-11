@@ -62,6 +62,12 @@ export const TOOLS = Object.freeze({
 	},
 
 	/* ---- D&D ---- */
+	guide: {
+		title: "Guide", icon: "lantern", corpus: "dnd", accel: "u",
+		instances: "single", min: [420, 380],
+		blurb: "How to run a table here, one step at a time",
+		load: () => import("../guide.js"),
+	},
 	planner: {
 		title: "Planner", icon: "scrollOpen", corpus: "dnd", role: SEAT_DM, accel: "p",
 		instances: "single", min: [520, 360],

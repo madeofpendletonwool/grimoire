@@ -632,5 +632,69 @@ body.wm-resizing-v, body.wm-resizing-v * { cursor: row-resize !important; user-s
    transitions and the two entrances are not. */
 @media (prefers-reduced-motion: reduce) {
 	.wm-gutter, .wm-ctl { transition: none; }
-	.wm-hint, .wm-sheet, .wm-menu { animation: none; }
+	.wm-hint, .wm-sheet, .wm-menu, .tour-card { animation: none; }
+	/* The ring travelling between steps is motion that is not a CSS
+	   animation, so invariant 7 says gate it by hand: it jumps instead. */
+	.tour-ring { transition: none; }
 }
+
+
+/* ---------- the shell tour (tour.js) ----------
+   Five steps over the chrome. The hole is four scrim rects rather than one
+   huge box-shadow spread, because a shadow covers its own target and the
+   whole point is that you can still click the thing being explained. */
+
+.tour-layer { position: fixed; inset: 0; z-index: var(--z-modal); }
+
+/* Only the scrim and the card take pointer events; the hole between the
+   four cuts is genuinely live. */
+.tour-cut {
+	position: fixed;
+	background: rgb(0 0 0 / 0.62);
+}
+
+/* f-select supplies the corner brackets and keeps its middle transparent —
+   it is drawn for exactly this and must not be resized (invariant 1). */
+.tour-ring {
+	position: fixed;
+	pointer-events: none;
+	transition: top 140ms ease, left 140ms ease, width 140ms ease, height 140ms ease;
+}
+
+.tour-card {
+	position: fixed;
+	width: min(22rem, calc(100vw - 24px));
+	padding: var(--sp-3) var(--sp-4) var(--sp-4);
+	z-index: calc(var(--z-modal) + 1);
+	animation: tour-in 140ms ease-out;
+}
+
+@keyframes tour-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.tour-step {
+	margin: 0 0 var(--sp-1);
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.04em;
+	color: var(--parchment);
+	opacity: 0.55;
+}
+
+.tour-title {
+	margin: 0 0 var(--sp-2);
+	font-family: var(--font-display);
+	font-size: var(--fs-lg);
+	color: var(--gold-bright, #ffd071);
+}
+
+.tour-body {
+	margin: 0 0 var(--sp-4);
+	font-size: var(--fs-sm);
+	line-height: 1.55;
+	color: var(--parchment);
+	opacity: 0.9;
+}
+
+.tour-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); justify-content: flex-end; }
+.tour-actions .tour-skip { margin-right: auto; }
+.tour-actions button[disabled] { opacity: 0.45; cursor: default; }

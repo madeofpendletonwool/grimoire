@@ -319,6 +319,10 @@ func (s *Server) Handler() http.Handler {
 	// The campaign surface: every route below resolves a knowledge.Scope from
 	// the caller's campaign_members row before touching the store.
 	mux.HandleFunc("GET /api/campaigns", s.handleListCampaigns)
+	// The Guide's progress snapshot: which milestones a track walks have
+	// actually happened. Scoped like every campaign route; the campaign
+	// is optional, because a brand-new account has none.
+	mux.HandleFunc("GET /api/onboarding/state", s.handleOnboardingState)
 	mux.HandleFunc("POST /api/campaigns", s.handleCreateCampaign)
 	mux.HandleFunc("POST /api/campaigns/join", s.handleJoinCampaign)
 	mux.HandleFunc("GET /api/campaigns/{id}", s.handleGetCampaign)

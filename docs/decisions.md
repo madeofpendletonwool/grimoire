@@ -1392,3 +1392,111 @@ characters is a DM act, and an import is a creation.
 | Players edit everything | A mid-session typo or a smuggled key rewrites mechanics; "trust your table" is a per-campaign property, not a default the software chooses for every table |
 | A separate player sheet table | Two sources of truth for one character, with the ledger deriving from one of them — the drift is not a risk, it is a schedule |
 | Audit table for player edits | The entity update already carries metadata; `sheet_meta.last_edit` answers "who changed this" where the data already lives |
+
+## ADR 26 — Onboarding is a tool gated on server state, never a tour of clicks
+
+**Status:** accepted · **Date:** 2026-09-10 · **Issue:** MAD-XXX
+
+### Context
+
+The D&D half went feature-complete, and that is the problem. Sixteen tools,
+nine workspaces, two seats, a canon review gate, a proposal model and an
+epistemics layer — all of it correct, none of it introduced. The relationships
+between them are documented only in `docs/` and in code comments, which is to
+say nowhere a user will look.
+
+Three separate confusions, which needed telling apart before anything could be
+built:
+
+- **Shape** — that this is a tiling workspace, that a workspace tab is a
+  different arrangement of the same app, that the leader chord opens anything.
+- **Loop** — prep → play → canon → prep. What the app is *for*, stated nowhere
+  in the product.
+- **Grain** — the rules that make a correct app look broken. Nothing is canon
+  until the DM accepts it (ADR 3). The campaign Grimoire answers as what the
+  party *has learned*, not as what is true. A journal entry is a belief, never
+  a fact (ADR 23). A player who has not been told the second one concludes the
+  app is lying to them.
+
+The curriculum already existed as data and was never shown to anybody:
+`wm/presets.js` states the DM's workflow as four named slots and the player's
+as three, and every tool in the registry already carries a `blurb`.
+
+### Decision
+
+**Onboarding is a tool, not an overlay.** `guide` is one registry entry and one
+module, mounted in a window like everything else. A coach mark that walks
+someone through a tiling shell has to fight the shell — tools mount on a later
+tick, windows move, a split invalidates every cached rectangle — and when it
+finishes it is gone, so what you half-learned in week one is unavailable in
+week six. A window sits *beside* the tool it is teaching, stays as long as it
+is useful, and is reopened from the picker.
+
+**A step completes because the server says the act happened.** Every step
+carries `done(snapshot)`, a pure predicate over one `GET /api/onboarding/state`
+read. Nothing counts clicks, and nothing remembers that a card was dismissed.
+An onboarding that ticks itself off when you press Next teaches the Next
+button. The corollary is the feature: a DM who founded their campaign before
+ever opening the Guide finds that step already behind them.
+
+**Steps are judged independently, not as a chain.** Order is the order we
+suggest, not a lock. A DM who built an encounter before touching the Planner
+has built an encounter, and saying otherwise to protect the sequence would be
+the app lying about its own state.
+
+**One aggregate endpoint, scoped once.** The milestones live behind `/story`,
+`/proposals`, `/encounters` and `/invites`, all DM-only. A player-seat Guide
+reading them directly would spray 403s to render a progress card and would
+force the client to read "you may not see this" as "this has not happened".
+`handleOnboardingState` resolves `resolveCampaignAccess` once and answers with
+counts narrowed to the caller's standing — zeroes in the DM fields at a player
+seat, never an error. It returns *facts*, never step ids: what a fact means
+stays in `guidevm.js`, so adding a step stays a one-file change.
+
+**The fork is the shell's missing question, and it is advisory.** `seatRoleOf`
+hands a campaign-less account the DM seat for want of any evidence (ADR 22).
+That is the right default and the wrong thing to leave unasked — a player who
+registered a minute ago lands in a cockpit of tools the server will refuse.
+The Guide's first card asks, and records the answer in one pref. Real standing
+outranks it in both directions: someone who answered "player" and then founded
+a table is offered the DM track. This amends ADR 22 rather than overturning
+it — the *seat* still resolves exactly as before; the account is simply asked.
+
+**"Show me" never points inside another tool.** `openTool` resolves a module on
+a later tick and the shell publishes no mounted event, so a mark aimed at
+another tool's innards draws over empty space as often as not. A step opens the
+right window, or switches workspace, and the Guide's own card says what to look
+for. The shell chrome — which no window can teach from the inside, because it
+*is* the shell — gets a five-step overlay (`tour.js`) and is the only thing
+that does.
+
+### Consequences
+
+- Adding a step is one entry in `guidevm.js`; adding a *fact* for it to read is
+  one count in `onboarding.go`. The two move independently.
+- `jstest/guidevm.test.js` covers the whole gate, because the whole gate is
+  pure: the track tables, the predicates, the fold, the fork, the seat filter.
+- An observer is offered a reduced track. They carry no binding and write no
+  journal (ADR 22), so a track including those steps would sit stuck one short
+  forever.
+- The tour joins the shell's `dismiss` chain rather than catching Escape:
+  `keys.js` binds the document in the capture phase at boot, so a listener
+  added later cannot win the key however it stops propagation.
+- A campaign invite was already one link that registers *and* seats a stranger
+  in one transaction. The gap was a signed-in visitor being served the app
+  rather than the gate, leaving the code unspent in the address bar; the shell
+  now claims it at boot. No server change.
+- An account with campaign standing and no corpus preference now lands in D&D.
+  Campaigns are a D&D surface, and the Magic default meant an invited player's
+  first sight of Grimoire was the wrong game.
+
+### Alternatives rejected
+
+| Option | Why not |
+|---|---|
+| A spotlight tour of the tools | Every anchor is a moving target in a tiling shell, tools mount asynchronously with no mounted event, and the whole thing evaporates the moment it is finished — exactly when a new DM starts needing it |
+| Steps advanced by a Next button | Teaches the Next button. It also cannot survive the common case of someone doing the work first and opening the Guide second |
+| Six to eight existing list reads instead of one endpoint | Four of them are DM-only, so a player's progress card would be rendered out of 403s, and `character_id` — the player track's own gate — is only on the DM-only members payload |
+| A demo campaign to practise on | A tour over fake data teaches the tour. Gating on real state costs the same and leaves the DM with a campaign they actually want |
+| Flip `seatRoleOf` to the player seat when there are no campaigns | Breaks the genuine first-run DM, who is the most common campaign-less account on a self-hosted box. The account was never asked; that is the bug, not the default |
+| Seed the Guide into a workspace preset | Presets seed once per never-saved slot (MAD-487), so it would still be sitting there in six months. Offering it on arrival in D&D is the right lever |

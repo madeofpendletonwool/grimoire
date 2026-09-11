@@ -201,9 +201,17 @@ section, which is what `instances: "multi"` will need. Existing tools adopt a
 section because that let nine surfaces migrate without rewriting the thousands
 of `$("id")` lookups inside them.
 
-**3. Nothing else.** No `index.html` button, no `app.js` edit, no `style.css`
-rule, no `pixel.css` registration. If a step turns out to be missing from this
+**3. One root rule, and nothing else.** No `index.html` *button*, no `app.js`
+edit, no `pixel.css` registration. If a step turns out to be missing from this
 list, that is a bug in the registry, not a step to add here.
+
+The `style.css` exemption is real but small: every tool writes a rule for its
+own root — `flex: 1; min-height: 0; overflow-y: auto;` plus padding, as
+`.director` does — because `.wm-body > *` gives it flex sizing but not its
+scroll or its gutters. Everything above that reaches for an existing class
+(`.study-head`, `.camp-panel`, `.enc-heading`, `.camp-status`, `.prose`,
+`.enc-btn`) or an `f-*` utility. A tool that adds a frame, a colour or a
+radius of its own has gone wrong.
 
 ### A tool is as wide as its window, not as wide as the screen
 
