@@ -531,7 +531,7 @@ func TestDeclareAttackersTapAndVigilance(t *testing.T) {
 	rejected(t, s, Action{Kind: ActionDeclareAttackers, Seat: 2, Attackers: []AttackAssignment{
 		{Object: bear, TargetSeat: 1}}}) // not the active player
 	evs := act(t, s, Action{Kind: ActionDeclareAttackers, Seat: 1, Attackers: []AttackAssignment{
-		{Object: bear, TargetSeat: 2}, {Object: knight, TargetSeat: 3}}})
+		{Object: bear, TargetSeat: 2}, {Object: knight, TargetSeat: 2}}})
 	sawTap := false
 	for _, e := range evs {
 		if e.Kind == EventTapChanged && e.Object == bear {

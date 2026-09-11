@@ -52,10 +52,20 @@ func (s *State) foldEvent(e Event) {
 		s.Passed = nil
 		s.Attackers = nil
 		s.Blockers = nil
+		s.AttackOrders = nil
+		s.CombatResolved = false
 	case EventStepEntered:
 		s.Phase = e.Phase
 		s.Step = e.Step
 		s.Passed = nil
+		s.CombatResolved = false
+		// CR 511.2: creatures stop attacking and blocking at end of
+		// combat; the declarations are over even though the rows remain.
+		if e.Phase == "combat" && e.Step == "end_of_combat" {
+			s.Attackers = nil
+			s.Blockers = nil
+			s.AttackOrders = nil
+		}
 		// Entering most steps grants priority to the active player
 		// (CR 117.2a); untap and cleanup grant it to no one (CR 502.3,
 		// 514.3a). Zero is the no-priority sentinel.
@@ -70,6 +80,7 @@ func (s *State) foldEvent(e Event) {
 		// land drop and the pass cycle with the turn.
 		for _, o := range s.Objects {
 			o.Damage = 0
+			o.DamageBySource = nil
 			o.Modifiers = dropUntilEOT(o.Modifiers)
 		}
 		s.resetTurnScoped()
@@ -78,12 +89,20 @@ func (s *State) foldEvent(e Event) {
 		s.PrioritySeat = e.SeatTo
 		s.Passed = append(s.Passed, e.ActorSeat)
 	case EventStackPushed:
-		s.Stack = append(s.Stack, StackItem{Object: e.Object, Mode: e.Mode, Ability: e.Ability,
-			Controller: e.Controller, Targets: e.Targets})
+		if e.Mode == "triggered" {
+			// A trigger reaching the stack drains its queue entry; the
+			// push rides the priority grant that flushed it and hands
+			// priority to no one (CR 117.5 — the player who was about to
+			// receive priority still does).
+			s.drainQueuedTrigger(StackItem{Controller: e.Controller, Ability: e.Ability, Card: e.Card})
+		}
+		s.Stack = append(s.Stack, StackItem{Object: e.Object, Mode: e.Mode, Card: e.Card,
+			Ability: e.Ability, Controller: e.Controller, Targets: e.Targets})
 		// The player who put it there receives priority (CR 117.2c —
 		// casting, activating, and special actions return priority to
-		// the actor) and the pass cycle starts over.
-		if e.Controller != 0 {
+		// the actor) and the pass cycle starts over. Triggered abilities
+		// are the exception: they were not that player's act.
+		if e.Controller != 0 && e.Mode != "triggered" {
 			s.PrioritySeat = e.Controller
 		}
 		s.Passed = nil
@@ -135,11 +154,20 @@ func (s *State) foldEvent(e Event) {
 		s.Attackers = e.Attackers
 	case EventBlockersDeclared:
 		s.Blockers = e.Blockers
+		s.AttackOrders = e.AttackOrders
+	case EventCombatResolved:
+		s.CombatResolved = true
 	case EventDamageDealt:
 		s.foldDamageDealt(e)
 	case EventDamageMarked:
 		if o, ok := s.Objects[e.Object]; ok {
 			o.Damage += e.Amount
+			if e.SourceObj != 0 {
+				if o.DamageBySource == nil {
+					o.DamageBySource = map[int64]int{}
+				}
+				o.DamageBySource[e.SourceObj] += e.Amount
+			}
 		}
 	case EventLifeChanged:
 		if p, ok := s.Seats[e.TargetSeat]; ok {
@@ -214,7 +242,8 @@ func (s *State) foldEvent(e Event) {
 			o.Modifiers = dropModifierID(o.Modifiers, e.ModifierID)
 		}
 	case EventTriggerFired:
-		// The trigger queue is MAD-325's; the row is log surface now.
+		s.TriggerQueue = append(s.TriggerQueue, TriggerItem{SourceObj: e.Object, Card: e.Card,
+			Effect: e.Effect, Controller: e.Controller, Targets: e.Targets})
 	case EventCardDrawn:
 		if p, ok := s.Seats[e.TargetSeat]; ok {
 			p.Hand = Count{Known: true, N: p.Hand.N + e.Count}
@@ -357,6 +386,7 @@ func (s *State) foldZoneChanged(e Event) {
 		o.Modifiers = nil
 		o.Counters = map[string]int{}
 		o.Damage = 0
+		o.DamageBySource = nil
 		o.Tapped = false
 		o.Phased = false
 		for _, att := range o.Attachments {
@@ -420,6 +450,16 @@ func (s *State) foldPlayerLeft(e Event) {
 		}
 	}
 	s.Passed = passed
+
+	// Their waiting triggers leave with them (CR 800.4 — their abilities
+	// cease).
+	queue := s.TriggerQueue[:0:0]
+	for _, q := range s.TriggerQueue {
+		if q.Controller != seat {
+			queue = append(queue, q)
+		}
+	}
+	s.TriggerQueue = queue
 
 	// Owned objects leave the game; break any edge that pointed at them
 	// from either side so nothing dangles.

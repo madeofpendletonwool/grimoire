@@ -3,10 +3,9 @@ package engine
 // The Event taxonomy: the output side, the rows mtg_events stores. ★ in the
 // model doc marks the structural kinds — the ones fixed by the Comprehensive
 // Rules that the trigger registry (MAD-335) can fire on. The full
-// vocabulary is defined here even where a later stage is the producer
-// (TRIGGER_FIRED is MAD-325's): the vocabulary lives in the Go type system
-// and grows with the engine, which is why kind is not CHECK-constrained in
-// SQL.
+// vocabulary is defined here even where a later stage is the producer:
+// the vocabulary lives in the Go type system and grows with the engine,
+// which is why kind is not CHECK-constrained in SQL.
 
 // EventKind is one row kind in the log.
 type EventKind string
@@ -30,6 +29,7 @@ const (
 	EventCast              EventKind = "CAST"               // ★
 	EventAttackersDeclared EventKind = "ATTACKERS_DECLARED" // ★
 	EventBlockersDeclared  EventKind = "BLOCKERS_DECLARED"
+	EventCombatResolved    EventKind = "COMBAT_RESOLVED"
 	EventDamageDealt       EventKind = "DAMAGE_DEALT"
 	EventDamageMarked      EventKind = "DAMAGE_MARKED"
 	EventLifeChanged       EventKind = "LIFE_CHANGED"
@@ -41,7 +41,7 @@ const (
 	EventUnattached        EventKind = "UNATTACHED"
 	EventModifierAdded     EventKind = "MODIFIER_ADDED"
 	EventModifierRemoved   EventKind = "MODIFIER_REMOVED"
-	EventTriggerFired      EventKind = "TRIGGER_FIRED" // (MAD-325 queues these)
+	EventTriggerFired      EventKind = "TRIGGER_FIRED" // queues; stacks at the next priority grant
 	EventCardDrawn         EventKind = "CARD_DRAWN"
 	EventCardKnown         EventKind = "CARD_KNOWN"
 	EventCardRevealed      EventKind = "CARD_REVEALED"
@@ -128,8 +128,9 @@ type Event struct {
 	Card string `json:"card,omitempty"`
 
 	// ATTACKERS_DECLARED / BLOCKERS_DECLARED.
-	Attackers []AttackAssignment `json:"attackers,omitempty"`
-	Blockers  []BlockAssignment  `json:"blockers,omitempty"`
+	Attackers    []AttackAssignment `json:"attackers,omitempty"`
+	Blockers     []BlockAssignment  `json:"blockers,omitempty"`
+	AttackOrders []AttackOrder      `json:"attack_orders,omitempty"`
 
 	// DAMAGE_DEALT / DAMAGE_MARKED / LIFE_CHANGED: source rides the event
 	// so the log entry says why.
