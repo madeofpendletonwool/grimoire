@@ -14,6 +14,7 @@ type TokenSpec struct {
 	Colors    []string `json:"colors,omitempty"`
 	Power     *int     `json:"power,omitempty"`
 	Toughness *int     `json:"toughness,omitempty"`
+	Loyalty   *int     `json:"loyalty,omitempty"`
 }
 
 // Identity is what an object is: a card name resolved against the
@@ -65,8 +66,8 @@ type Object struct {
 	AttachedTo  int64   `json:"attached_to,omitempty"`
 	Attachments []int64 `json:"attachments,omitempty"`
 	// Damage is marked damage on a creature. It persists until cleanup,
-	// so it clears on TURN_ENDED; lethal-damage deaths are MAD-324's
-	// state-based actions, asserted as DIED rows then.
+	// so it clears on TURN_ENDED; lethal-damage deaths are state-based
+	// actions, asserted as DIED rows by the sweep.
 	Damage int `json:"damage,omitempty"`
 }
 

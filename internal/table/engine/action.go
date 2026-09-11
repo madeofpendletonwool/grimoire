@@ -19,6 +19,7 @@ type ActionKind string
 const (
 	ActionStartGame        ActionKind = "START_GAME"
 	ActionEndGame          ActionKind = "END_GAME"
+	ActionConcede          ActionKind = "CONCEDE"
 	ActionAdvance          ActionKind = "ADVANCE"
 	ActionPassPriority     ActionKind = "PASS_PRIORITY"
 	ActionPlayLand         ActionKind = "PLAY_LAND"
