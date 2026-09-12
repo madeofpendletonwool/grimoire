@@ -33,6 +33,19 @@ type RuleFetcher interface {
 	SearchRules(ctx context.Context, query string) (string, error)
 }
 
+// CardSearcher runs a Scryfall search the model composed. The model is the
+// translator from a question to Scryfall syntax; this is the executor, and its
+// result text must carry Scryfall's warnings and rejections verbatim, because
+// those are what the model corrects its next query from.
+type CardSearcher interface {
+	// SearchCards returns a formatted page of matches for a Scryfall query,
+	// with the total match count and a link to the full list. A query
+	// Scryfall rejects is a normal result carrying its explanation — the
+	// model is meant to fix the query and try again, not give up — so the
+	// error is reserved for Scryfall being unreachable.
+	SearchCards(ctx context.Context, query, unique, order string) (string, error)
+}
+
 // maxToolRounds bounds how many times one answer may go back to the index.
 // Three lookups is enough for the deepest real chain — a rule, the rule it
 // cites, and a search to confirm — and the last round is asked without tools
@@ -46,6 +59,7 @@ const maxToolResult = 6000
 const (
 	toolLookupRule  = "lookup_rule"
 	toolSearchRules = "search_rules"
+	toolSearchCards = "search_cards"
 )
 
 // ruleTools are the lookups offered to the model.
@@ -81,6 +95,50 @@ var ruleTools = []tool{{
 	},
 }}
 
+// cardSearchTool is the Scryfall search, offered only when the request carries
+// a CardSearcher (Magic, with Scryfall configured).
+var cardSearchTool = tool{
+	Name: toolSearchCards,
+	Description: "Search every Magic card with Scryfall's query syntax and get back the matches with a total count and a link to the full list. " +
+		"Use this for ANY question about which cards exist or fit a description — lists, counts, \"every card that…\", art contents, name patterns, colour combinations. " +
+		"Never answer such questions from memory. If Scryfall rejects or warns about the query, fix the syntax and search again.",
+	InputSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{
+				"type":        "string",
+				"description": "A Scryfall search, e.g. \"c=4\", \"art:pirate art:ship\", \"name:sphere\", \"t:artifact -t:creature o:sacrifice\".",
+			},
+			"unique": map[string]any{
+				"type":        "string",
+				"enum":        []string{"cards", "art", "prints"},
+				"description": "How to roll up printings: cards (default, one per name), art (one per illustration — use for art questions), prints (every printing).",
+			},
+			"order": map[string]any{
+				"type":        "string",
+				"description": "Sort order: name (default), released, cmc, color, rarity, edhrec.",
+			},
+		},
+		"required": []string{"query"},
+	},
+}
+
+// cardSearchGuide is the syntax the model composes queries in. Models know
+// most of Scryfall already; the guide exists for the parts they guess at —
+// comparison operators on colours, the art tags, the rollup modes — and for
+// the two habits that keep answers honest: report the total, hand over the
+// link.
+const cardSearchGuide = `CARD SEARCH — search_cards speaks Scryfall syntax. Quick reference:
+- Name: bare words match names ("sphere" or name:sphere); !"Exact Name" for one card.
+- Text and type: o:"draw a card" oracle text; t:pirate type line; kw:flying keyword.
+- Colours: c=4 exactly four colours; c>=uw at least blue and white; c:m multicolour; c:c colourless; id<=bg commander identity within Golgari.
+- Numbers: mv>=7 (mana value), pow>=5, tou<=1, year<=1995, rarity:mythic, set:mh3.
+- Art and function: art:ship, art:skull, art:dragon are crowd-tagged illustration contents (also atag:); otag:removal (also function:) tags what a card does. Tags are single lowercase words — combine them (art:pirate art:ship) rather than inventing compounds (art:pirate-ship). An unknown tag matches nothing WITHOUT a warning, so a zero result on a tag term means the tag does not exist: retry with a simpler or broader tag.
+- Card kinds: is:commander, is:reserved, is:token, is:dfc, is:vanilla, is:permanent, is:spell.
+- Negate any term with a leading minus (-t:creature); group with parentheses and OR.
+- unique: "art" for art questions (one result per illustration), "cards" otherwise.
+When answering: state the total match count, name the cards you were shown, give the Scryfall link for the full list, and say plainly when the search returned nothing rather than filling in from memory. If a result carries warnings, read them — an ignored term means the query did not test what you meant.`
+
 // runWithTools answers a question over several rounds, executing whatever rule
 // lookups the model asks for between them.
 //
@@ -91,7 +149,7 @@ var ruleTools = []tool{{
 func (c *Client) runWithTools(ctx context.Context, r Request, system string, msgs []message, onDelta func(string) error) (string, error) {
 	var answer strings.Builder
 	for round := 0; round < maxToolRounds; round++ {
-		offer := ruleTools
+		offer := toolsFor(r)
 		if round == maxToolRounds-1 {
 			offer = nil
 		}
@@ -111,6 +169,19 @@ func (c *Client) runWithTools(ctx context.Context, r Request, system string, msg
 		msgs = append(msgs, assistantTurn(ex), c.toolResults(ctx, r, ex.Tools))
 	}
 	return answer.String(), nil
+}
+
+// toolsFor is the lookups a request can actually answer: rule tools when it
+// has an index behind it, the card search when it has Scryfall.
+func toolsFor(r Request) []tool {
+	var offer []tool
+	if r.Fetcher != nil {
+		offer = append(offer, ruleTools...)
+	}
+	if r.CardSearch != nil {
+		offer = append(offer, cardSearchTool)
+	}
+	return offer
 }
 
 // assistantTurn rebuilds the model's turn as content blocks so the tool
@@ -136,7 +207,7 @@ func (c *Client) toolResults(ctx context.Context, r Request, uses []toolUse) mes
 		if r.OnLookup != nil {
 			r.OnLookup(u.Name, lookupArg(u))
 		}
-		text, err := runTool(ctx, r.Fetcher, u)
+		text, err := runTool(ctx, r, u)
 		if err != nil {
 			log.Printf("llm tool %s: %v", u.Name, err)
 			blocks = append(blocks, contentBlock{
@@ -166,13 +237,12 @@ func lookupArg(u toolUse) string {
 }
 
 // runTool dispatches one lookup.
-func runTool(ctx context.Context, f RuleFetcher, u toolUse) (string, error) {
-	if f == nil {
-		return "", fmt.Errorf("no rules index available")
-	}
+func runTool(ctx context.Context, r Request, u toolUse) (string, error) {
 	var args struct {
 		Number string `json:"number"`
 		Query  string `json:"query"`
+		Unique string `json:"unique"`
+		Order  string `json:"order"`
 	}
 	if len(u.Input) > 0 {
 		if err := json.Unmarshal(u.Input, &args); err != nil {
@@ -181,15 +251,29 @@ func runTool(ctx context.Context, f RuleFetcher, u toolUse) (string, error) {
 	}
 	switch u.Name {
 	case toolLookupRule:
+		if r.Fetcher == nil {
+			return "", fmt.Errorf("no rules index available")
+		}
 		if strings.TrimSpace(args.Number) == "" {
 			return "", fmt.Errorf("no rule number given")
 		}
-		return f.LookupRule(ctx, args.Number)
+		return r.Fetcher.LookupRule(ctx, args.Number)
 	case toolSearchRules:
+		if r.Fetcher == nil {
+			return "", fmt.Errorf("no rules index available")
+		}
 		if strings.TrimSpace(args.Query) == "" {
 			return "", fmt.Errorf("no search query given")
 		}
-		return f.SearchRules(ctx, args.Query)
+		return r.Fetcher.SearchRules(ctx, args.Query)
+	case toolSearchCards:
+		if r.CardSearch == nil {
+			return "", fmt.Errorf("no card search available")
+		}
+		if strings.TrimSpace(args.Query) == "" {
+			return "", fmt.Errorf("no search query given")
+		}
+		return r.CardSearch.SearchCards(ctx, args.Query, args.Unique, args.Order)
 	}
 	return "", fmt.Errorf("unknown lookup %q", u.Name)
 }

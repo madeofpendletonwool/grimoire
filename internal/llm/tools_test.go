@@ -223,3 +223,108 @@ func TestReadStreamReassemblesToolCalls(t *testing.T) {
 		t.Errorf("tool arguments leaked into the answer: %q", ex.Text)
 	}
 }
+
+// fakeCardSearch records the Scryfall queries the model composed.
+type fakeCardSearch struct {
+	mu      sync.Mutex
+	queries []string
+	uniques []string
+}
+
+func (f *fakeCardSearch) SearchCards(_ context.Context, query, unique, _ string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queries = append(f.queries, query)
+	f.uniques = append(f.uniques, unique)
+	return "37 cards match `" + query + "` (showing 2). Full list: https://scryfall.com/search?q=x\n- Pirate Ship — {5}{U} — Creature — Human Pirate (LEA)\n- Ghost Ship — {2}{U}{U} — Creature — Spirit (LEG)", nil
+}
+
+// searchThenAnswer is toolThenAnswer for the card search: the first response
+// composes a Scryfall query, the second answers from the list.
+func searchThenAnswer(t *testing.T, bodies *[]map[string]any) http.HandlerFunc {
+	t.Helper()
+	var mu sync.Mutex
+	round := 0
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		*bodies = append(*bodies, body)
+		round++
+		n := round
+		mu.Unlock()
+
+		w.Header().Set("content-type", "application/json")
+		if n == 1 {
+			fmt.Fprint(w, `{"stop_reason":"tool_use","content":[
+				{"type":"tool_use","id":"tu_1","name":"search_cards","input":{"query":"art:ship t:pirate","unique":"art"}}
+			],"usage":{"input_tokens":10,"output_tokens":5}}`)
+			return
+		}
+		fmt.Fprint(w, `{"stop_reason":"end_turn","content":[
+			{"type":"text","text":"37 cards show a ship, among them Pirate Ship and Ghost Ship."}
+		],"usage":{"input_tokens":20,"output_tokens":9}}`)
+	}
+}
+
+// A "which cards…" question is answered by running the model's Scryfall
+// query, not from recall: the tool must be offered, the query executed with
+// the rollup the model chose, and the result list carried into the next round.
+func TestAnswerRunsACardSearch(t *testing.T) {
+	var bodies []map[string]any
+	up := httptest.NewServer(searchThenAnswer(t, &bodies))
+	defer up.Close()
+
+	cs := &fakeCardSearch{}
+	c := New(Config{BaseURL: up.URL, APIKey: "k", Model: "m"})
+	out, err := c.Answer(context.Background(), Request{
+		CorpusName: "Magic: The Gathering",
+		Question:   "Which cards have pirate ships in the art?",
+		CardSearch: cs,
+	})
+	if err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	if len(cs.queries) != 1 || cs.queries[0] != "art:ship t:pirate" || cs.uniques[0] != "art" {
+		t.Fatalf("searched %v / %v, want [art:ship t:pirate] / [art]", cs.queries, cs.uniques)
+	}
+	if !strings.Contains(out, "Ghost Ship") {
+		t.Errorf("answer = %q", out)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("made %d calls, want 2", len(bodies))
+	}
+	// Only the card search was offered — there is no rules index on this
+	// request — and the system prompt must carry the syntax guide.
+	tools := fmt.Sprint(bodies[0]["tools"])
+	if !strings.Contains(tools, "search_cards") || strings.Contains(tools, "lookup_rule") {
+		t.Errorf("tools offered = %s", tools)
+	}
+	if !strings.Contains(fmt.Sprint(bodies[0]["system"]), "CARD SEARCH") {
+		t.Error("system prompt lacks the card search guide")
+	}
+	if !strings.Contains(fmt.Sprint(bodies[1]["messages"]), "37 cards match") {
+		t.Errorf("the result list never reached the model: %v", bodies[1]["messages"])
+	}
+}
+
+// Without Scryfall behind it a request must not advertise a card search the
+// server cannot honour — a model that calls a missing tool wastes a round and
+// reports a failure the reader did nothing to cause.
+func TestNoCardSearchOfferedWithoutSearcher(t *testing.T) {
+	var bodies []map[string]any
+	up := httptest.NewServer(toolThenAnswer(t, &bodies))
+	defer up.Close()
+
+	c := New(Config{BaseURL: up.URL, APIKey: "k", Model: "m"})
+	if _, err := c.Answer(context.Background(), Request{CorpusName: "Magic: The Gathering", Question: "q", Fetcher: &fakeFetcher{}}); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	if strings.Contains(fmt.Sprint(bodies[0]["tools"]), "search_cards") {
+		t.Error("search_cards offered with no CardSearch on the request")
+	}
+	if strings.Contains(fmt.Sprint(bodies[0]["system"]), "CARD SEARCH") {
+		t.Error("system prompt carries the card search guide with no searcher")
+	}
+}

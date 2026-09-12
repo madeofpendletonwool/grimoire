@@ -456,6 +456,10 @@ function showLookup(bubble, tool, arg) {
 		note = el("div", { class: "lookup-note" });
 		bubble.append(note);
 	}
+	if (tool === "search_cards") {
+		note.textContent = `Searching Scryfall for ${arg}…`;
+		return;
+	}
 	const what = tool === "lookup_rule" ? `rule ${arg}` : `"${arg}"`;
 	note.textContent = `Consulting ${what}…`;
 }

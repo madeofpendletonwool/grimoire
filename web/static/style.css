@@ -623,6 +623,9 @@ kbd {
 /* D&D's answer to chip-card: a resolved entity, not a Magic card. Same
    treatment, because to the reader they are the same kind of citation. */
 .chip.chip-entity { color: var(--accent-deep); font-weight: 600; }
+/* A search the sage ran is a link out to Scryfall, not a drawer page; it
+   wears the chip frame like the rest so the strip reads as one thing. */
+.chip.chip-search { color: var(--accent-deep); font-weight: 600; text-decoration: none; }
 
 /* Rule numbers and citations are buttons, and a button is unselectable by
    default in WebKit and Gecko — so copying an answer dropped every rule number

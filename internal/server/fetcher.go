@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
+	"github.com/madeofpendletonwool/grimoire/internal/cards"
 	"github.com/madeofpendletonwool/grimoire/internal/data"
 	"github.com/madeofpendletonwool/grimoire/internal/index"
 )
@@ -21,9 +23,15 @@ import (
 type ruleFetcher struct {
 	store  *index.Store
 	corpus data.Corpus
+	// cards, when set, is Scryfall — the model may also compose card searches
+	// mid-answer. Nil for D&D and for an install without card lookup.
+	cards *cards.Service
 
 	mu      sync.Mutex
 	fetched []index.Result
+	// searches are the Scryfall queries the model ran, kept as citations that
+	// link out to the full result list.
+	searches []searchHit
 }
 
 // lookupResults caps how many rules one search hands back — enough to choose
@@ -94,14 +102,111 @@ func (f *ruleFetcher) record(docs []index.Result) {
 	}
 }
 
-// sources returns the rules fetched mid-answer, as citations.
+// sources returns the rules fetched and the searches run mid-answer, as
+// citations.
 func (f *ruleFetcher) sources() []searchHit {
 	if f == nil {
 		return nil
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return toSources(f.fetched)
+	return append(toSources(f.fetched), f.searches...)
+}
+
+// searchCardsShown is how many matches one search hands the model. Enough to
+// name the notable ones and see the shape of the list; the total and the link
+// carry the rest.
+const searchCardsShown = 30
+
+// SearchCards runs the model's Scryfall query and reports the page, the total
+// and the link. A rejected query comes back as text, not an error: Scryfall's
+// explanation of what was wrong is the most useful thing the model can be
+// told, and it is meant to try again, not to apologise.
+func (f *ruleFetcher) SearchCards(ctx context.Context, query, unique, order string) (string, error) {
+	if f.cards == nil {
+		return "", fmt.Errorf("card search is not configured")
+	}
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return "", fmt.Errorf("no search query given")
+	}
+	res, err := f.cards.Query(ctx, q, cards.QueryOptions{Unique: unique, Order: order, Limit: searchCardsShown})
+	if err != nil {
+		var qe *cards.QueryError
+		if !errors.As(err, &qe) {
+			return "", err
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "Scryfall rejected the query `%s`: %s", q, qe.Details)
+		for _, w := range qe.Warnings {
+			fmt.Fprintf(&b, "\n- %s", w)
+		}
+		b.WriteString("\nFix the syntax and search again; do not answer from memory.")
+		return b.String(), nil
+	}
+	f.recordSearch(res)
+	return formatCardSearch(res), nil
+}
+
+// recordSearch keeps one chip per distinct query.
+func (f *ruleFetcher) recordSearch(res *cards.QueryResult) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, have := range f.searches {
+		if have.URL == res.URL {
+			return
+		}
+	}
+	f.searches = append(f.searches, searchHit{
+		Title:  "Scryfall: " + res.Query,
+		Body:   fmt.Sprintf("%d cards match", res.Total),
+		Source: "scryfall",
+		URL:    res.URL,
+	})
+}
+
+// formatCardSearch renders a search page for the model: the count first, so
+// "showing 30 of 412" is understood before the list is read; the link, so it
+// is handed on; the warnings, because an ignored term means the list is not
+// what the query meant; then one compact line per card.
+func formatCardSearch(res *cards.QueryResult) string {
+	var b strings.Builder
+	switch {
+	case res.Total == 0:
+		fmt.Fprintf(&b, "No cards match `%s`.", res.Query)
+		// Scryfall does not warn about a tag nobody has created; it just
+		// matches nothing. Without this the model reads "no such cards" where
+		// the truth is "no such tag".
+		if strings.Contains(res.Query, "art:") || strings.Contains(res.Query, "atag:") || strings.Contains(res.Query, "otag:") || strings.Contains(res.Query, "function:") {
+			b.WriteString(" A tag that matches nothing usually does not exist — retry with a simpler single-word tag, or combine two broader ones.")
+		}
+	case res.HasMore || len(res.Cards) < res.Total:
+		fmt.Fprintf(&b, "%d cards match `%s` (showing the first %d, ordered by %s).", res.Total, res.Query, len(res.Cards), res.Order)
+	default:
+		fmt.Fprintf(&b, "%d cards match `%s` (all of them, ordered by %s).", res.Total, res.Query, res.Order)
+	}
+	if res.Total > 0 {
+		fmt.Fprintf(&b, "\nFull list: %s", res.URL)
+	}
+	if len(res.Warnings) > 0 {
+		b.WriteString("\nScryfall warnings:")
+		for _, w := range res.Warnings {
+			fmt.Fprintf(&b, "\n- %s", w)
+		}
+	}
+	for _, c := range res.Cards {
+		fmt.Fprintf(&b, "\n- %s", c.Name)
+		if c.ManaCost != "" {
+			fmt.Fprintf(&b, " — %s", c.ManaCost)
+		}
+		if c.TypeLine != "" {
+			fmt.Fprintf(&b, " — %s", c.TypeLine)
+		}
+		if c.Set != "" {
+			fmt.Fprintf(&b, " (%s)", strings.ToUpper(c.Set))
+		}
+	}
+	return b.String()
 }
 
 // formatRules renders rules for the model in the same shape as the grounding

@@ -159,14 +159,31 @@ export function renderCitations(sources, cards, entities, unresolved, corpus) {
 
 	const wrap = el("div", { class: "citations" });
 
-	if (sources && sources.length) {
+	// A source with a URL lives off-site — a Scryfall search the sage ran —
+	// and there is no drawer page for it; the chip is the link to the full
+	// result list, which is the whole point of citing a search.
+	const rules = (sources || []).filter((s) => !s.url);
+	const searches = (sources || []).filter((s) => s.url);
+
+	if (rules.length) {
 		wrap.append(el("span", { class: "citations-label", text: "Rules:" }));
-		for (const s of sources.slice(0, 10)) {
+		for (const s of rules.slice(0, 10)) {
 			wrap.append(el("button", {
 				class: "chip",
 				text: s.number || s.title || "•",
 				attrs: { type: "button", title: (s.title ? s.title + " — " : "") + truncate(s.body, 160) },
 				on: { click: () => refs.openRule(s, corpus) },
+			}));
+		}
+	}
+
+	if (searches.length) {
+		wrap.append(el("span", { class: "citations-label", text: "Searches:" }));
+		for (const s of searches.slice(0, 6)) {
+			wrap.append(el("a", {
+				class: "chip chip-search",
+				text: s.title || s.url,
+				attrs: { href: s.url, target: "_blank", rel: "noopener noreferrer", title: (s.body ? s.body + " — " : "") + "open the full list on Scryfall" },
 			}));
 		}
 	}

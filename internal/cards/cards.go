@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -79,6 +78,7 @@ type cacheEntry struct {
 	at       time.Time
 	card     *Card
 	list     []*Card
+	query    *QueryResult
 	notFound bool
 }
 
@@ -201,41 +201,22 @@ func (s *Service) throttle(ctx context.Context) error {
 // getJSON issues a GET and decodes JSON into dst. A 404 maps to ErrNotFound so
 // callers can treat "no match" as a normal, non-fatal outcome.
 func (s *Service) getJSON(ctx context.Context, path string, params url.Values, dst any) error {
-	u := s.baseURL + path
-	if encoded := params.Encode(); encoded != "" {
-		u += "?" + encoded
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	status, body, err := s.get(ctx, path, params)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("user-agent", "grimoire/1.0 (+https://github.com/madeofpendletonwool/grimoire)")
-	req.Header.Set("accept", "application/json")
-
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("scryfall request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode == http.StatusNotFound {
+	if status == http.StatusNotFound {
 		return ErrNotFound
 	}
-	if resp.StatusCode >= 300 {
-		var e struct {
-			Details string `json:"details"`
-		}
+	if status >= 300 {
+		var e scryfallError
 		_ = json.Unmarshal(body, &e)
 		if e.Details == "" {
-			e.Details = resp.Status
+			e.Details = http.StatusText(status)
 		}
 		// Scryfall returns 404 for not-found/ambiguous; a 400 with "ambiguous"
 		// is also effectively "no single match".
-		if resp.StatusCode == http.StatusBadRequest {
+		if status == http.StatusBadRequest {
 			return ErrNotFound
 		}
 		return fmt.Errorf("scryfall: %s", e.Details)
@@ -274,7 +255,10 @@ type scryfallCardFace struct {
 }
 
 type scryfallList struct {
-	Data []scryfallCard `json:"data"`
+	Data       []scryfallCard `json:"data"`
+	TotalCards int            `json:"total_cards"`
+	HasMore    bool           `json:"has_more"`
+	Warnings   []string       `json:"warnings"`
 }
 
 // normalizeCard converts a Scryfall card object into our Card type,

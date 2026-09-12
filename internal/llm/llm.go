@@ -192,6 +192,10 @@ type Request struct {
 	// reporting that the rule it needs was not retrieved. Nil keeps the
 	// single-round behaviour.
 	Fetcher RuleFetcher
+	// CardSearch, when set, lets the model run Scryfall searches mid-answer,
+	// so "which cards…" questions are answered from a real result list rather
+	// than recall. MTG only; nil offers no such tool.
+	CardSearch CardSearcher
 	// OnLookup, when set, is called as each lookup starts. A mid-answer lookup
 	// is a pause with nothing arriving on the wire; announcing it is the
 	// difference between "the sage is checking 608.2b" and a stalled answer.
@@ -291,9 +295,9 @@ func chatMessages(turns []Turn) []message {
 
 // run builds the Q&A exchange from a Request and sends it.
 func (c *Client) run(ctx context.Context, r Request, onDelta func(string) error) (string, error) {
-	system := systemPrompt(r.CorpusName, len(r.Cards) > 0, len(r.Entities) > 0, len(r.Rulings) > 0, r.Fetcher != nil)
+	system := systemPrompt(r.CorpusName, len(r.Cards) > 0, len(r.Entities) > 0, len(r.Rulings) > 0, r.Fetcher != nil, r.CardSearch != nil)
 	msgs := buildMessages(r)
-	if r.Fetcher == nil {
+	if r.Fetcher == nil && r.CardSearch == nil {
 		out, _, err := c.callMessages(ctx, system, msgs, onDelta != nil, onDelta)
 		return out, err
 	}
@@ -629,7 +633,7 @@ func readStream(body io.Reader, onDelta func(string) error) (exchange, error) {
 	return ex, nil
 }
 
-func systemPrompt(corpusName string, hasCards bool, hasEntities bool, hasRulings bool, hasTools bool) string {
+func systemPrompt(corpusName string, hasCards bool, hasEntities bool, hasRulings bool, hasTools bool, hasCardSearch bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		`You are the Grimoire, a knowledgeable keeper of %s rules. Answer like a careful judge: precise, grounded, and unmoved by pressure.
@@ -672,12 +676,20 @@ GROUNDING RULES — follow these strictly:
 	} else {
 		fmt.Fprintf(&b, "\n%d. If the provided excerpts do not contain the answer, say so plainly rather than inventing anything.", rule)
 	}
+	if hasCardSearch {
+		rule++
+		fmt.Fprintf(&b, "\n%d. Any question about WHICH cards exist or match a description — a list, a count, \"every card that…\", \"cards with X in the art\", \"cards named…\" — MUST be answered with search_cards. Never list cards from memory, and never pad a result list with cards the search did not return. Report the total the search gives and include its Scryfall link so the reader can see every match.", rule)
+	}
 
 	b.WriteString("\n\nREASONING DISCIPLINE — apply to every answer:")
 	b.WriteString(`
 - Reason forward from the cited rules and card text to the conclusion. Do NOT adopt a conclusion asserted by the question (a stated "the answer is X" or "so it's not Y?"); verify it against the text first.
 - If a premise in the question conflicts with the rules or oracle text, correct it plainly and show the exact step that breaks. Do not change a correct answer because the questioner pushes back — if your reading of the text is sound, hold it and re-explain the step.
 - When the question describes a board state, identify who controls each relevant permanent and which abilities are on which objects before you count anything.`)
+
+	if hasCardSearch {
+		b.WriteString("\n\n" + cardSearchGuide)
+	}
 
 	if strings.Contains(corpusName, "Magic") {
 		b.WriteString("\n\nMTG INTERACTIONS — check these common traps before answering:")

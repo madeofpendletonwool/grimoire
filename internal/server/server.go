@@ -772,6 +772,9 @@ type searchHit struct {
 	Title  string `json:"title"`
 	Body   string `json:"body"`
 	Source string `json:"source"`
+	// URL is set on a citation that lives off-site — a Scryfall search the
+	// model ran — and the UI links out instead of opening the drawer.
+	URL string `json:"url,omitempty"`
 }
 
 // displayRuleNumRe matches an MTG-style rule number ("205.1a").
@@ -979,6 +982,9 @@ func (g grounded) request(corpus data.Corpus, question string, history []llm.Tur
 	// on the embeddings path. Assign it only when there is one.
 	if g.fetcher != nil {
 		req.Fetcher = g.fetcher
+		if g.fetcher.cards != nil {
+			req.CardSearch = g.fetcher
+		}
 	}
 	return req
 }
@@ -990,6 +996,11 @@ func (g grounded) request(corpus data.Corpus, question string, history []llm.Tur
 func (s *Server) ground(ctx context.Context, corpus data.Corpus, question string, history []llm.Turn) (grounded, error) {
 	var g grounded
 	g.fetcher = &ruleFetcher{store: s.store, corpus: corpus}
+	// The card search is a Magic tool: Scryfall has no D&D in it, and a D&D
+	// answer offered one would only have a way to be wrong.
+	if corpus == data.CorpusMTG && s.cards != nil {
+		g.fetcher.cards = s.cards
+	}
 
 	// Cards are resolved before retrieval, not after: their type lines and
 	// oracle text name the mechanics the question is about, and anchoring

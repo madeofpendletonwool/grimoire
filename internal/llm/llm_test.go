@@ -11,7 +11,7 @@ import (
 )
 
 func TestSystemPrompt_NoCards(t *testing.T) {
-	got := systemPrompt("Magic: The Gathering", false, false, false, false)
+	got := systemPrompt("Magic: The Gathering", false, false, false, false, false)
 	if !strings.Contains(got, "using ONLY the provided rule excerpts") {
 		t.Errorf("system prompt missing ONLY constraint: %q", got)
 	}
@@ -21,7 +21,7 @@ func TestSystemPrompt_NoCards(t *testing.T) {
 }
 
 func TestSystemPrompt_WithCards(t *testing.T) {
-	got := systemPrompt("Magic: The Gathering", true, false, false, false)
+	got := systemPrompt("Magic: The Gathering", true, false, false, false, false)
 	if !strings.Contains(got, "use ONLY the provided oracle text") {
 		t.Errorf("system prompt missing oracle-text constraint: %q", got)
 	}
@@ -31,7 +31,7 @@ func TestSystemPrompt_WithCards(t *testing.T) {
 }
 
 func TestSystemPrompt_WithRulings(t *testing.T) {
-	got := systemPrompt("Magic: The Gathering", true, false, true, false)
+	got := systemPrompt("Magic: The Gathering", true, false, true, false, false)
 	if !strings.Contains(got, "Official rulings were provided") {
 		t.Errorf("rulings prompt missing cite directive: %q", got)
 	}
@@ -44,7 +44,7 @@ func TestSystemPrompt_WithRulings(t *testing.T) {
 }
 
 func TestSystemPrompt_WithoutRulingsMentionsNothing(t *testing.T) {
-	got := systemPrompt("Magic: The Gathering", true, false, false, false)
+	got := systemPrompt("Magic: The Gathering", true, false, false, false, false)
 	if strings.Contains(got, "Official rulings were provided") {
 		t.Errorf("non-rulings prompt must not mention rulings: %q", got)
 	}
@@ -52,7 +52,7 @@ func TestSystemPrompt_WithoutRulingsMentionsNothing(t *testing.T) {
 
 func TestSystemPrompt_ReasoningDiscipline(t *testing.T) {
 	for _, corpus := range []string{"Magic: The Gathering", "D&D 5e SRD"} {
-		got := systemPrompt(corpus, false, false, false, false)
+		got := systemPrompt(corpus, false, false, false, false, false)
 		if !strings.Contains(got, "Do NOT adopt a conclusion asserted by the question") {
 			t.Errorf("%s: prompt missing anti-sycophancy directive: %q", corpus, got)
 		}
@@ -63,7 +63,7 @@ func TestSystemPrompt_ReasoningDiscipline(t *testing.T) {
 }
 
 func TestSystemPrompt_MTGInteractionTraps(t *testing.T) {
-	got := systemPrompt("Magic: The Gathering", true, false, true, false)
+	got := systemPrompt("Magic: The Gathering", true, false, true, false, false)
 	if !strings.Contains(got, "a card's own name in its text means") {
 		t.Errorf("MTG prompt missing self-reference trap: %q", got)
 	}
@@ -76,7 +76,7 @@ func TestSystemPrompt_MTGInteractionTraps(t *testing.T) {
 }
 
 func TestSystemPrompt_NoMTGTrapsForDND(t *testing.T) {
-	got := systemPrompt("D&D 5e SRD", false, false, false, false)
+	got := systemPrompt("D&D 5e SRD", false, false, false, false, false)
 	if strings.Contains(got, "MTG INTERACTIONS") {
 		t.Errorf("D&D prompt should not include MTG interaction block: %q", got)
 	}
@@ -86,7 +86,7 @@ func TestSystemPrompt_NoMTGTrapsForDND(t *testing.T) {
 }
 
 func TestSystemPrompt_DNDInteractionTraps(t *testing.T) {
-	got := systemPrompt("D&D 5e SRD", false, true, false, false)
+	got := systemPrompt("D&D 5e SRD", false, true, false, false, false)
 	for _, want := range []string{
 		"D&D INTERACTIONS",
 		"Specific beats general",
@@ -108,14 +108,14 @@ func TestSystemPrompt_DNDInteractionTraps(t *testing.T) {
 func TestSystemPrompt_GroundingRulesNumberedSequentially(t *testing.T) {
 	// Entities + rulings together once produced colliding rule numbers (both
 	// layers claimed 5-6/6-7). The dynamic numbering must stay sequential.
-	got := systemPrompt("D&D 5e SRD", false, true, false, false)
+	got := systemPrompt("D&D 5e SRD", false, true, false, false, false)
 	if strings.Contains(got, "\n6. ") && strings.Count(got, "\n6. ") > 1 {
 		t.Errorf("grounding rule numbers collide: %q", got)
 	}
 }
 
 func TestSystemPrompt_WithEntities(t *testing.T) {
-	got := systemPrompt("D&D 5e SRD", false, true, false, false)
+	got := systemPrompt("D&D 5e SRD", false, true, false, false, false)
 	if !strings.Contains(got, "use ONLY the provided reference text for its mechanics and stats") {
 		t.Errorf("entity prompt missing reference-text constraint: %q", got)
 	}
@@ -127,7 +127,7 @@ func TestSystemPrompt_WithEntities(t *testing.T) {
 func TestSystemPrompt_WithoutEntitiesMentionsNothing(t *testing.T) {
 	// A D&D turn with no resolved entities must not promise reference text that
 	// was not provided, and must not carry the MTG card-grounding clauses.
-	got := systemPrompt("D&D 5e SRD", false, false, false, false)
+	got := systemPrompt("D&D 5e SRD", false, false, false, false, false)
 	if strings.Contains(got, "provided reference text") {
 		t.Errorf("non-entity prompt must not mention reference entries: %q", got)
 	}
