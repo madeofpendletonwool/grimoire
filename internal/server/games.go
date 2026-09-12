@@ -12,6 +12,7 @@ package server
 //	GET  /api/games/{id}/events         the log window (?after=, ?limit=)
 //	GET  /api/games/{id}/stream         the log, live (SSE, ?after=)
 //	POST /api/games/{id}/rewind         truncate at an ordinal and re-fold
+//	POST /api/games/{id}/amend          truncate at an entry's batch and apply the corrected action
 //
 // The multiplayer story is the store's: one writer assigns contiguous
 // per-game ordinals, clients receive events by ordinal and fold locally,
@@ -375,6 +376,55 @@ func (s *Server) handleRewindGame(w http.ResponseWriter, r *http.Request) {
 }
 
 /* ---------- the live stream ---------- */
+
+// handleAmendGame is the correction path the log pane owns (MAD-328):
+// truncate at the entry's batch and apply the corrected action in one
+// store transaction, so no attached client ever observes the rewound
+// intermediate and a rejected correction (400) leaves the log exactly
+// as it was. `at` is any ordinal of the entry being corrected; `action`
+// is the corrected Action — the shape the entry's own cause column
+// stores, which is where the client prefills from.
+func (s *Server) handleAmendGame(w http.ResponseWriter, r *http.Request) {
+	if !s.gamesEnabled(w) {
+		return
+	}
+	g := s.resolveGame(w, r)
+	if g == nil {
+		return
+	}
+	var req struct {
+		At     *int64         `json:"at"`
+		Action *engine.Action `json:"action"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %v", err))
+		return
+	}
+	if req.At == nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("an amend needs the ordinal it corrects"))
+		return
+	}
+	if req.Action == nil || req.Action.Kind == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("an amend needs the corrected action"))
+		return
+	}
+	if req.Action.Source == "" {
+		req.Action.Source = "manual" // API entry is a hand on the tracker
+	}
+	evs, state, err := s.games.AmendAt(r.Context(), g.ID, *req.At, *req.Action)
+	if err != nil {
+		writeGameError(w, err)
+		return
+	}
+	fresh, err := s.games.GetGame(r.Context(), g.ID)
+	if err != nil {
+		writeGameError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameView(r.Context(), fresh), "events": evs, "state": state})
+}
+
+/* ---------- the ordinal stream ---------- */
 
 // handleGameStream is the game's ordinal feed: every event as it lands,
 // pushed the moment the writer commits. A client holding a cursor

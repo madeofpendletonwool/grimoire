@@ -74,9 +74,10 @@ const (
 // Event is one thing that happened. In memory the reducer mints events
 // without ID, Ord or CreatedAt; the single writer assigns those at persist
 // time, in one transaction, so ordinals are per-game contiguous from 1.
-// Cause is the Action JSON that produced the row, filled by the store —
-// the fold never reads it, which is what keeps re-folding from the
-// database honest.
+// Cause is the Action JSON that produced the row and Batch the stamp one
+// Submit minted for all of its rows, both filled by the store — the fold
+// never reads either, which is what keeps re-folding from the database
+// honest.
 type Event struct {
 	ID          string     `json:"id,omitempty"`
 	Ord         int64      `json:"ord,omitempty"`
@@ -84,6 +85,7 @@ type Event struct {
 	ActorSeat   int        `json:"actor_seat,omitempty"`
 	Source      string     `json:"source,omitempty"`
 	Cause       string     `json:"cause,omitempty"`
+	Batch       string     `json:"batch,omitempty"`
 	Visibility  Visibility `json:"visibility,omitempty"`
 	VisibleSeat int        `json:"visible_seat,omitempty"`
 	CreatedAt   int64      `json:"created_at,omitempty"`

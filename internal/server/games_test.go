@@ -504,6 +504,7 @@ func TestGameScopingAndAvailability(t *testing.T) {
 		"/api/games/" + game + "/seats",
 		"/api/games/" + game + "/actions",
 		"/api/games/" + game + "/rewind",
+		"/api/games/" + game + "/amend",
 	} {
 		if rec := hit(t, s, http.MethodPost, target, `{}`, friend); rec.Code != http.StatusNotFound {
 			t.Fatalf("friend %s: status %d, want 404", target, rec.Code)
@@ -587,6 +588,166 @@ func TestGameRewindOverHTTP(t *testing.T) {
 	}
 	if rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/rewind", `{"to":-1}`, admin); rec.Code != http.StatusBadRequest {
 		t.Fatalf("negative rewind: status %d", rec.Code)
+	}
+}
+
+// TestGameAmendOverHTTP is the misidentified-card contract (MAD-328):
+// amending the cast's log entry with the right card — one request, the
+// log telling both halves — and a rejected correction leaving the log
+// exactly as it was.
+func TestGameAmendOverHTTP(t *testing.T) {
+	s, _ := newGamesServer(t)
+	admin := adminSession(t, s)
+	game := gameDrive(t, s, admin)
+	miscast := gameAction(t, s, admin, game, `{"kind":"CAST","seat":1,"card":"Rhystic Study","from_zone":"hand"}`)
+	gameAction(t, s, admin, game, `{"kind":"CHANGE_LIFE","seat":2,"target_seat":2,"delta":-3,"source_card":"Lightning Bolt"}`)
+	before, latestBefore := gameEvents(t, s, admin, game)
+
+	amendBody := fmt.Sprintf(`{"at":%d,"action":{"kind":"CAST","seat":1,"card":"Smothering Tithe","from_zone":"hand","source":"tap"}}`, miscast[0].Ord)
+	rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/amend", amendBody, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("amend: status %d, body %s", rec.Code, rec.Body)
+	}
+	var resp struct {
+		Events []engine.Event `json:"events"`
+		State  *engine.State  `json:"state"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("amend body: %v", err)
+	}
+	evs, latest := gameEvents(t, s, admin, game)
+	// The correction lands where the amended batch began; ordinals stay
+	// contiguous from 1; the later life change is gone with the batch.
+	if resp.Events[0].Ord != miscast[0].Ord {
+		t.Fatalf("amended rows start at %d, want %d", resp.Events[0].Ord, miscast[0].Ord)
+	}
+	for i, e := range evs {
+		if e.Ord != int64(i+1) {
+			t.Fatalf("ord %d at position %d — amend must keep ordinals contiguous", e.Ord, i)
+		}
+	}
+	if p := resp.State.Seats[2]; p.Life != 40 {
+		t.Fatalf("seat 2 life = %d, want 40 — the change after the amended batch must not survive", p.Life)
+	}
+	if len(stateStackCards(resp.State)) != 1 || stateStackCards(resp.State)[0] != "Smothering Tithe" {
+		t.Fatalf("stack = %v, want the corrected card", stateStackCards(resp.State))
+	}
+	if latest == latestBefore || len(evs) >= len(before) {
+		t.Fatalf("log did not shrink and regrow around the amend: %d → %d rows", len(before), len(evs))
+	}
+
+	// A rejected correction writes nothing — the log is byte-identical.
+	if rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/amend",
+		`{"at":1,"action":{"kind":"DRAW","seat":9}}`, admin); rec.Code != http.StatusBadRequest {
+		t.Fatalf("rejected amend: status %d", rec.Code)
+	}
+	afterReject, latestAfterReject := gameEvents(t, s, admin, game)
+	if latestAfterReject != latest || len(afterReject) != len(evs) {
+		t.Fatalf("a rejected amend changed the log: %d → %d rows", len(evs), len(afterReject))
+	}
+	for i := range evs {
+		if evs[i].ID != afterReject[i].ID {
+			t.Fatal("a rejected amend rewrote rows")
+		}
+	}
+
+	// Malformed requests answer 400 and touch nothing.
+	for _, body := range []string{
+		`{"action":{"kind":"ADVANCE","seat":1}}`,          // no ordinal
+		`{"at":2}`,                                        // no action
+		`{"at":2,"action":{}}`,                            // no kind
+		`{"at":999,"action":{"kind":"ADVANCE","seat":1}}`, // past the head
+	} {
+		if rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/amend", body, admin); rec.Code != http.StatusBadRequest {
+			t.Fatalf("amend %s: status %d, want 400", body, rec.Code)
+		}
+	}
+
+	// Another account's game answers like a missing one.
+	friend := gameFriend(t, s, admin)
+	if rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/amend", amendBody, friend); rec.Code != http.StatusNotFound {
+		t.Fatalf("friend amend: status %d, want 404", rec.Code)
+	}
+}
+
+// stateStackCards spells a state's stack for assertions.
+func stateStackCards(st *engine.State) []string {
+	out := make([]string, 0, len(st.Stack))
+	for _, it := range st.Stack {
+		out = append(out, it.Card)
+	}
+	return out
+}
+
+// TestGameAmendAnnouncesToAttachedClients is MAD-328's multi-client
+// acceptance: a client live on the stream sees the amend as a rewind
+// control frame — never a half-corrected game — and everything the wire
+// carries afterwards folds to exactly the state the server holds.
+func TestGameAmendAnnouncesToAttachedClients(t *testing.T) {
+	s, _ := newGamesServer(t)
+	admin := adminSession(t, s)
+	game := gameDrive(t, s, admin)
+	miscast := gameAction(t, s, admin, game, `{"kind":"CAST","seat":1,"card":"Rhystic Study","from_zone":"hand"}`)
+
+	// Two clients attached: one at the head, one parked on an old cursor.
+	recLive, endLive, doneLive := openGameStream(t, s, admin, "/api/games/"+game+"/stream")
+	recParked, endParked, doneParked := openGameStream(t, s, admin, "/api/games/"+game+"/stream?after=2")
+	time.Sleep(150 * time.Millisecond)
+
+	amendBody := fmt.Sprintf(`{"at":%d,"action":{"kind":"CAST","seat":1,"card":"Smothering Tithe","from_zone":"hand","source":"tap"}}`, miscast[0].Ord)
+	if rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/amend", amendBody, admin); rec.Code != http.StatusOK {
+		t.Fatalf("amend: status %d, body %s", rec.Code, rec.Body)
+	}
+	// Play continues after the correction (a manual action — the
+	// corrected spell is still on the stack, and that is the point).
+	tail := gameAction(t, s, admin, game, `{"kind":"CHANGE_LIFE","seat":2,"target_seat":2,"delta":-1,"source":"tap"}`)
+	time.Sleep(500 * time.Millisecond)
+	endLive()
+	cancelAndWait(t, doneLive)
+	endParked()
+	cancelAndWait(t, doneParked)
+
+	// The head client — holding the rows the amend replaced — must hear
+	// the rewind, never a half-corrected game.
+	if !strings.Contains(recLive.Body.String(), "event: rewind") {
+		t.Fatalf("live client never learned the log was amended:\n%s", recLive.Body.String())
+	}
+
+	// The parked client, replaying from an old cursor, must receive a
+	// consistent log: every row the wire carried is a row the log holds
+	// — no ghost of the amended batch, and the fresh tail arrives.
+	current, _ := gameEvents(t, s, admin, game)
+	byID := map[string]int64{}
+	for _, e := range current {
+		byID[e.ID] = e.Ord
+	}
+	frames := sseEvents(t, recParked.Body.String())
+	var fresh bool
+	for _, f := range frames {
+		if f.Event != "event" {
+			continue
+		}
+		e := decodeGameEvent(t, f.Data)
+		if byID[e.ID] != e.Ord {
+			t.Fatalf("parked client received a row the log does not hold (ord %d) — a ghost of the amend:\n%s", e.Ord, recParked.Body.String())
+		}
+		if e.Ord == tail[0].Ord && e.ID == tail[0].ID {
+			fresh = true
+		}
+	}
+	if !fresh {
+		t.Fatalf("parked client stalled after the amend — the fresh tail never arrived:\n%s", recParked.Body.String())
+	}
+
+	// The acceptance fold: re-reading from the stream's cue holds the
+	// same state the server does.
+	folded := engine.Fold(current)
+	a, b := mustJSON(t, folded), mustJSON(t, gameState(t, s, admin, game))
+	if !bytes.Equal(a, b) {
+		t.Fatalf("post-amend fold != server state:\n%s\n%s", a, b)
+	}
+	if len(stateStackCards(folded)) != 1 || stateStackCards(folded)[0] != "Smothering Tithe" {
+		t.Fatalf("folded stack = %v, want the corrected card", stateStackCards(folded))
 	}
 }
 

@@ -1250,6 +1250,16 @@ export const api = {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ to }),
 		}).then(json),
+
+	// Amend (MAD-328): truncate at the entry's batch and apply the
+	// corrected action in one server transaction — a rejected correction
+	// changes nothing.
+	gameAmend: (id, at, action) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/amend`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ at, action }),
+		}).then(json),
 };
 
 /**

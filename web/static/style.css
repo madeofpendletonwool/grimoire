@@ -3088,7 +3088,8 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	color: var(--gold-dim);
 	flex: none;
 }
-.play-row-rewind {
+.play-row-rewind,
+.play-row-fix {
 	flex: none;
 	background: none;
 	border: none;
@@ -3098,8 +3099,9 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	padding: 0 0.2rem;
 	opacity: 0;
 }
-.play-row:hover .play-row-rewind, .play-row-rewind:focus-visible { opacity: 1; }
-.play-row-rewind:hover { color: var(--gold-bright); }
+.play-row:hover .play-row-rewind, .play-row:hover .play-row-fix,
+.play-row-rewind:focus-visible, .play-row-fix:focus-visible { opacity: 1; }
+.play-row-rewind:hover, .play-row-fix:hover { color: var(--gold-bright); }
 .play-row.is-empty { color: var(--ink-soft); font-style: italic; }
 
 /* The current action: fresh until acknowledged, one tap from correction. */

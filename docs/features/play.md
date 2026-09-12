@@ -21,7 +21,12 @@ you make is an action the engine validated; there is no second write path.
 - **Log** — newest first, every entry reading like the table would say it
   ("Collin casts Rhystic Study", "Bob pays", "Atraxa dies"), every entry
   carrying its cause. Every entry is a rewind point: its `⟲` truncates
-  the log there and the state re-folds.
+  the log there and the state re-folds. Every entry is also correctable:
+  its `✎` prefills the composer from the entry's own recorded cause, and
+  submitting rewrites the entry — amend, two taps, everything after the
+  entry undone with it. The server does the truncate and the re-apply in
+  one transaction, so a rejected correction changes nothing and no other
+  client ever sees the halfway state.
 - **Current action** — what the engine last applied, highlighted until
   you acknowledge it (`✓ yes`) and correctable one tap away (`✎ not it`
   prefills the composer from the entry's own recorded cause; submitting
@@ -59,11 +64,14 @@ you make is an action the engine validated; there is no second write path.
 - **Nothing is applied twice.** A rejected action writes nothing; the
   pane says why.
 - **Correction is cheaper than entry.** Undo is one tap, amending a
-  misidentified card is two, and no correction path ever covers the log.
+  misidentified card is two (`✎` on its log entry, then the composer's
+  submit — prefilled, so the fix is usually typing the right name), and
+  no correction path ever covers the log: the edit rides a strip above
+  the composer, not a modal.
 - **Multi-client by construction.** One writer assigns ordinals; the
   stream replays from the last ordinal a dropped connection saw, and
-  announces rewinds so every client re-folds rather than holding rows
-  that no longer exist.
+  announces rewinds and amends so every client re-folds rather than
+  holding rows that no longer exist.
 
 ## Where the truth lives
 
