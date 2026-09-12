@@ -1595,6 +1595,149 @@
 				<div class="planner-board sess-panel" id="planner-board"></div>
 			</div>
 		</section>
+		<!-- ---------- Play surface ----------
+		     The Magic table's manual tracker (MAD-327, stage 3 of MAD-321):
+		     board, event log and current action, all visible at once, live
+		     over the game's ordinal stream. No AI anywhere in it — the tap
+		     surface is the correction UI for the intent pipeline and the
+		     fallback for the moment voice mishears. -->
+		<section class="play" id="play-view" hidden aria-label="Magic table">
+			<header class="study-head">
+				<h2 class="study-title" id="play-title">Play</h2>
+				<div class="camp-picker">
+					<select id="play-game" aria-label="Game"><option value="">No games yet…</option></select>
+				</div>
+				<button type="button" class="enc-btn" id="play-new">New game</button>
+				<p class="study-meta" id="play-meta"></p>
+			</header>
+
+			<!-- Setup: the table before the log begins. -->
+			<div class="play-setup" id="play-setup" hidden>
+				<div class="camp-panel">
+					<h3 class="enc-heading">The table</h3>
+					<form class="play-seat-form" id="play-seat-form" autocomplete="off">
+						<input class="enc-field" id="play-seat-name" type="text" maxlength="60"
+							placeholder="Player name" aria-label="Player name">
+						<input class="enc-field" id="play-seat-commander" type="text" maxlength="120"
+							placeholder="Commander (optional)" aria-label="Commander">
+						<button type="submit" class="enc-btn">Seat a player</button>
+					</form>
+					<ol class="play-seat-list" id="play-seat-list"></ol>
+					<div class="play-setup-actions">
+						<button type="button" class="enc-btn primary" id="play-start">Start the game</button>
+					</div>
+				</div>
+			</div>
+
+			<div class="play-body" id="play-body" hidden>
+				<!-- The turn strip: position, acting seat, the step controls. -->
+				<div class="play-strip" id="play-strip">
+					<span class="play-turnline" id="play-turnline"></span>
+					<label class="play-acting">
+						<span>acting as</span>
+						<select id="play-acting" aria-label="Acting seat"></select>
+					</label>
+					<div class="play-strip-controls" role="group" aria-label="Turn controls">
+						<button type="button" class="enc-btn" id="play-advance" title="Next step or phase">Next step</button>
+						<button type="button" class="enc-btn" id="play-pass" title="Pass priority">Pass</button>
+						<button type="button" class="enc-btn" id="play-give" hidden title="Rotate priority to the acting seat">Give priority →</button>
+						<button type="button" class="enc-btn" id="play-draw" title="Draw a card">Draw</button>
+						<button type="button" class="enc-btn" id="play-untap-all" title="Untap the acting seat's permanents">Untap all</button>
+						<button type="button" class="enc-btn" id="play-resolve-combat" hidden>Resolve combat</button>
+					</div>
+				</div>
+
+				<!-- The two panes that must never leave the screen together. -->
+				<div class="play-main">
+					<div class="play-board" id="play-board">
+						<div class="play-context f-stone" id="play-context" hidden></div>
+						<div class="play-seats" id="play-seats"></div>
+						<div class="play-stackwrap" id="play-stackwrap" hidden>
+							<h3 class="enc-heading">Stack</h3>
+							<ol class="play-stack" id="play-stack"></ol>
+						</div>
+					</div>
+					<div class="play-logcol">
+						<div class="play-log-head">
+							<h3 class="enc-heading">Log</h3>
+							<button type="button" class="enc-btn" id="play-undo" title="Rewind the last applied action">⟲ undo</button>
+						</div>
+						<ol class="play-log" id="play-log" aria-label="Event log"></ol>
+					</div>
+				</div>
+
+				<!-- The current action: what the engine last applied, one tap
+				     from correction. -->
+				<div class="play-current" id="play-current">
+					<span class="play-current-label">current action</span>
+					<span class="play-current-text" id="play-current-text"></span>
+					<span class="play-current-actions">
+						<button type="button" class="enc-btn" id="play-ok" title="Acknowledge — clears the highlight">✓ yes</button>
+						<button type="button" class="enc-btn" id="play-edit" title="Rewind here and re-submit a corrected action">✎ not it</button>
+					</span>
+					<span class="play-current-meta" id="play-current-meta" aria-live="polite"></span>
+				</div>
+
+				<!-- The composer: every tap action that is not a value on the
+				     board. -->
+				<form class="play-compose" id="play-compose" autocomplete="off">
+					<span class="play-edit-banner" id="play-edit-banner" hidden></span>
+					<div class="play-compose-row is-card-row">
+						<input class="enc-field play-card-input" id="play-card" type="search" maxlength="120"
+							placeholder="Card name — cast or play it" aria-label="Card name"
+							aria-controls="play-card-list" autocomplete="off">
+						<div class="play-card-list" id="play-card-list" hidden role="listbox" aria-label="Card matches"></div>
+						<select class="enc-field" id="play-from" aria-label="Cast from">
+							<option value="hand">from hand</option>
+							<option value="command">from command</option>
+							<option value="graveyard">from graveyard</option>
+							<option value="exile">from exile</option>
+						</select>
+						<button type="button" class="enc-btn primary" id="play-cast">Cast</button>
+						<button type="button" class="enc-btn" id="play-land">Play land</button>
+					</div>
+					<details class="play-more" id="play-more">
+						<summary>Tokens · damage · counters</summary>
+						<div class="play-more-body">
+							<div class="play-compose-row">
+								<input class="enc-field" id="play-token-name" type="text" maxlength="60" list="play-token-presets"
+									placeholder="Token (Soldier…)" aria-label="Token name">
+								<datalist id="play-token-presets">
+									<option value="Soldier"></option>
+									<option value="Treasure"></option>
+									<option value="Food"></option>
+									<option value="Clue"></option>
+									<option value="Blood"></option>
+									<option value="Map"></option>
+									<option value="Powerstone"></option>
+									<option value="Goblin"></option>
+									<option value="Zombie"></option>
+									<option value="Spirit"></option>
+									<option value="Elemental"></option>
+									<option value="Beast"></option>
+								</datalist>
+								<input class="enc-field play-num" id="play-token-p" type="number" placeholder="P" aria-label="Token power">
+								<input class="enc-field play-num" id="play-token-t" type="number" placeholder="T" aria-label="Token toughness">
+								<input class="enc-field play-num" id="play-token-count" type="number" min="1" value="1" aria-label="Token count">
+								<button type="button" class="enc-btn" id="play-token-make">Make</button>
+							</div>
+							<div class="play-compose-row">
+								<select class="enc-field" id="play-damage-target" aria-label="Damage target"></select>
+								<input class="enc-field play-num" id="play-damage-amount" type="number" min="1" placeholder="dmg" aria-label="Damage amount">
+								<input class="enc-field" id="play-damage-source" type="text" maxlength="80" placeholder="source (optional)" aria-label="Damage source">
+								<button type="button" class="enc-btn" id="play-damage-deal">Deal damage</button>
+							</div>
+							<div class="play-compose-row">
+								<select class="enc-field" id="play-counter-target" aria-label="Counter target"></select>
+								<input class="enc-field" id="play-counter-name" type="text" maxlength="40" placeholder="counter (poison, energy…)" aria-label="Counter name">
+								<input class="enc-field play-num" id="play-counter-delta" type="number" placeholder="±n" aria-label="Counter delta">
+								<button type="button" class="enc-btn" id="play-counter-apply">Adjust</button>
+							</div>
+						</div>
+					</details>
+				</form>
+			</div>
+		</section>
 		<section class="chatview" id="chat-view" hidden aria-label="Chat">
 			<header class="chat-head">
 				<h1 class="conv-title" id="conv-title">New chat</h1>

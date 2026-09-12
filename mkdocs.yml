@@ -94,6 +94,7 @@ nav:
       - Interaction Resolver: features/resolver.md
       - Study Mode: features/study.md
       - Deck Builder: features/deck-builder.md
+      - Play: features/play.md
       - Encounter Builder: features/encounter-builder.md
       - Sessions: features/sessions.md
       - The Tome & Themes: features/tome.md
