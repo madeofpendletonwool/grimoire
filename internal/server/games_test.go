@@ -653,9 +653,9 @@ func TestGameAmendOverHTTP(t *testing.T) {
 
 	// Malformed requests answer 400 and touch nothing.
 	for _, body := range []string{
-		`{"action":{"kind":"ADVANCE","seat":1}}`, // no ordinal
-		`{"at":2}`,                               // no action
-		`{"at":2,"action":{}}`,                   // no kind
+		`{"action":{"kind":"ADVANCE","seat":1}}`,          // no ordinal
+		`{"at":2}`,                                        // no action
+		`{"at":2,"action":{}}`,                            // no kind
 		`{"at":999,"action":{"kind":"ADVANCE","seat":1}}`, // past the head
 	} {
 		if rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/amend", body, admin); rec.Code != http.StatusBadRequest {
