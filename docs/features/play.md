@@ -34,9 +34,25 @@ you make is an action the engine validated; there is no second write path.
 
 ## Tracking a game by tap
 
-- **Setup** — new game, seat players (name + commander), start. Seats,
-  life and commanders are echoed into the log, which is what makes it
-  self-describing.
+- **Setup** — new game, seat players (name + commander, and optionally
+  one of your saved decks), start. Seats, life, commanders and every
+  attached deck's composition are echoed into the log, which is what
+  makes it self-describing.
+- **Decks are the identification universe.** Attach one per seat and a
+  mumbled name matches the few hundred cards actually on the table
+  instead of the whole index: "Rhystic" means *your* Rhystic Study, and
+  the speaking seat's copy always wins a two-deck tie. Attachment is
+  encouraged, never required — a deckless table works, identification
+  just falls back to the global index and gets worse. The engine knows a
+  library's *composition* once its deck is attached; **order is never
+  modelled**, and order-dependent questions are refused out loud rather
+  than answered plausibly. `POST /api/games/{id}/resolve` with a seat
+  and a spoken name is the surface the intent pipeline inherits: it
+  answers with the card, how it matched (deck exact, deck fuzzy, global,
+  or the game's own cache of prior corrections) and a confidence the
+  confirmation ladder keys on. The same mumble is never re-resolved —
+  the first answer is cached per game, and a human correction ("no,
+  *Smothering Tithe*") becomes that name's answer from then on.
 - **The turn strip** — whose turn, which step, who holds priority, and
   the controls: next step, pass, draw, untap all, resolve combat. The
   *acting as* picker is which seat the composer submits for; it follows

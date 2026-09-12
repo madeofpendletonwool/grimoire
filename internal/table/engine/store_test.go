@@ -115,6 +115,38 @@ func TestStoreStartGameEchoesConfig(t *testing.T) {
 	_ = db
 }
 
+// The fold keeps the attached deck whole (the known-card universe's
+// base, MAD-329) while the library composition shrinks: named cards
+// leaving the library must never remove them from the deck the game
+// knows is in play.
+func TestStoreFoldKeepsAttachedDeck(t *testing.T) {
+	s, _, ctx, gameID := newGame(t)
+	if _, _, err := s.StartGame(ctx, gameID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Submit(ctx, gameID, Action{Kind: ActionDraw, Seat: 1, Count: 1, Cards: []string{"Cultivate"}}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.State(ctx, gameID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := st.Seats[1]
+	if p.LibraryComp["Cultivate"] != 3 {
+		t.Fatalf("composition = %v, want Cultivate drawn down to 3", p.LibraryComp)
+	}
+	if p.Deck["Cultivate"] != 4 || p.Deck["Forest"] != 30 {
+		t.Fatalf("deck echo = %v, want the full attached list", p.Deck)
+	}
+	if p.Deck["Atraxa, Praetors' Voice"] != 0 {
+		t.Fatalf("commander is in the command zone, not the library: %v", p.Deck)
+	}
+	// The deckless seat stays deckless — unknown, not empty.
+	if st.Seats[2].Deck != nil {
+		t.Fatalf("seat 2 deck = %v", st.Seats[2].Deck)
+	}
+}
+
 func TestStoreSubmitPersistsContiguousOrdinals(t *testing.T) {
 	s, _, ctx, gameID := newGame(t)
 	if _, _, err := s.StartGame(ctx, gameID); err != nil {

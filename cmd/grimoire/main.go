@@ -111,6 +111,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/table"
 	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
+	"github.com/madeofpendletonwool/grimoire/internal/table/universe"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/internal/uistate"
 )
@@ -1711,6 +1712,19 @@ func runServe() error {
 		return err
 	}
 
+	// The Magic table's decklist-scoped resolver (MAD-329): spoken card
+	// names against the attached decks before the global index, with the
+	// per-game identity cache in front. The card index is the last tier
+	// and is optional — an install without it identifies deck cards only.
+	var globalTier universe.Global
+	if cardStore != nil {
+		globalTier = cardStore
+	}
+	universeStore, err := universe.NewStore(store.DB(), globalTier)
+	if err != nil {
+		return err
+	}
+
 	// The state-aware encounter director (MAD-427): advisory monster
 	// tactics grounded in the live battle — the statblocks the tracker
 	// resolves plus the ledger's, effects engine's and tracker's own
@@ -1765,7 +1779,7 @@ func runServe() error {
 	srv = srv.WithDirector(directorEngine)
 	srv = srv.WithStats(statsEngine)
 	srv = srv.WithLeveling(levelingEngine)
-	srv = srv.WithGames(magicEngine)
+	srv = srv.WithGames(magicEngine).WithUniverse(universeStore)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	srv = srv.WithHandouts(handoutOptions())

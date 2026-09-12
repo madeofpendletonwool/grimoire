@@ -1615,17 +1615,22 @@
 			<div class="play-setup" id="play-setup" hidden>
 				<div class="camp-panel">
 					<h3 class="enc-heading">The table</h3>
-					<form class="play-seat-form" id="play-seat-form" autocomplete="off">
-						<input class="enc-field" id="play-seat-name" type="text" maxlength="60"
-							placeholder="Player name" aria-label="Player name">
-						<input class="enc-field" id="play-seat-commander" type="text" maxlength="120"
-							placeholder="Commander (optional)" aria-label="Commander">
-						<button type="submit" class="enc-btn">Seat a player</button>
-					</form>
-					<ol class="play-seat-list" id="play-seat-list"></ol>
-					<div class="play-setup-actions">
-						<button type="button" class="enc-btn primary" id="play-start">Start the game</button>
-					</div>
+				<form class="play-seat-form" id="play-seat-form" autocomplete="off">
+					<input class="enc-field" id="play-seat-name" type="text" maxlength="60"
+						placeholder="Player name" aria-label="Player name">
+					<input class="enc-field" id="play-seat-commander" type="text" maxlength="120"
+						placeholder="Commander (optional)" aria-label="Commander">
+					<select class="enc-field" id="play-seat-deck" aria-label="Attached deck" hidden>
+						<option value="">No deck attached</option>
+					</select>
+					<button type="submit" class="enc-btn">Seat a player</button>
+				</form>
+				<ol class="play-seat-list" id="play-seat-list"></ol>
+				<p class="sess-hint" id="play-deck-hint" hidden>Attach decks and spoken card names resolve
+					near-exactly — optional, the tracker works without them.</p>
+				<div class="play-setup-actions">
+					<button type="button" class="enc-btn primary" id="play-start">Start the game</button>
+				</div>
 				</div>
 			</div>
 

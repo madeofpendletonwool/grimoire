@@ -26,6 +26,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/llm"
 	"github.com/madeofpendletonwool/grimoire/internal/migrate"
 	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
+	"github.com/madeofpendletonwool/grimoire/internal/table/universe"
 )
 
 // newGamesServer wires the engine the way runServe does: one store on
@@ -48,11 +49,17 @@ func newGamesServer(t *testing.T) (*Server, *engine.Store) {
 	if err != nil {
 		t.Fatalf("open engine store: %v", err)
 	}
+	// The resolver runs deck tiers only here: no card index in the test
+	// harness keeps identification deterministic and hermetic.
+	universeStore, err := universe.NewStore(store.DB(), nil)
+	if err != nil {
+		t.Fatalf("open universe store: %v", err)
+	}
 	s, err := New(store, llm.New(llm.Config{}), nil, nil, nil, nil, nil, nil, Auth{Users: users}, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
-	s = s.WithGames(games)
+	s = s.WithGames(games).WithUniverse(universeStore)
 	return s, games
 }
 
@@ -944,5 +951,133 @@ func cancelAndWait(t *testing.T, done chan struct{}) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("game stream did not return")
+	}
+}
+
+/* ---------- decklist-scoped identification (MAD-329) ---------- */
+
+// seedGameDeck inserts the decks row a seat attaches: the library the
+// known-card universe is built from, plus the commander on her board.
+func seedGameDeck(t *testing.T, games *engine.Store, id, commander string) {
+	t.Helper()
+	cards, err := json.Marshal([]struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+		Board string `json:"board"`
+	}{
+		{Name: "Rhystic Study", Count: 1},
+		{Name: "Sol Ring", Count: 1},
+		{Name: "Island", Count: 30},
+		{Name: commander, Count: 1, Board: "commander"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := games.DB().Exec(`INSERT INTO decks (id, owner_id, name, commander, cards, notes, created_at, updated_at)
+		VALUES (?, 'seed', 'Test Deck', ?, ?, '', ?, ?)`,
+		id, commander, string(cards), time.Now().UnixMilli(), time.Now().UnixMilli()); err != nil {
+		t.Fatalf("seed deck: %v", err)
+	}
+}
+
+// resolveName posts one identification request and asserts it answered.
+func resolveName(t *testing.T, s *Server, cookie *http.Cookie, game, body string) universe.Resolution {
+	t.Helper()
+	rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/resolve", body, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resolve %s: status %d, body %s", body, rec.Code, rec.Body)
+	}
+	var resp struct {
+		Resolution universe.Resolution `json:"resolution"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("resolve body: %v (%s)", err, rec.Body)
+	}
+	return resp.Resolution
+}
+
+// TestGameResolveNameScopesToDecks covers the identification surface:
+// shorthand resolves against the attached deck at high confidence, the
+// same mumble is answered by the cache the second time, an unknown name
+// comes back honestly unresolved, and the game's account scope holds.
+func TestGameResolveNameScopesToDecks(t *testing.T) {
+	s, games := newGamesServer(t)
+	admin := adminSession(t, s)
+	seedGameDeck(t, games, "gdeck1", "Atraxa, Praetors' Voice")
+
+	game := gameCreate(t, s, admin)
+	for _, seat := range []string{
+		`{"position":1,"name":"Collin","deck_id":"gdeck1"}`,
+		`{"position":2,"name":"Bob","commander":"Krenko, Mob Boss"}`,
+	} {
+		rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/seats", seat, admin)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("seat: status %d, body %s", rec.Code, rec.Body)
+		}
+	}
+	rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/start", `{}`, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("start: status %d, body %s", rec.Code, rec.Body)
+	}
+
+	// Shorthand: near-exact against the seat's own deck.
+	r := resolveName(t, s, admin, game, `{"seat":1,"spoken":"Rhystic"}`)
+	if r.Card != "Rhystic Study" || r.Method != universe.MethodDeckFuzzy ||
+		r.Scope != universe.ScopeOwn || r.Confidence != universe.ConfOwnFuzzy {
+		t.Fatalf("Rhystic → %+v", r)
+	}
+	// The deckless seat resolves another seat's card, one tier down. The
+	// cache is the game's, not the seat's, so this utterance uses a name
+	// nobody has mumbled yet.
+	r = resolveName(t, s, admin, game, `{"seat":2,"spoken":"Sol Ring"}`)
+	if r.Card != "Sol Ring" || r.Scope != universe.ScopeTable {
+		t.Fatalf("seat 2 Sol Ring → %+v", r)
+	}
+	// The second ask is the cache's, not a re-inference.
+	r = resolveName(t, s, admin, game, `{"seat":1,"spoken":"Rhystic"}`)
+	if r.Card != "Rhystic Study" || r.Scope != universe.ScopeCache {
+		t.Fatalf("cached Rhystic → %+v", r)
+	}
+	// Unknown names stay unresolved — reported, never guessed.
+	r = resolveName(t, s, admin, game, `{"seat":1,"spoken":"Blorple Warp"}`)
+	if r.Resolved() || r.Confidence != 0 {
+		t.Fatalf("Blorple Warp → %+v", r)
+	}
+	// Nothing spoken is a rejected request.
+	rec = hit(t, s, http.MethodPost, "/api/games/"+game+"/resolve", `{"seat":1,"spoken":"  "}`, admin)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty spoken: status %d, body %s", rec.Code, rec.Body)
+	}
+	// The account scope: another owner's game answers like a missing one.
+	friend := gameFriend(t, s, admin)
+	rec = hit(t, s, http.MethodPost, "/api/games/"+game+"/resolve", `{"seat":1,"spoken":"Rhystic"}`, friend)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("friend resolve: status %d, body %s", rec.Code, rec.Body)
+	}
+}
+
+// A game with no decks attached works and resolves through whatever
+// tiers remain — here the index-less install, so nothing resolves, and
+// that is the honest answer rather than a blocker.
+func TestGameResolveDeckless(t *testing.T) {
+	s, _ := newGamesServer(t)
+	admin := adminSession(t, s)
+	game := gameDrive(t, s, admin)
+	r := resolveName(t, s, admin, game, `{"seat":1,"spoken":"Rhystic Study"}`)
+	if r.Resolved() {
+		t.Fatalf("deckless resolve → %+v, want unresolved on this install", r)
+	}
+}
+
+// Without the resolver wired, identification reports unavailable and
+// everything else about the game keeps working.
+func TestGameResolveUnwired(t *testing.T) {
+	s, _ := newGamesServer(t)
+	s.universe = nil
+	admin := adminSession(t, s)
+	game := gameDrive(t, s, admin)
+	rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/resolve", `{"seat":1,"spoken":"Rhystic"}`, admin)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unwired resolve: status %d, body %s", rec.Code, rec.Body)
 	}
 }

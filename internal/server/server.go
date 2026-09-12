@@ -52,6 +52,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/table"
 	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
+	"github.com/madeofpendletonwool/grimoire/internal/table/universe"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/internal/uistate"
 	"github.com/madeofpendletonwool/grimoire/web"
@@ -177,6 +178,11 @@ type Server struct {
 	// games, seats and the append-only event log the SSE stream
 	// replicates. Wired with WithGames; nil disables the game endpoints.
 	games *engine.Store
+	// The Magic table's decklist-scoped identity resolver (MAD-329):
+	// the known-card universe over the attached decks, with the per-game
+	// name-resolution cache in front. Wired with WithUniverse; nil
+	// disables the resolve endpoint (the game endpoints work on).
+	universe *universe.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -301,6 +307,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/games/{id}/seats", s.handleSeatPlayer)
 	mux.HandleFunc("POST /api/games/{id}/start", s.handleStartGame)
 	mux.HandleFunc("POST /api/games/{id}/actions", s.handleSubmitAction)
+	mux.HandleFunc("POST /api/games/{id}/resolve", s.handleResolveName)
 	mux.HandleFunc("GET /api/games/{id}/events", s.handleGameEvents)
 	mux.HandleFunc("GET /api/games/{id}/stream", s.handleGameStream)
 	mux.HandleFunc("POST /api/games/{id}/rewind", s.handleRewindGame)

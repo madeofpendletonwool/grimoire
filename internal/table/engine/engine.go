@@ -118,6 +118,11 @@ type Player struct {
 	// stays count-only until something is revealed.
 	HandKnown []string `json:"hand_known,omitempty"`
 	Library   Count    `json:"library"`
+	// Deck is the attached deck exactly as GAME_STARTED echoed it: the
+	// full multiset the library began as, the known-card universe's base
+	// (MAD-329). Unlike LibraryComp it never shrinks — a card in the
+	// graveyard is still a card the table knows is in this game.
+	Deck map[string]int `json:"deck,omitempty"`
 	// LibraryComp is the remaining multiset of card names, an upper bound
 	// per name once unidentified cards have left a known library.
 	LibraryComp map[string]int `json:"library_comp,omitempty"`
@@ -269,6 +274,7 @@ func (s *State) clone() *State {
 		q.Counters = copyIntMap(p.Counters)
 		q.Flags = copyStringMap(p.Flags)
 		q.HandKnown = append([]string{}, p.HandKnown...)
+		q.Deck = copyIntMap(p.Deck)
 		q.LibraryComp = copyIntMap(p.LibraryComp)
 		q.CommanderDamage = copyIntMap(p.CommanderDamage)
 		out.Seats[seat] = &q
