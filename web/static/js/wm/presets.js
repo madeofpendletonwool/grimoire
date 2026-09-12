@@ -46,7 +46,10 @@ const DM = {
 		{ slot: 1, name: "Ask", build: () => leaf("chat") },
 		{ slot: 2, name: "Brew", build: () => row(leaf("deck"), leaf("chat")) },
 		{ slot: 3, name: "Study", build: () => row(leaf("reader"), leaf("study")) },
-		// Slot 4 is where Table Play lands (docs/table/): log, board, seats.
+		// At the table (MAD-327): the tracker — board, log and current
+		// action in one window — with the deck beside it for the
+		// card-facts a dispute wants.
+		{ slot: 4, name: "At the table", build: () => row(leaf("play"), leaf("deck")) },
 	],
 };
 

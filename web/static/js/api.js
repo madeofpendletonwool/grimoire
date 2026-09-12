@@ -1209,6 +1209,47 @@ export const api = {
 
 	sessionPlanDelete: (cid, sessionID) =>
 		fetch(`/api/campaigns/${encodeURIComponent(cid)}/sessions/${encodeURIComponent(sessionID)}/plan`, { method: "DELETE" }).then(json),
+
+	// The Magic table (MAD-326): the engine over REST + SSE. The action
+	// body is the engine's Action JSON verbatim; the events window and the
+	// stream carry ordinals, which are the client's whole sync story.
+	gameCreate: (game) =>
+		fetch("/api/games", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(game),
+		}).then(json),
+
+	gameList: () => fetch("/api/games").then(json),
+
+	gameGet: (id) => fetch(`/api/games/${encodeURIComponent(id)}`).then(json),
+
+	gameSeat: (id, seat) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/seats`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(seat),
+		}).then(json),
+
+	gameStart: (id) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/start`, { method: "POST" }).then(json),
+
+	gameAction: (id, action) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/actions`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(action),
+		}).then(json),
+
+	gameEvents: (id, after = 0, limit = 0) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/events?after=${after}&limit=${limit}`).then(json),
+
+	gameRewind: (id, to) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/rewind`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ to }),
+		}).then(json),
 };
 
 /**
