@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
+	"github.com/madeofpendletonwool/grimoire/internal/table/universe"
 )
 
 // gamesEnabled reports the Magic engine's availability.
@@ -54,6 +55,24 @@ func (s *Server) WithGames(store *engine.Store) *Server {
 	return s
 }
 
+// WithUniverse wires the decklist-scoped resolver (MAD-329): spoken and
+// typed card names against the attached decks first, the global index
+// last, with the per-game identity cache in front. Without it the
+// resolve endpoint answers 503 and the game endpoints work on.
+func (s *Server) WithUniverse(store *universe.Store) *Server {
+	s.universe = store
+	return s
+}
+
+// universeEnabled reports the resolver's availability.
+func (s *Server) universeEnabled(w http.ResponseWriter) bool {
+	if s.universe == nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("card identification is not configured on this install"))
+		return false
+	}
+	return true
+}
+
 // writeGameError maps the engine's sentinels onto HTTP statuses: a
 // missing game is 404, a rejected action is 400 (it wrote nothing), and
 // anything else surfaces as 500 without its SQL traceback.
@@ -62,6 +81,8 @@ func writeGameError(w http.ResponseWriter, err error) {
 	case errors.Is(err, engine.ErrNotFound):
 		writeError(w, http.StatusNotFound, err)
 	case errors.Is(err, engine.ErrInvalid):
+		writeError(w, http.StatusBadRequest, err)
+	case errors.Is(err, universe.ErrInvalid):
 		writeError(w, http.StatusBadRequest, err)
 	default:
 		writeError(w, http.StatusInternalServerError, err)
@@ -271,6 +292,46 @@ func (s *Server) handleStartGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameView(r.Context(), fresh), "state": state, "events": evs})
+}
+
+// handleResolveName is the identification half of the intent pipeline
+// (MAD-329): a spoken or typed name for one seat resolves against the
+// game's known-card universe — the attached decks first, the rest of the
+// table next, the global index last, the per-game cache in front of it
+// all. The answer carries its method and confidence, which is what the
+// confirmation ladder (4c) keys on. Resolution never writes game state;
+// an unresolved name says so rather than guessing.
+func (s *Server) handleResolveName(w http.ResponseWriter, r *http.Request) {
+	if !s.gamesEnabled(w) || !s.universeEnabled(w) {
+		return
+	}
+	g := s.resolveGame(w, r)
+	if g == nil {
+		return
+	}
+	var req struct {
+		Seat   *int   `json:"seat"`
+		Spoken string `json:"spoken"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %v", err))
+		return
+	}
+	seat := 0
+	if req.Seat != nil {
+		seat = *req.Seat
+	}
+	state, err := s.games.State(r.Context(), g.ID)
+	if err != nil {
+		writeGameError(w, err)
+		return
+	}
+	res, err := s.universe.ResolveGame(r.Context(), state, g.ID, seat, req.Spoken)
+	if err != nil {
+		writeGameError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"resolution": res})
 }
 
 /* ---------- the log ---------- */

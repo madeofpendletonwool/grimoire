@@ -40,6 +40,8 @@ let attackDraft = new Set(); // object ids tapped in as attackers
 let blockPick = 0;        // the attacker blockers are being assigned to
 let blockDraft = new Map();  // attacker id → blocker ids
 let cardCache = new Map();   // card name → cardView, this client's own universe
+let decks = [];              // the account's saved decks, the setup picker's options
+let decksLoaded = false;     // one attempt per mount; a failed read hides the picker
 let wired = false;
 let mounted = false;
 let streamCtl = null;
@@ -329,6 +331,26 @@ function showSetup(g) {
 	$("play-body").hidden = !$("play-setup").hidden;
 }
 
+/** The account's saved decks, for the setup pane's attach picker. A
+    failed read means the deck builder is not configured on this install
+    — the picker hides and seating carries on deckless, which works. */
+async function loadDecks() {
+	if (decksLoaded) return;
+	decksLoaded = true;
+	try {
+		const data = await api.listDecks();
+		decks = data.decks || [];
+	} catch (_) {
+		decks = [];
+	}
+	if ($("play-seat-deck")) render();
+}
+
+function deckName(id) {
+	const d = decks.find((x) => x.id === id);
+	return d ? d.name || "Untitled deck" : "";
+}
+
 function renderSetup() {
 	if (!game) {
 		showSetup(null);
@@ -336,18 +358,35 @@ function renderSetup() {
 	}
 	showSetup(game);
 	if (game.status !== "setup") return;
+	// The attach picker: offered when saved decks exist, absent otherwise.
+	const pick = $("play-seat-deck");
+	pick.hidden = decks.length === 0;
+	if (decks.length && pick.options.length - 1 !== decks.length) {
+		const selected = pick.value;
+		clear(pick);
+		pick.append(el("option", { text: "No deck attached", attrs: { value: "" } }));
+		for (const d of decks) {
+			pick.append(el("option", { text: d.name || "Untitled deck", attrs: { value: d.id } }));
+		}
+		pick.value = [...pick.options].some((o) => o.value === selected) ? selected : "";
+	}
 	const list = clear($("play-seat-list"));
 	const seats = game.seats || [];
 	for (const sc of seats) {
+		const dn = sc.deck_id ? deckName(sc.deck_id) : "";
 		list.append(el("li", { class: "play-seat-row" },
 			el("b", { text: `${sc.seat}. ${sc.name || `Seat ${sc.seat}`}` }),
 			sc.commander ? el("span", { class: "play-seat-cmdr", text: ` — ${sc.commander}` }) : null,
+			dn ? el("span", { class: "play-seat-life", text: ` · ${dn}` }) : null,
 			sc.starting_life ? el("span", { class: "play-seat-life", text: ` · ${sc.starting_life} life` }) : null,
 		));
 	}
 	if (!seats.length) {
 		list.append(el("li", { class: "play-seat-row camp-status", text: "No one is seated yet." }));
 	}
+	// The encouragement, never a gate: decks make identification
+	// near-exact, and the table works without them.
+	$("play-deck-hint").hidden = !(seats.length > 0 && decks.length > 0 && !seats.some((sc) => sc.deck_id));
 	$("play-start").disabled = seats.length < 2;
 }
 
@@ -1047,10 +1086,12 @@ async function seatFormSubmit(e) {
 			position,
 			name,
 			commander: $("play-seat-commander").value.trim(),
+			deck_id: decks.length ? $("play-seat-deck").value : "",
 		});
 		game = data.game;
 		$("play-seat-name").value = "";
 		$("play-seat-commander").value = "";
+		if (decks.length) $("play-seat-deck").value = "";
 		render();
 	} catch (err) {
 		renderMeta(err.message, true);
@@ -1436,6 +1477,7 @@ export const tool = {
 			wire();
 			wired = true;
 		}
+		loadDecks();
 		if (!games.length) loadGames();
 		else if (gameID && !streamCtl) openGame(gameID);
 		return {

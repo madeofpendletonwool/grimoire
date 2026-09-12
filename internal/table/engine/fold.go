@@ -329,6 +329,12 @@ func (s *State) foldGameStarted(e Event) {
 				total += n
 			}
 			p.Library = KnownCount(total)
+			// Deck keeps the full echo and LibraryComp tracks what
+			// remains; they start equal but must never share a map,
+			// because the fold decrements the composition as named
+			// cards leave the library and the universe (MAD-329)
+			// reads Deck afterwards.
+			p.Deck = copyIntMap(comp)
 			p.LibraryComp = comp
 			p.LibraryExact = true
 		}
