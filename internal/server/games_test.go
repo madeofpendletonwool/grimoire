@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -199,6 +200,277 @@ func TestGameLifecycleOverHTTP(t *testing.T) {
 	rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/seats", `{"position":3,"name":"Late"}`, admin)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("seating after start: status %d, body %s", rec.Code, rec.Body)
+	}
+}
+
+// TestGameSetupSeatsRead covers the play surface's setup read (MAD-327):
+// while the game is in setup, GET carries the seat rows so a reloaded
+// client can rebuild an unfinished table; once the log begins the fold's
+// GAME_STARTED echo is the seating and the field is absent.
+func TestGameSetupSeatsRead(t *testing.T) {
+	s, _ := newGamesServer(t)
+	admin := adminSession(t, s)
+
+	game := gameCreate(t, s, admin)
+	for _, seat := range []string{
+		`{"position":1,"name":"Collin","commander":"Atraxa, Praetors' Voice"}`,
+		`{"position":2,"name":"Bob","commander":"Krenko, Mob Boss"}`,
+	} {
+		rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/seats", seat, admin)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("seat: status %d, body %s", rec.Code, rec.Body)
+		}
+	}
+
+	readSeats := func() *[]engine.SeatConfig {
+		t.Helper()
+		rec := hit(t, s, http.MethodGet, "/api/games/"+game, "", admin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get game: status %d, body %s", rec.Code, rec.Body)
+		}
+		var body struct {
+			Game struct {
+				Seats *[]engine.SeatConfig `json:"seats"`
+			} `json:"game"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("get body: %v (%s)", err, rec.Body)
+		}
+		return body.Game.Seats
+	}
+
+	seats := readSeats()
+	if seats == nil || len(*seats) != 2 {
+		t.Fatalf("setup seats = %v, want the two seated players", seats)
+	}
+	if sc := (*seats)[0]; sc.Name != "Collin" || sc.Seat != 1 || sc.Commander != "Atraxa, Praetors' Voice" {
+		t.Fatalf("first seat = %+v", sc)
+	}
+
+	// The seat response carries the same read — seating answers with the
+	// table it just changed.
+	rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/seats", `{"position":3,"name":"Alice"}`, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("third seat: status %d, body %s", rec.Code, rec.Body)
+	}
+	var seated struct {
+		Game struct {
+			Seats *[]engine.SeatConfig `json:"seats"`
+		} `json:"game"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &seated); err != nil {
+		t.Fatalf("seat body: %v (%s)", err, rec.Body)
+	}
+	if seated.Game.Seats == nil || len(*seated.Game.Seats) != 3 {
+		t.Fatalf("seat response carries %v, want three seats", seated.Game.Seats)
+	}
+
+	if rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/start", `{}`, admin); rec.Code != http.StatusOK {
+		t.Fatalf("start: status %d, body %s", rec.Code, rec.Body)
+	}
+	if seats = readSeats(); seats != nil {
+		t.Fatalf("active game still carries setup seats: %v", *seats)
+	}
+	st := gameState(t, s, admin, game)
+	if len(st.Order) != 3 {
+		t.Fatalf("folded order = %v, want the three seats GAME_STARTED echoed", st.Order)
+	}
+}
+
+// TestGameFullCommanderGameByTap drives a three-seat Commander game
+// through the exact action sequence the play surface's taps emit
+// (MAD-327's acceptance): setup, turns, priority rotation, the stack,
+// the commander's one-tap cast with its declared base, tokens, counters,
+// combat with blockers, and the correction paths — undo and amend over
+// the same surface.
+func TestGameFullCommanderGameByTap(t *testing.T) {
+	s, _ := newGamesServer(t)
+	admin := adminSession(t, s)
+
+	game := gameCreate(t, s, admin)
+	for _, seat := range []string{
+		`{"position":1,"name":"Collin","commander":"Atraxa, Praetors' Voice"}`,
+		`{"position":2,"name":"Bob","commander":"Krenko, Mob Boss"}`,
+		`{"position":3,"name":"Alice","commander":"The Ur-Dragon"}`,
+	} {
+		rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/seats", seat, admin)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("seat: status %d, body %s", rec.Code, rec.Body)
+		}
+	}
+	if rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/start", `{}`, admin); rec.Code != http.StatusOK {
+		t.Fatalf("start: status %d, body %s", rec.Code, rec.Body)
+	}
+
+	st := gameState(t, s, admin, game)
+	if st.Status != engine.StatusActive || st.TurnSeat != 1 || st.Step != "untap" {
+		t.Fatalf("post-start position: %s T%d seat%d %s", st.Status, st.Turn, st.TurnSeat, st.Step)
+	}
+
+	// T1 Collin: untap grants no priority; two advances reach precombat
+	// main (the first turn's draw is skipped), then a land, a dork to
+	// block with later, and a Sol Ring on the stack.
+	gameAction(t, s, admin, game, `{"kind":"ADVANCE","seat":1,"source":"tap"}`)
+	gameAction(t, s, admin, game, `{"kind":"ADVANCE","seat":1,"source":"tap"}`)
+	st = gameState(t, s, admin, game)
+	if st.Step != "main" || st.Phase != "precombat_main" || st.PrioritySeat != 1 {
+		t.Fatalf("T1 main: %s/%s priority %d", st.Phase, st.Step, st.PrioritySeat)
+	}
+	gameAction(t, s, admin, game, `{"kind":"DRAW","seat":1,"count":7,"source":"tap"}`) // the opening hand
+	gameAction(t, s, admin, game, `{"kind":"PLAY_LAND","seat":1,"card":"Forest","base":{"name":"Forest","types":["Land"]},"source":"tap"}`)
+	gameAction(t, s, admin, game, `{"kind":"CAST","seat":1,"card":"Sakura-Tribe Elder","from_zone":"hand","base":{"name":"Sakura-Tribe Elder","types":["Creature","Human","Shaman"],"power":1,"toughness":1},"source":"tap"}`)
+	for range 3 {
+		st = gameState(t, s, admin, game)
+		gameAction(t, s, admin, game, fmt.Sprintf(`{"kind":"PASS_PRIORITY","seat":%d,"source":"tap"}`, st.PrioritySeat))
+	}
+	gameAction(t, s, admin, game, `{"kind":"CAST","seat":1,"card":"Sol Ring","from_zone":"hand","base":{"name":"Sol Ring","types":["Artifact"]},"source":"tap"}`)
+	st = gameState(t, s, admin, game)
+	if len(st.Stack) != 1 || st.Stack[0].Card != "Sol Ring" {
+		t.Fatalf("stack after cast: %+v", st.Stack)
+	}
+
+	// The tracker's resolve button: passes in rotation until the top
+	// resolves. Three seats, three passes, priority returning to the
+	// active player after the resolution.
+	for range 3 {
+		gameAction(t, s, admin, game, fmt.Sprintf(`{"kind":"PASS_PRIORITY","seat":%d,"source":"tap"}`, st.PrioritySeat))
+		st = gameState(t, s, admin, game)
+	}
+	if len(st.Stack) != 0 {
+		t.Fatalf("stack after rotation: %+v", st.Stack)
+	}
+	if n := len(st.Battlefield(1)); n != 3 {
+		t.Fatalf("battlefield after resolve = %d, want Forest + Elder + Sol Ring", n)
+	}
+	elder := int64(0)
+	for _, o := range st.Battlefield(1) {
+		if o.Identity.Card == "Sakura-Tribe Elder" {
+			elder = o.ID
+		}
+	}
+	if elder == 0 {
+		t.Fatal("the Elder did not resolve to the battlefield")
+	}
+
+	// T2 Bob: the commander's one-tap cast from the command zone, with
+	// the declared base the fold adopts.
+	for {
+		st = gameState(t, s, admin, game)
+		if st.Turn == 2 && st.Step == "untap" {
+			break
+		}
+		gameAction(t, s, admin, game, `{"kind":"ADVANCE","seat":1,"source":"tap"}`)
+	}
+	for range 3 { // upkeep, draw, precombat main
+		gameAction(t, s, admin, game, `{"kind":"ADVANCE","seat":2,"source":"tap"}`)
+	}
+	gameAction(t, s, admin, game, `{"kind":"DRAW","seat":2,"count":7,"source":"tap"}`) // the opening hand
+	gameAction(t, s, admin, game, `{"kind":"DRAW","seat":2,"count":1,"source":"tap"}`) // the turn's draw
+	gameAction(t, s, admin, game, `{"kind":"PLAY_LAND","seat":2,"card":"Mountain","base":{"name":"Mountain","types":["Land"]},"source":"tap"}`)
+	gameAction(t, s, admin, game, `{"kind":"CAST","seat":2,"card":"Krenko, Mob Boss","from_zone":"command","base":{"name":"Krenko, Mob Boss","types":["Creature","Goblin","Rogue"],"power":3,"toughness":3},"source":"tap"}`)
+	for range 3 {
+		st = gameState(t, s, admin, game)
+		gameAction(t, s, admin, game, fmt.Sprintf(`{"kind":"PASS_PRIORITY","seat":%d,"source":"tap"}`, st.PrioritySeat))
+	}
+	st = gameState(t, s, admin, game)
+	if tax := st.CommanderTax("Krenko, Mob Boss"); tax != 2 {
+		t.Fatalf("commander tax after one cast = %d, want 2", tax)
+	}
+	var krenko int64
+	for _, o := range st.Battlefield(2) {
+		if o.Identity.Card == "Krenko, Mob Boss" {
+			krenko = o.ID
+		}
+	}
+	if krenko == 0 {
+		t.Fatal("the commander did not resolve to the battlefield")
+	}
+	if c := st.Characteristics(krenko); c.Power == nil || *c.Power != 3 {
+		t.Fatalf("commander computed power = %v, want the declared 3 (base adopted on cast)", c.Power)
+	}
+
+	// Tokens (the composer's Make), a counter, tap and untap — the board
+	// values, all through the same action path.
+	gameAction(t, s, admin, game, `{"kind":"CREATE_TOKEN","seat":2,"count":2,"token":{"name":"Goblin","types":["Creature","Goblin"],"power":1,"toughness":1},"source":"tap"}`)
+	gameAction(t, s, admin, game, `{"kind":"ADJUST_COUNTERS","seat":2,"target_seat":1,"counter_name":"poison","delta":1,"source":"tap"}`)
+	gameAction(t, s, admin, game, `{"kind":"TAP","seat":2,"all":true,"source":"tap"}`)
+	gameAction(t, s, admin, game, `{"kind":"UNTAP","seat":2,"all":true,"source":"tap"}`)
+	st = gameState(t, s, admin, game)
+	if n := len(st.Battlefield(2)); n != 4 {
+		t.Fatalf("battlefield after tokens = %d, want commander + Mountain + 2 Goblins", n)
+	}
+	if st.Seats[1].Counters["poison"] != 1 {
+		t.Fatalf("poison on seat 1 = %v", st.Seats[1].Counters)
+	}
+
+	// Combat: Bob swings the commander and a Goblin at Collin; Collin
+	// blocks the Goblin with the Elder; damage resolves.
+	for {
+		st = gameState(t, s, admin, game)
+		if st.Phase == "combat" && st.Step == "declare_attackers" {
+			break
+		}
+		gameAction(t, s, admin, game, `{"kind":"ADVANCE","seat":2,"source":"tap"}`)
+	}
+	var goblin int64
+	for _, o := range st.Battlefield(2) {
+		if o.Identity.Token != nil {
+			goblin = o.ID
+		}
+	}
+	if goblin == 0 {
+		t.Fatal("no token on the battlefield to attack with")
+	}
+	gameAction(t, s, admin, game, fmt.Sprintf(`{"kind":"DECLARE_ATTACKERS","seat":2,"source":"tap","attackers":[{"object":%d,"target_seat":1},{"object":%d,"target_seat":1}]}`, krenko, goblin))
+	gameAction(t, s, admin, game, `{"kind":"ADVANCE","seat":2,"source":"tap"}`) // → declare_blockers
+	st = gameState(t, s, admin, game)
+	if st.Step != "declare_blockers" {
+		t.Fatalf("at %s, want declare_blockers", st.Step)
+	}
+	gameAction(t, s, admin, game, fmt.Sprintf(`{"kind":"DECLARE_BLOCKERS","seat":1,"source":"tap","blockers":[{"blocker":%d,"attackers":[%d]}]}`, elder, goblin))
+	gameAction(t, s, admin, game, `{"kind":"ADVANCE","seat":2,"source":"tap"}`) // → combat_damage
+	gameAction(t, s, admin, game, `{"kind":"RESOLVE_COMBAT","seat":2,"source":"tap"}`)
+	st = gameState(t, s, admin, game)
+	if !st.CombatResolved {
+		t.Fatal("combat did not resolve")
+	}
+	if st.Seats[1].Life != 37 {
+		t.Fatalf("seat 1 life after 3 commander damage = %d, want 37", st.Seats[1].Life)
+	}
+	if st.Seats[1].CommanderDamage["Krenko, Mob Boss"] != 3 {
+		t.Fatalf("commander damage = %v, want 3", st.Seats[1].CommanderDamage)
+	}
+
+	// Correction: undo the resolve (rewind to the blockers declaration —
+	// COMBAT_RESOLVED anchors the end of its batch, the damage rows
+	// precede it), then a manual life edit through the same action path —
+	// the easy-adjust contract.
+	evs, latest := gameEvents(t, s, admin, game)
+	var blockersAt int64
+	for _, e := range evs {
+		if e.Kind == engine.EventBlockersDeclared {
+			blockersAt = e.Ord
+		}
+	}
+	if blockersAt == 0 {
+		t.Fatal("no BLOCKERS_DECLARED row to rewind to")
+	}
+	if rec := hit(t, s, http.MethodPost, "/api/games/"+game+"/rewind",
+		fmt.Sprintf(`{"to":%d}`, blockersAt), admin); rec.Code != http.StatusOK {
+		t.Fatalf("undo rewind: status %d, body %s", rec.Code, rec.Body)
+	}
+	st = gameState(t, s, admin, game)
+	if st.Seats[1].Life != 40 || st.CombatResolved {
+		t.Fatalf("after undo: life %d combatResolved %v, want the pre-combat-damage position", st.Seats[1].Life, st.CombatResolved)
+	}
+	_, after := gameEvents(t, s, admin, game)
+	if after >= latest {
+		t.Fatalf("log did not shrink on rewind: %d → %d", latest, after)
+	}
+	gameAction(t, s, admin, game, `{"kind":"CHANGE_LIFE","seat":1,"target_seat":1,"delta":-2,"source_card":"Thoughtseize","source":"tap"}`)
+	st = gameState(t, s, admin, game)
+	if st.Seats[1].Life != 38 {
+		t.Fatalf("manual life edit = %d, want 38", st.Seats[1].Life)
 	}
 }
 

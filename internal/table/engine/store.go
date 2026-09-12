@@ -315,6 +315,35 @@ func (s *Store) StartGame(ctx context.Context, gameID string) ([]Event, *State, 
 	return s.Submit(ctx, gameID, action)
 }
 
+// Seats reads the seat rows as the play surface's setup pane renders
+// them: position, name, bound user, attached deck and commander. Setup
+// facts only — once the game is active the GAME_STARTED echo in the fold
+// is the seating, and this read is for rebuilding a setup in progress.
+func (s *Store) Seats(ctx context.Context, gameID string) ([]SeatConfig, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT position, COALESCE(user_id, ''), name, COALESCE(deck_id, ''), commander, starting_life
+		  FROM mtg_seats WHERE game_id = ? ORDER BY position`, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("load seats: %w", err)
+	}
+	defer rows.Close()
+	var out []SeatConfig
+	for rows.Next() {
+		var (
+			sc           SeatConfig
+			startingLife sql.NullInt64
+		)
+		if err := rows.Scan(&sc.Seat, &sc.UserID, &sc.Name, &sc.DeckID, &sc.Commander, &startingLife); err != nil {
+			return nil, err
+		}
+		if startingLife.Valid {
+			sc.StartingLife = int(startingLife.Int64)
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
 // loadSeatConfigs reads the seat rows with their attached decks. Two
 // passes on purpose: the app's database handle allows a single connection,
 // so no query runs while another's rows are still open.

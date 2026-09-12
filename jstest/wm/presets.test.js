@@ -65,6 +65,7 @@ test("the DM shapes are unchanged: same slots, same names, same tools", () => {
 		"1 Ask",
 		"2 Brew",
 		"3 Study",
+		"4 At the table",
 	]);
 });
 

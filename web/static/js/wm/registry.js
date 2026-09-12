@@ -148,6 +148,12 @@ export const TOOLS = Object.freeze({
 		blurb: "Commander brewing, grounded in real card text",
 		load: () => import("../deck.js"),
 	},
+	play: {
+		title: "Play", icon: "casting", corpus: "mtg", accel: "y",
+		instances: "single", min: [560, 480],
+		blurb: "The table, live — board, log, one tap to correct",
+		load: () => import("../play.js"),
+	},
 
 	// Table Play (docs/table/model.md, ADRs 9-13) lands here as more entries
 	// with corpus: "mtg". Nothing outside this object changes.

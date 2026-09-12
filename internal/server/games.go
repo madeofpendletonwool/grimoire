@@ -95,6 +95,11 @@ type gameView struct {
 	UpdatedAt    string  `json:"updated_at"`
 	StartedAt    *string `json:"started_at,omitempty"`
 	EndedAt      *string `json:"ended_at,omitempty"`
+	// Seats is the setup-pane read: the mtg_seats rows while the game is
+	// still setup, so a reloaded client can rebuild an unfinished table.
+	// Once play begins the fold's GAME_STARTED echo is the seating and
+	// this stays nil — the board pane reads the folded state.
+	Seats *[]engine.SeatConfig `json:"seats,omitempty"`
 }
 
 func toGameView(g *engine.Game, latest int64) gameView {
@@ -122,6 +127,24 @@ func (s *Server) gameView(ctx context.Context, g *engine.Game) gameView {
 		latest = 0
 	}
 	return toGameView(g, latest)
+}
+
+// gameViewWithSeats is the setup pane's read: the game plus the seat
+// rows, so a reloaded client can rebuild a table that has not started.
+// After start the fold owns the seating and the seats field stays unset.
+func (s *Server) gameViewWithSeats(ctx context.Context, g *engine.Game) gameView {
+	v := s.gameView(ctx, g)
+	if g.Status != engine.StatusSetup {
+		return v
+	}
+	seats, err := s.games.Seats(ctx, g.ID)
+	if err != nil {
+		return v // the pane renders what it can; the error path is the list's
+	}
+	if len(seats) > 0 {
+		v.Seats = &seats
+	}
+	return v
 }
 
 /* ---------- lifecycle ---------- */
@@ -183,11 +206,7 @@ func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
-	latest := int64(0)
-	if state != nil {
-		latest = state.LastOrd
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"game": toGameView(g, latest), "state": state})
+	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameViewWithSeats(r.Context(), g), "state": state})
 }
 
 // handleSeatPlayer writes one seat: position in turn order, a display
@@ -226,7 +245,7 @@ func (s *Server) handleSeatPlayer(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"game": s.gameView(r.Context(), fresh)})
+	writeJSON(w, http.StatusCreated, map[string]any{"game": s.gameViewWithSeats(r.Context(), fresh)})
 }
 
 // handleStartGame loads the seat table and submits START_GAME: the

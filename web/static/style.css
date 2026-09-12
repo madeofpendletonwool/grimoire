@@ -2827,6 +2827,356 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .deck-chat-turn.is-player .deck-chat-text { white-space: pre-wrap; opacity: 0.75; font-style: italic; }
 .deck-chat-status { font-size: var(--fs-xs); opacity: 0.7; margin: 0 0 var(--sp-2); min-height: 1em; }
 .deck-chat-form { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* ---------- Play surface ----------
+   The Magic table's manual tracker (MAD-327): board, log and current
+   action, all visible at once. Same discipline as the other tools —
+   layout and type here, frames from the f-* utilities, no background or
+   radius of our own. Legibility is the constraint (the board.js note,
+   applied verbatim): readable at arm's length in a dim room, on a
+   phone. Big life numbers, high contrast, few words. */
+
+.play {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	padding: var(--sp-5) var(--sp-4) var(--sp-6);
+	gap: var(--sp-3);
+}
+.play-setup {
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto;
+	width: 100%;
+}
+.play-seat-form { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: 0 0 var(--sp-3); }
+.play-seat-form .enc-field { flex: 1 1 12rem; }
+.play-seat-list { margin: 0 0 var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-1); list-style: none; padding: 0; }
+.play-seat-row { font-size: var(--fs-md); color: var(--ink); }
+.play-seat-row b { font-family: var(--font-prose); }
+.play-seat-cmdr { color: var(--ink-soft); }
+.play-seat-life { color: var(--ink-soft); }
+.play-setup-actions { display: flex; justify-content: flex-end; }
+
+.play-body {
+	flex: 1;
+	min-height: 0;
+	max-width: var(--measure-wide, 72rem);
+	margin: 0 auto;
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+}
+
+/* The turn strip: position, acting seat, the step controls. */
+.play-strip {
+	flex: none;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-2) var(--sp-3);
+}
+.play-turnline {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-sm);
+	color: var(--parchment);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.play-acting {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sp-1);
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+}
+.play-acting select {
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--stone-line);
+	color: var(--parchment);
+	font-size: var(--fs-sm);
+	padding: 0.15rem 0.1rem;
+}
+.play-strip-controls { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-left: auto; }
+
+/* The two panes that must never leave the screen together. */
+.play-main {
+	flex: 1;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+	gap: var(--sp-3);
+}
+.play-board {
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	padding-right: var(--sp-1);
+}
+.play-logcol {
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-1);
+}
+.play-log-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sp-2);
+}
+.play-log {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	margin: 0;
+	padding: 0 var(--sp-2) 0 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+/* One seat: a strip, not a dashboard. */
+.play-seats { display: flex; flex-direction: column; gap: var(--sp-2); }
+.play-seat {
+	padding: var(--sp-2) var(--sp-3);
+	box-shadow: var(--shadow-1);
+}
+.play-seat.is-turn { outline: 2px solid var(--gold); outline-offset: -2px; }
+.play-seat.is-dead { opacity: 0.45; }
+.play-seat-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); }
+.play-seat-name { font-family: var(--font-display); font-size: var(--fs-md); letter-spacing: 0.04em; color: var(--ink); }
+.play-seat-cmdr { font-size: var(--fs-xs); color: var(--ink-soft); font-style: italic; }
+.play-flag {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--gold-dim);
+	border: 1px solid currentColor;
+	border-radius: var(--r-pill);
+	padding: 0 0.4em;
+}
+.play-flag.is-dead { color: var(--ink-soft); }
+.play-life {
+	margin-left: auto;
+	font-family: var(--font-pixel);
+	font-size: 1.6rem;
+	line-height: 1;
+	color: var(--ink);
+	cursor: pointer;
+	border: none;
+	background: transparent;
+	padding: 0.1rem 0.4rem;
+}
+.play-life:hover { color: var(--accent-deep); }
+.play-seat-nums { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-1); }
+.play-seat-zones { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); margin-top: var(--sp-1); font-size: var(--fs-xs); color: var(--ink-soft); }
+.play-zone { background: none; border: none; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+.play-zone b { font-family: var(--font-pixel); color: var(--ink); }
+.play-zone:hover b { color: var(--accent-deep); }
+
+/* The battlefield: chips, grouped tokens first-class. */
+.play-field { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-2); }
+.play-field-empty { font-size: var(--fs-xs); color: var(--ink-soft); font-style: italic; }
+.play-chip {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.3em;
+	font-size: var(--fs-sm);
+	font-family: var(--font-prose);
+	color: var(--ink);
+	background: none;
+	border: none;
+	padding: 0.1rem 0.45rem;
+	cursor: pointer;
+}
+.play-obj {
+	border: 1px solid var(--parchment-line);
+	border-radius: var(--r-sm);
+	background: var(--parchment-2);
+}
+.play-obj:hover { border-color: var(--ink-soft); }
+.play-obj.is-tapped { background: var(--parchment); transform: rotate(-4deg); opacity: 0.8; }
+.play-obj.is-token { border-style: dashed; }
+.play-obj.is-attacking { outline: 2px solid var(--ember-deep); outline-offset: -2px; }
+.play-obj.is-blocking { outline: 2px solid var(--accent-deep); outline-offset: -2px; }
+.play-obj.is-selected { outline: 2px solid var(--gold); outline-offset: -2px; }
+.play-obj-name { font-weight: 600; }
+.play-obj-pt { font-family: var(--font-pixel); font-size: var(--fs-xs); }
+.play-obj-count {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	font-style: normal;
+	color: var(--accent-deep);
+}
+.play-obj-count.is-damage { color: var(--ember-deep); }
+.play-obj-attach { font-family: var(--font-pixel); font-size: var(--fs-xs); font-style: normal; color: var(--ink-soft); }
+.play-cast-cmdr { border: 1px solid var(--gold-dim); border-radius: var(--r-sm); }
+.play-count, .play-cmdr-dmg {
+	border: 1px solid var(--parchment-line);
+	border-radius: var(--r-pill);
+	font-size: var(--fs-xs);
+	font-family: var(--font-pixel);
+}
+.play-cmdr-dmg.is-lethal { border-color: var(--ember-deep); color: var(--ember-deep); }
+
+/* The stack rides above the seats — it is what resolves next. */
+.play-stackwrap { margin-top: var(--sp-1); }
+.play-stack { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.play-stack-item {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	font-size: var(--fs-sm);
+	color: var(--parchment);
+	font-family: var(--font-prose);
+}
+.play-stack-item.is-top { color: var(--gold-bright); }
+.play-stack-item.is-trigger { color: var(--ink-soft); font-style: italic; }
+.play-stack-item .enc-btn { margin-left: auto; }
+.play-stack-who { font-size: var(--fs-xs); opacity: 0.7; }
+
+/* The context strip: the board pane's second row, never over the log. */
+.play-context {
+	flex: none;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1) var(--sp-2);
+	padding: var(--sp-2) var(--sp-3);
+	color: var(--parchment);
+}
+.play-ctx-name { font-family: var(--font-prose); font-size: var(--fs-md); color: var(--parchment); }
+.play-ctx-pt { font-family: var(--font-pixel); font-size: var(--fs-sm); color: var(--gold-bright); }
+.play-ctx-zone { font-family: var(--font-pixel); font-size: var(--fs-xs); opacity: 0.6; }
+.play-ctx-group { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.play-ctx-tabs { display: inline-flex; flex-wrap: wrap; gap: var(--sp-1); }
+.play-ctx-note { font-size: var(--fs-xs); color: var(--ink-soft); }
+
+/* The log: newest first, every entry a rewind point. */
+.play-row {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-2);
+	font-size: var(--fs-sm);
+	font-family: var(--font-prose);
+	color: var(--parchment);
+	line-height: 1.45;
+}
+.play-row-ord {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	min-width: 2.4em;
+	text-align: right;
+	flex: none;
+}
+.play-row-text { flex: 1; min-width: 0; }
+.play-row.is-private .play-row-text { opacity: 0.65; font-style: italic; }
+.play-row-src {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	font-style: normal;
+	color: var(--gold-dim);
+	flex: none;
+}
+.play-row-rewind {
+	flex: none;
+	background: none;
+	border: none;
+	color: var(--ink-soft);
+	font-size: var(--fs-sm);
+	cursor: pointer;
+	padding: 0 0.2rem;
+	opacity: 0;
+}
+.play-row:hover .play-row-rewind, .play-row-rewind:focus-visible { opacity: 1; }
+.play-row-rewind:hover { color: var(--gold-bright); }
+.play-row.is-empty { color: var(--ink-soft); font-style: italic; }
+
+/* The current action: fresh until acknowledged, one tap from correction. */
+.play-current {
+	flex: none;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1) var(--sp-2);
+	padding: var(--sp-2) var(--sp-3);
+	border-top: 1px solid var(--stone-line);
+	font-family: var(--font-prose);
+	color: var(--parchment);
+}
+.play-current-label {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	flex: none;
+}
+.play-current-text { flex: 1; min-width: 12em; font-size: var(--fs-md); }
+.play-current.is-fresh .play-current-text { color: var(--gold-bright); }
+.play-current-actions { display: flex; gap: var(--sp-1); flex: none; }
+.play-current-meta { font-size: var(--fs-xs); color: var(--ink-soft); flex-basis: 100%; min-height: 1em; }
+.play-current-meta.warn { color: var(--gold-bright); }
+
+/* The composer: card entry with live autocomplete, then the rarer taps
+   folded away behind one summary. */
+.play-compose { flex: none; display: flex; flex-direction: column; gap: var(--sp-2); }
+.play-edit-banner {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--gold-bright);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-2);
+}
+.play-compose-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+.play-compose-row .enc-field { flex: 0 1 auto; }
+.play-compose-row.is-card-row { position: relative; }
+.play-card-input { flex: 1 1 14rem; }
+.play-num { width: 4.5rem; }
+.play-card-list {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	right: 0;
+	z-index: 6;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 12rem;
+	overflow-y: auto;
+	box-shadow: var(--shadow-2);
+}
+.play-card-opt {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-2);
+	text-align: left;
+	background: var(--stone-700);
+	border: 1px solid var(--stone-line);
+	color: var(--parchment);
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	padding: 0.25rem 0.5rem;
+	cursor: pointer;
+}
+.play-card-opt:hover { border-color: var(--accent); }
+.play-card-type { color: var(--ink-soft); font-size: var(--fs-xs); }
+.play-card-cost { font-family: var(--font-pixel); font-size: var(--fs-xs); color: var(--gold-bright); }
+.play-more summary {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	cursor: pointer;
+}
+.play-more-body { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
+
 /* ---------- Shared links ---------- */
 
 /* The share control under an answer — quiet until hovered, like the other
@@ -3931,6 +4281,9 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.sess-body,
 	.camp-body,
 	.cchat-body { grid-template-columns: 1fr; }
+	.play-main { grid-template-columns: 1fr; }
+	.play-board { max-height: none; }
+	.play-log { max-height: 40vh; }
 	.camp-col-side { grid-column: auto; }
 	.resolver-grid { grid-template-columns: 1fr; }
 	.study-grades { grid-template-columns: repeat(2, 1fr); }
@@ -3954,6 +4307,8 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	.combat { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
 	.screen { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
 	.deckbuilder { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
+	.play { padding: var(--sp-4) var(--sp-3) var(--sp-5); }
+	.play-strip-controls { margin-left: 0; }
 	.enc-sheet { padding: var(--sp-3) var(--sp-4) var(--sp-4); }
 	.enc-action-row .ask { margin-left: 0; }
 
