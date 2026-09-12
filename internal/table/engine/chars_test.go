@@ -10,6 +10,7 @@ import (
 // "why?" is this trace, not a model call.
 func TestPTTraceSevenBySeven(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	anthem := land(t, s, 1, "Glorious Anthem")
 	bear := summon(t, s, 1, "Grizzly Bears", 2, 2)
 	act(t, s, Action{Kind: ActionAddModifier, Seat: 1, Object: bear, Modifier: &Modifier{
@@ -76,6 +77,7 @@ func TestControlIsAModifierNotAWrite(t *testing.T) {
 
 func TestLayerOrderTypeAbilityColor(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	land1 := land(t, s, 1, "Conspiracy")
 	bear := summon(t, s, 1, "Bear", 2, 2)
 	act(t, s, Action{Kind: ActionAddModifier, Seat: 1, Object: bear, Modifier: &Modifier{
@@ -167,6 +169,7 @@ func TestUnknownPTStaysUnknown(t *testing.T) {
 
 func TestCopyLayerTakesSourceBase(t *testing.T) {
 	s := start(t, nil)
+	toMain(t, s)
 	vesuva := land(t, s, 1, "Vesuva")
 	target := summon(t, s, 2, "Darksteel Colossus", 11, 11)
 	act(t, s, Action{Kind: ActionAddModifier, Seat: 1, Object: vesuva, Modifier: &Modifier{
@@ -178,14 +181,32 @@ func TestCopyLayerTakesSourceBase(t *testing.T) {
 	}
 }
 
-func TestMinusOneCountersAnnihilateNothingQuietly(t *testing.T) {
+func TestCounterAnnihilation(t *testing.T) {
 	// Counter arithmetic is honest arithmetic; the +1/+1 / -1/-1
-	// annihilation state-based action is MAD-324's, so both counters
-	// coexist here and the math reflects both.
+	// annihilation state-based action (CR 704.5r) fires the moment both
+	// are present, so 2×(+1/+1) and 1×(-1/-1) annihilate one pair and
+	// leave the bear standing at the base plus what survived.
 	s := start(t, nil)
 	bear := summon(t, s, 1, "Bear", 2, 2)
-	act(t, s, Action{Kind: ActionAdjustCounters, Seat: 1, OnObject: bear, CounterName: "+1/+1", Delta: 2})
-	act(t, s, Action{Kind: ActionAdjustCounters, Seat: 2, OnObject: bear, CounterName: "-1/-1", Delta: 1})
+	evs := act(t, s, Action{Kind: ActionAdjustCounters, Seat: 1, OnObject: bear, CounterName: "+1/+1", Delta: 2})
+	for _, e := range evs {
+		if e.Kind == EventCounterChanged && e.Name == "-1/-1" {
+			t.Fatal("annihilated a counter that was never there")
+		}
+	}
+	evs = act(t, s, Action{Kind: ActionAdjustCounters, Seat: 2, OnObject: bear, CounterName: "-1/-1", Delta: 1})
+	annihilated := 0
+	for _, e := range evs {
+		if e.Kind == EventCounterChanged && e.Name == "-1/-1" && e.Delta == -1 {
+			annihilated++
+		}
+	}
+	if annihilated != 1 {
+		t.Fatalf("annihilation rows = %d in %+v", annihilated, evs)
+	}
+	if o := s.Objects[bear]; o.Counters["+1/+1"] != 1 || o.Counters["-1/-1"] != 0 {
+		t.Fatalf("counters = %v", o.Counters)
+	}
 	if c := s.Characteristics(bear); *c.Power != 3 || *c.Toughness != 3 {
 		t.Fatalf("bear = %d/%d", *c.Power, *c.Toughness)
 	}

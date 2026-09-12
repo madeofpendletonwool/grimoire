@@ -12,8 +12,10 @@ type TokenSpec struct {
 	Name      string   `json:"name,omitempty"`
 	Types     []string `json:"types,omitempty"`
 	Colors    []string `json:"colors,omitempty"`
+	Keywords  []string `json:"keywords,omitempty"`
 	Power     *int     `json:"power,omitempty"`
 	Toughness *int     `json:"toughness,omitempty"`
+	Loyalty   *int     `json:"loyalty,omitempty"`
 }
 
 // Identity is what an object is: a card name resolved against the
@@ -65,9 +67,13 @@ type Object struct {
 	AttachedTo  int64   `json:"attached_to,omitempty"`
 	Attachments []int64 `json:"attachments,omitempty"`
 	// Damage is marked damage on a creature. It persists until cleanup,
-	// so it clears on TURN_ENDED; lethal-damage deaths are MAD-324's
-	// state-based actions, asserted as DIED rows then.
-	Damage int `json:"damage,omitempty"`
+	// so it clears on TURN_ENDED; lethal-damage deaths are state-based
+	// actions, asserted as DIED rows by the sweep. DamageBySource is the
+	// same damage keyed by source object — what makes deathtouch lethality
+	// (any nonzero damage from a deathtouch source, CR 702.2c) a check
+	// over recorded rows instead of a guess.
+	Damage         int           `json:"damage,omitempty"`
+	DamageBySource map[int64]int `json:"damage_by_source,omitempty"`
 }
 
 // IsCreature reports whether the object's computed type line contains

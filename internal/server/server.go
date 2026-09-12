@@ -51,6 +51,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/story"
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/table"
+	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/internal/uistate"
 	"github.com/madeofpendletonwool/grimoire/web"
@@ -172,6 +173,10 @@ type Server struct {
 	// reconciliation pass. Wired with WithLeveling; nil disables the
 	// leveling endpoints.
 	leveling *leveling.Store
+	// The Magic table engine's store (MAD-326, stage 3 of MAD-321):
+	// games, seats and the append-only event log the SSE stream
+	// replicates. Wired with WithGames; nil disables the game endpoints.
+	games *engine.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -287,6 +292,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/decks/{id}", s.handleGetDeck)
 	mux.HandleFunc("PATCH /api/decks/{id}", s.handleUpdateDeck)
 	mux.HandleFunc("DELETE /api/decks/{id}", s.handleDeleteDeck)
+	// The Magic table (MAD-326, stage 3 of MAD-321): game lifecycle, the
+	// action writer and the ordinal stream. Scoping is per account —
+	// another owner's game answers like a missing one.
+	mux.HandleFunc("GET /api/games", s.handleListGames)
+	mux.HandleFunc("POST /api/games", s.handleCreateGame)
+	mux.HandleFunc("GET /api/games/{id}", s.handleGetGame)
+	mux.HandleFunc("POST /api/games/{id}/seats", s.handleSeatPlayer)
+	mux.HandleFunc("POST /api/games/{id}/start", s.handleStartGame)
+	mux.HandleFunc("POST /api/games/{id}/actions", s.handleSubmitAction)
+	mux.HandleFunc("GET /api/games/{id}/events", s.handleGameEvents)
+	mux.HandleFunc("GET /api/games/{id}/stream", s.handleGameStream)
+	mux.HandleFunc("POST /api/games/{id}/rewind", s.handleRewindGame)
 	mux.HandleFunc("GET /api/encounters", s.handleListEncounters)
 	mux.HandleFunc("POST /api/encounters", s.handleCreateEncounter)
 	mux.HandleFunc("GET /api/encounters/{id}", s.handleGetEncounter)

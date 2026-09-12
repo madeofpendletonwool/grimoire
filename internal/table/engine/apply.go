@@ -16,16 +16,37 @@ import (
 // but five figures of rows from one action is a runaway, not a game.
 const maxTokenBatch = 1000
 
-// Apply validates an action against a state and produces its events.
+// Apply validates an action against a state and produces its events: the
+// action's own rows first, then the state-based actions that fire on the
+// position those rows leave the game in (CR 704.3 — checked whenever a
+// player would receive priority, which after any action is the next thing
+// that happens), then the waiting triggered abilities, which CR 117.5 puts
+// on the stack after the state-based actions, in APNAP order, at exactly
+// that same priority grant. The sweeps fold against a clone, so the
+// handed-in state is never touched and the caller folds one flat list.
 func Apply(s *State, a Action) ([]Event, error) {
 	if s == nil {
 		s = NewState()
 	}
+	evs, err := applyAction(s, a)
+	if err != nil || len(evs) == 0 {
+		return evs, err
+	}
+	working := s.clone()
+	working.FoldInto(evs)
+	sba := sweepStateBasedActions(working, a)
+	evs = append(evs, sba...)
+	return append(evs, working.flushTriggers()...), nil
+}
+
+func applyAction(s *State, a Action) ([]Event, error) {
 	switch a.Kind {
 	case ActionStartGame:
 		return applyStartGame(s, a)
 	case ActionEndGame:
 		return applyEndGame(s, a)
+	case ActionConcede:
+		return applyConcede(s, a)
 	case ActionAdvance:
 		return applyAdvance(s, a)
 	case ActionPassPriority:
@@ -36,6 +57,8 @@ func Apply(s *State, a Action) ([]Event, error) {
 		return applyCast(s, a)
 	case ActionActivate:
 		return applyActivate(s, a)
+	case ActionDeclareTrigger:
+		return applyDeclareTrigger(s, a)
 	case ActionMoveZone:
 		return applyMoveZone(s, a)
 	case ActionCreateToken:
@@ -55,7 +78,7 @@ func Apply(s *State, a Action) ([]Event, error) {
 	case ActionDeclareBlockers:
 		return applyDeclareBlockers(s, a)
 	case ActionResolveCombat:
-		return nil, fmt.Errorf("%w: RESOLVE_COMBAT combat damage arithmetic lands with MAD-325", ErrInvalid)
+		return applyResolveCombat(s, a)
 	case ActionAdjustCounters:
 		return applyAdjustCounters(s, a)
 	case ActionSetCounters:
@@ -107,23 +130,48 @@ func (s *State) requireActive(a Action) error {
 	return nil
 }
 
-// requireSeat validates the acting seat is in the game.
+// requireSeat validates the acting seat is in the game and still in it —
+// an eliminated seat acts on nothing.
 func (s *State) requireSeat(a Action) error {
-	if _, err := s.player(a.Seat); err != nil {
+	p, err := s.player(a.Seat)
+	if err != nil {
 		return err
+	}
+	if !p.Alive {
+		return fmt.Errorf("%w: seat %d has left the game", ErrInvalid, a.Seat)
+	}
+	return nil
+}
+
+// requirePriority gates the actions that consume priority (CR 116/117:
+// casting, activating, playing a land, passing): the actor must hold it,
+// and during untap and cleanup nobody does (CR 502.3, 514.3a). Manual
+// bookkeeping actions stay ungated — they are the tracker's correction
+// surface, not game actions.
+func (s *State) requirePriority(a Action) error {
+	if s.PrioritySeat == 0 {
+		return fmt.Errorf("%w: no one has priority during the %s step", ErrInvalid, s.Step)
+	}
+	if a.Seat != s.PrioritySeat {
+		return fmt.Errorf("%w: seat %d does not hold priority (seat %d does)", ErrInvalid, a.Seat, s.PrioritySeat)
 	}
 	return nil
 }
 
 // targetSeat resolves a target seat: the explicit target when given, else
-// the acting seat.
+// the acting seat. Eliminated seats are not valid targets — they are not
+// in the game anymore.
 func (s *State) targetSeat(a Action) (int, error) {
 	seat := a.TargetSeat
 	if seat == 0 {
 		seat = a.Seat
 	}
-	if _, err := s.player(seat); err != nil {
+	p, err := s.player(seat)
+	if err != nil {
 		return 0, err
+	}
+	if !p.Alive {
+		return 0, fmt.Errorf("%w: seat %d has left the game", ErrInvalid, seat)
 	}
 	return seat, nil
 }
@@ -204,13 +252,47 @@ func applyEndGame(s *State, a Action) ([]Event, error) {
 	return []Event{a.stamp(Event{Kind: EventGameEnded, Reason: a.Reason})}, nil
 }
 
+// applyConcede is CR 104.3a: a player may concede at any time — no
+// priority needed. The leaving chain itself is leaveEvents; the sweep
+// then runs over the position it leaves behind (last standing ends the
+// game).
+func applyConcede(s *State, a Action) ([]Event, error) {
+	if err := s.requireActive(a); err != nil {
+		return nil, err
+	}
+	if err := s.requireSeat(a); err != nil {
+		return nil, err
+	}
+	return s.leaveEvents(a, a.Seat, causeConcession, ""), nil
+}
+
 /* ---------- turn and priority ---------- */
 
 func applyAdvance(s *State, a Action) ([]Event, error) {
 	if err := s.requireActive(a); err != nil {
 		return nil, err
 	}
+	// CR 500.2: a step or phase doesn't end while the stack is non-empty.
+	// Resolve it with passes first; the log stays honest that way.
+	if len(s.Stack) > 0 {
+		return nil, fmt.Errorf("%w: the stack must resolve before the step advances", ErrInvalid)
+	}
+	if err := s.requireCombatResolved(); err != nil {
+		return nil, err
+	}
 	return s.advanceSequence(a), nil
+}
+
+// requireCombatResolved holds the game in the combat damage step until the
+// damage has been assigned and dealt: leaving with attackers still
+// declared and no COMBAT_RESOLVED behind it is a combat the tracker
+// silently skipped, and the correction path (resolve, or amend) is one
+// action away.
+func (s *State) requireCombatResolved() error {
+	if s.Phase == "combat" && s.Step == "combat_damage" && len(s.Attackers) > 0 && !s.CombatResolved {
+		return fmt.Errorf("%w: resolve combat damage before leaving the step", ErrInvalid)
+	}
+	return nil
 }
 
 // advanceSequence builds the step-walk events for the state's current
@@ -229,6 +311,12 @@ func (s *State) advanceSequence(a Action) []Event {
 	return []Event{a.stamp(Event{Kind: EventStepEntered, Phase: phase, Step: step})}
 }
 
+// applyPassPriority is the CR 117 rotation. Only the holder may pass; the
+// pass moves priority to the next seat in turn order among the living;
+// and when every living seat has passed in succession the stack top
+// resolves (priority returning to the active player, CR 117.3b) or, with
+// the stack empty, the step or phase ends (CR 117.4) — the same walk
+// ADVANCE makes.
 func applyPassPriority(s *State, a Action) ([]Event, error) {
 	if err := s.requireActive(a); err != nil {
 		return nil, err
@@ -236,38 +324,37 @@ func applyPassPriority(s *State, a Action) ([]Event, error) {
 	if err := s.requireSeat(a); err != nil {
 		return nil, err
 	}
-	passed := append(append([]int{}, s.Passed...), a.Seat)
-	var evs []Event
-	if len(passed) == len(s.Order) {
-		// Everyone passed in succession (CR 117.4). With a non-empty
-		// stack the top object resolves and the active player receives
-		// priority; with an empty stack the current step ends, which is
-		// the same walk ADVANCE makes. The finer windows are MAD-324's.
-		if len(s.Stack) > 0 {
-			evs = s.resolveTop(a)
-			evs = append(evs, a.stamp(Event{Kind: EventPriorityPassed, SeatTo: s.TurnSeat}))
-			return evs, nil
-		}
-		evs = s.advanceSequence(a)
-		evs = append(evs, a.stamp(Event{Kind: EventPriorityPassed, SeatTo: s.TurnSeat}))
-		return evs, nil
+	if err := s.requirePriority(a); err != nil {
+		return nil, err
 	}
-	to := nextSeat(s, a.Seat)
-	return []Event{a.stamp(Event{Kind: EventPriorityPassed, SeatTo: to})}, nil
+	passed := append(append([]int{}, s.Passed...), a.Seat)
+	if len(passed) >= len(s.Order) {
+		if len(s.Stack) > 0 {
+			return s.resolveTop(a), nil
+		}
+		if err := s.requireCombatResolved(); err != nil {
+			return nil, err
+		}
+		return s.advanceSequence(a), nil
+	}
+	return []Event{a.stamp(Event{Kind: EventPriorityPassed, SeatTo: nextSeat(s, a.Seat)})}, nil
 }
 
 // resolveTop builds the events for the stack's top item resolving. A spell
 // object moves — permanents to the battlefield (creatures announcing
-// CREATURE_ETB), the rest to the graveyard; an ability simply comes off.
-// Unknown types resolve to the graveyard: the caller corrects with
-// MOVE_ZONE, which is the cheap-correction path working as designed.
+// CREATURE_ETB), the rest to the graveyard; an ability comes off and its
+// declared effect is applied as an EFFECT_DECLARED row, which is what
+// "resolution applies a declared effect" means for a declaration the
+// engine never interpreted. Unknown types resolve to the graveyard: the
+// caller corrects with MOVE_ZONE, which is the cheap-correction path
+// working as designed.
 func (s *State) resolveTop(a Action) []Event {
 	item := s.Stack[len(s.Stack)-1]
 	var evs []Event
 	res := Event{Kind: EventStackResolved, Mode: item.Mode, Ability: item.Ability,
-		Controller: item.Controller, Targets: item.Targets, Object: item.Object}
+		Controller: item.Controller, Targets: item.Targets, Object: item.Object, Card: item.Card}
 	if item.Object != 0 {
-		if o, ok := s.Objects[item.Object]; ok {
+		if o, ok := s.Objects[item.Object]; ok && item.Mode == "cast" {
 			dest := ZoneGraveyard
 			if isPermanentType(o.Base.Types) {
 				dest = ZoneBattlefield
@@ -280,6 +367,14 @@ func (s *State) resolveTop(a Action) []Event {
 			}
 			return evs
 		}
+	}
+	if item.Ability != "" {
+		// The ability's declared effect is its whole resolution: applied
+		// as events, on the record, never simulated.
+		evs = append(evs, a.stamp(res),
+			a.stamp(Event{Kind: EventEffectDeclared, Effect: item.Ability,
+				SourceObj: item.Object, SourceCard: item.Card}))
+		return evs
 	}
 	return append(evs, a.stamp(res))
 }
@@ -302,6 +397,10 @@ func applyPlayLand(s *State, a Action) ([]Event, error) {
 		return nil, err
 	}
 	if err := s.requireSeat(a); err != nil {
+		return nil, err
+	}
+	// Playing a land is a special action (CR 116.2a): it needs priority.
+	if err := s.requirePriority(a); err != nil {
 		return nil, err
 	}
 	if p := s.Seats[a.Seat]; p != nil && p.LandsThisTurn >= 1 {
@@ -376,6 +475,12 @@ func applyCast(s *State, a Action) ([]Event, error) {
 	if err := s.requireSeat(a); err != nil {
 		return nil, err
 	}
+	// Casting needs priority (CR 117.2c). Timing legality beyond that —
+	// sorcery speed, flash — depends on card text the engine does not
+	// simulate (ADR 11), so the structural check stops here.
+	if err := s.requirePriority(a); err != nil {
+		return nil, err
+	}
 	card := strings.TrimSpace(a.Card)
 	if card == "" {
 		return nil, fmt.Errorf("%w: a cast needs a card name", ErrInvalid)
@@ -408,7 +513,7 @@ func applyCast(s *State, a Action) ([]Event, error) {
 		}
 		evs = append(evs,
 			a.stamp(Event{Kind: EventZoneChanged, Object: obj, From: from, ToZone: ZoneStack, Cause: "cast"}),
-			a.stamp(Event{Kind: EventCast, Card: card, From: from, Targets: a.Targets, Controller: a.Seat, Object: obj}),
+			a.stamp(Event{Kind: EventCast, Card: card, From: from, Targets: a.Targets, Controller: a.Seat, Object: obj, Base: a.Base}),
 			a.stamp(Event{Kind: EventStackPushed, Mode: "cast", Object: obj, Controller: a.Seat, Targets: a.Targets, Card: card}))
 	default:
 		return nil, fmt.Errorf("%w: cannot cast from %s", ErrInvalid, from)
@@ -421,6 +526,10 @@ func applyActivate(s *State, a Action) ([]Event, error) {
 		return nil, err
 	}
 	if err := s.requireSeat(a); err != nil {
+		return nil, err
+	}
+	// Activating an ability needs priority (CR 117.2c).
+	if err := s.requirePriority(a); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(a.Ability) == "" {
@@ -509,6 +618,20 @@ func applyCreateToken(s *State, a Action) ([]Event, error) {
 	if count < 0 || count > maxTokenBatch {
 		return nil, fmt.Errorf("%w: token count %d is out of range", ErrInvalid, count)
 	}
+	// An attachment may enter attached to a host (an aura, CR 303.4f);
+	// the edge is made in the same batch so the unattached-aura
+	// state-based action never sees it blink.
+	host := int64(0)
+	if a.AttachTo != 0 {
+		h, err := s.object(a.AttachTo)
+		if err != nil {
+			return nil, err
+		}
+		if h.Zone != ZoneBattlefield || h.Phased {
+			return nil, fmt.Errorf("%w: object %d cannot host a new token", ErrInvalid, a.AttachTo)
+		}
+		host = h.ID
+	}
 	base := tokenBase(a.Token)
 	m := newMinter(s)
 	evs := []Event{}
@@ -519,6 +642,9 @@ func applyCreateToken(s *State, a Action) ([]Event, error) {
 		if hasString(base.Types, "Creature") {
 			evs = append(evs, a.stamp(Event{Kind: EventCreatureETB, Object: id, Controller: a.Seat}))
 		}
+		if host != 0 {
+			evs = append(evs, a.stamp(Event{Kind: EventAttached, Object: id, TargetObject: host}))
+		}
 	}
 	return evs, nil
 }
@@ -526,7 +652,8 @@ func applyCreateToken(s *State, a Action) ([]Event, error) {
 // tokenBase renders a token spec as the base characteristics its objects
 // enter with.
 func tokenBase(t *TokenSpec) BaseChars {
-	return BaseChars{Name: t.Name, Types: t.Types, Colors: t.Colors, Power: t.Power, Toughness: t.Toughness}
+	return BaseChars{Name: t.Name, Types: t.Types, Colors: t.Colors, Keywords: t.Keywords,
+		Power: t.Power, Toughness: t.Toughness, Loyalty: t.Loyalty}
 }
 
 func applyTap(s *State, a Action, tapped bool) ([]Event, error) {
@@ -618,6 +745,12 @@ func applyAttach(s *State, a Action) ([]Event, error) {
 	if o.Zone != ZoneBattlefield || host.Zone != ZoneBattlefield {
 		return nil, fmt.Errorf("%w: attachment edges exist only on the battlefield", ErrInvalid)
 	}
+	// Attachment legality as far as structure reaches: nothing phases in
+	// and out with its host, so an edge to a phased object is illegal
+	// (the aura half of CR 704.5p's "attached to nothing" is the sweep's).
+	if o.Phased || host.Phased {
+		return nil, fmt.Errorf("%w: phased objects cannot attach or host", ErrInvalid)
+	}
 	if o.AttachedTo == host.ID {
 		return nil, fmt.Errorf("%w: object %d is already attached to %d", ErrInvalid, o.ID, host.ID)
 	}
@@ -647,12 +780,12 @@ func applyDetach(s *State, a Action) ([]Event, error) {
 
 /* ---------- combat declarations ---------- */
 
-// Combat damage arithmetic — the assignment orders and the keyword
-// interactions that are pure arithmetic — is MAD-325's. What lands here is
-// the honest half the log needs now: the declarations themselves, attackers
-// tapped unless vigilance says otherwise (a computed keyword), and the
-// structural events the trigger registry fires on. Which step you must be
-// in to declare is MAD-324's to enforce.
+// Combat declarations: attackers from the active player (CR 508.1),
+// blockers from the seats being attacked (CR 509.1), both with damage
+// assignment orders — the blocker's order over the attackers it blocks is
+// its assignment list; the attacker's order over its blockers (CR 509.3)
+// rides DECLARE_BLOCKERS as AttackOrders. RESOLVE_COMBAT turns the
+// declarations into damage with the keyword arithmetic in combat.go.
 
 func applyDeclareAttackers(s *State, a Action) ([]Event, error) {
 	if err := s.requireActive(a); err != nil {
@@ -660,6 +793,14 @@ func applyDeclareAttackers(s *State, a Action) ([]Event, error) {
 	}
 	if err := s.requireSeat(a); err != nil {
 		return nil, err
+	}
+	// CR 508.1: the active player declares attackers during the declare
+	// attackers step of their own turn.
+	if s.Phase != "combat" || s.Step != "declare_attackers" {
+		return nil, fmt.Errorf("%w: attackers are declared in the declare_attackers step (now %s/%s)", ErrInvalid, s.Phase, s.Step)
+	}
+	if a.Seat != s.TurnSeat {
+		return nil, fmt.Errorf("%w: seat %d is not the active player", ErrInvalid, a.Seat)
 	}
 	if len(a.Attackers) == 0 {
 		return nil, fmt.Errorf("%w: DECLARE_ATTACKERS needs assignments", ErrInvalid)
@@ -678,6 +819,10 @@ func applyDeclareAttackers(s *State, a Action) ([]Event, error) {
 		if o.Zone != ZoneBattlefield {
 			return nil, fmt.Errorf("%w: object %d is in %s, not on the battlefield", ErrInvalid, at.Object, o.Zone)
 		}
+		// CR 508.1a: only creatures attack.
+		if !s.IsCreature(at.Object) {
+			return nil, fmt.Errorf("%w: object %d is not a creature", ErrInvalid, at.Object)
+		}
 		if at.TargetSeat == 0 && at.TargetObject == 0 {
 			return nil, fmt.Errorf("%w: attacker %d has no target", ErrInvalid, at.Object)
 		}
@@ -686,13 +831,22 @@ func applyDeclareAttackers(s *State, a Action) ([]Event, error) {
 				return nil, err
 			}
 		}
+		if at.TargetObject != 0 {
+			host, err := s.object(at.TargetObject)
+			if err != nil {
+				return nil, err
+			}
+			if host.Zone != ZoneBattlefield {
+				return nil, fmt.Errorf("%w: object %d is in %s, not on the battlefield", ErrInvalid, at.TargetObject, host.Zone)
+			}
+		}
 		// Attackers tap unless they have vigilance — and vigilance here is
 		// a computed keyword, base plus modifiers, which is the point of
 		// computing characteristics at all.
 		if o.Tapped {
 			return nil, fmt.Errorf("%w: object %d is tapped and cannot attack", ErrInvalid, at.Object)
 		}
-		if !hasString(s.Keywords(o.ID), "Vigilance") {
+		if !hasString(s.Keywords(at.Object), "Vigilance") {
 			taps[at.Object] = true
 		}
 	}
@@ -713,10 +867,23 @@ func applyDeclareBlockers(s *State, a Action) ([]Event, error) {
 	if err := s.requireSeat(a); err != nil {
 		return nil, err
 	}
+	// CR 509.1: blockers are declared during the declare blockers step —
+	// by whichever seats are being attacked, which the acting seat's own
+	// assignments are responsible for.
+	if s.Phase != "combat" || s.Step != "declare_blockers" {
+		return nil, fmt.Errorf("%w: blockers are declared in the declare_blockers step (now %s/%s)", ErrInvalid, s.Phase, s.Step)
+	}
 	if len(a.Blockers) == 0 {
 		return nil, fmt.Errorf("%w: DECLARE_BLOCKERS needs assignments", ErrInvalid)
 	}
+	// The blocking sets, for order validation once the assignments stand.
+	blocking := map[int64][]int64{}
+	seen := map[int64]bool{}
 	for _, bl := range a.Blockers {
+		if seen[bl.Blocker] {
+			return nil, fmt.Errorf("%w: object %d blocks twice", ErrInvalid, bl.Blocker)
+		}
+		seen[bl.Blocker] = true
 		o, err := s.object(bl.Blocker)
 		if err != nil {
 			return nil, err
@@ -724,13 +891,69 @@ func applyDeclareBlockers(s *State, a Action) ([]Event, error) {
 		if o.Zone != ZoneBattlefield {
 			return nil, fmt.Errorf("%w: blocker %d is in %s, not on the battlefield", ErrInvalid, bl.Blocker, o.Zone)
 		}
-		for _, at := range bl.Attackers {
-			if _, err := s.object(at); err != nil {
+		// CR 509.1a: only creatures block.
+		if !s.IsCreature(bl.Blocker) {
+			return nil, fmt.Errorf("%w: blocker %d is not a creature", ErrInvalid, bl.Blocker)
+		}
+		controller := s.Characteristics(bl.Blocker).Controller
+		for i, at := range bl.Attackers {
+			if containsID(bl.Attackers[:i], at) {
+				return nil, fmt.Errorf("%w: blocker %d blocks attacker %d twice", ErrInvalid, bl.Blocker, at)
+			}
+			attacker, err := s.attackerAssignment(at)
+			if err != nil {
 				return nil, err
+			}
+			// CR 509.1: a creature blocks for its controller — an
+			// attacker attacking someone else is not theirs to block.
+			defender := s.attackerDefender(*attacker)
+			if defender != controller {
+				return nil, fmt.Errorf("%w: seat %d's blocker cannot block an attacker attacking seat %d", ErrInvalid, controller, defender)
+			}
+			blocking[at] = append(blocking[at], bl.Blocker)
+		}
+	}
+	for _, order := range a.AttackOrders {
+		if _, err := s.attackerAssignment(order.Attacker); err != nil {
+			return nil, err
+		}
+		declared := blocking[order.Attacker]
+		if len(declared) == 0 {
+			return nil, fmt.Errorf("%w: attack order for unblocked attacker %d", ErrInvalid, order.Attacker)
+		}
+		if len(order.Blockers) != len(declared) {
+			return nil, fmt.Errorf("%w: attack order for %d lists %d of %d blockers", ErrInvalid,
+				order.Attacker, len(order.Blockers), len(declared))
+		}
+		for i, b := range order.Blockers {
+			if containsID(order.Blockers[:i], b) {
+				return nil, fmt.Errorf("%w: attack order for %d lists blocker %d twice", ErrInvalid, order.Attacker, b)
+			}
+			if !containsID(declared, b) {
+				return nil, fmt.Errorf("%w: attack order for %d lists blocker %d that is not blocking it", ErrInvalid, order.Attacker, b)
 			}
 		}
 	}
-	return []Event{a.stamp(Event{Kind: EventBlockersDeclared, Blockers: a.Blockers})}, nil
+	return []Event{a.stamp(Event{Kind: EventBlockersDeclared, Blockers: a.Blockers, AttackOrders: a.AttackOrders})}, nil
+}
+
+// attackerAssignment finds the declared assignment for an attacking object.
+func (s *State) attackerAssignment(id int64) (*AttackAssignment, error) {
+	for i := range s.Attackers {
+		if s.Attackers[i].Object == id {
+			return &s.Attackers[i], nil
+		}
+	}
+	return nil, fmt.Errorf("%w: object %d is not attacking", ErrInvalid, id)
+}
+
+// attackerDefender reports the seat an attacker is attacking: its target
+// seat directly, or the controller of the planeswalker it is after.
+func (s *State) attackerDefender(at AttackAssignment) int {
+	if at.TargetSeat != 0 {
+		return at.TargetSeat
+	}
+	return s.Characteristics(at.TargetObject).Controller
 }
 
 /* ---------- numbers ---------- */
@@ -785,8 +1008,9 @@ func applySetCounters(s *State, a Action) ([]Event, error) {
 
 // normalizeCounter makes counter names data worth comparing: trimmed and
 // folded. The engine understands a handful structurally — "+1/+1" and
-// "-1/-1" in the P/T computation, poison ten and loyalty as MAD-324 rules —
-// and every other name is carried verbatim until a rule needs it.
+// "-1/-1" in the P/T computation and the annihilation rule, poison at
+// ten and loyalty at zero as state-based actions — and every other name
+// is carried verbatim until a rule needs it.
 func normalizeCounter(name string) string {
 	return strings.TrimSpace(name)
 }
@@ -833,14 +1057,30 @@ func applyDealDamage(s *State, a Action) ([]Event, error) {
 		evs = append(evs, a.stamp(dealt),
 			a.stamp(Event{Kind: EventLifeChanged, TargetSeat: a.TargetSeat, Delta: -a.Amount,
 				SourceCard: a.SourceCard, SourceObj: a.SourceObj}))
-		return evs, nil
+		return append(evs, s.lifelinkGain(a.SourceObj, a.Amount)...), nil
 	}
 	if _, err := s.object(a.TargetObject); err != nil {
 		return nil, err
 	}
 	evs = append(evs, a.stamp(dealt),
 		a.stamp(Event{Kind: EventDamageMarked, Object: a.TargetObject, Amount: a.Amount, SourceObj: a.SourceObj}))
-	return evs, nil
+	return append(evs, s.lifelinkGain(a.SourceObj, a.Amount)...), nil
+}
+
+// lifelinkGain returns the LIFE_CHANGED row a source with lifelink owes
+// its controller for the damage it dealt (CR 702.15e — the gain rides the
+// damage, combat or not). A source the engine cannot read (damage spoken
+// with a card name only) owes nothing the engine can assert.
+func (s *State) lifelinkGain(source int64, amount int) []Event {
+	if source == 0 || amount <= 0 {
+		return nil
+	}
+	o, ok := s.Objects[source]
+	if !ok || !hasString(s.Keywords(source), "Lifelink") {
+		return nil
+	}
+	return []Event{Action{Source: "system"}.stamp(Event{Kind: EventLifeChanged,
+		TargetSeat: o.Controller, Delta: amount, SourceObj: source})}
 }
 
 func applySetFlag(s *State, a Action) ([]Event, error) {
@@ -910,9 +1150,10 @@ func applyDraw(s *State, a Action) ([]Event, error) {
 	}
 	p := s.Seats[a.Seat]
 	if p.Library.Known && p.Library.N < count {
-		// Drawing from an empty library is a loss — a state-based action,
-		// MAD-324's to assert. Here it is simply not a state change the
-		// tracker can record honestly.
+		// Drawing from an empty library is a loss by state-based action
+		// (CR 704.5c), but it depends on library knowledge being exact:
+		// here it is simply not a state change the tracker can record
+		// honestly.
 		return nil, fmt.Errorf("%w: seat %d has %d cards in library, %d drawn", ErrInvalid, a.Seat, p.Library.N, count)
 	}
 	identified := len(a.Cards) == count

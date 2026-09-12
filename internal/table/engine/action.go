@@ -19,11 +19,13 @@ type ActionKind string
 const (
 	ActionStartGame        ActionKind = "START_GAME"
 	ActionEndGame          ActionKind = "END_GAME"
+	ActionConcede          ActionKind = "CONCEDE"
 	ActionAdvance          ActionKind = "ADVANCE"
 	ActionPassPriority     ActionKind = "PASS_PRIORITY"
 	ActionPlayLand         ActionKind = "PLAY_LAND"
 	ActionCast             ActionKind = "CAST"
 	ActionActivate         ActionKind = "ACTIVATE"
+	ActionDeclareTrigger   ActionKind = "DECLARE_TRIGGER"
 	ActionMoveZone         ActionKind = "MOVE_ZONE"
 	ActionCreateToken      ActionKind = "CREATE_TOKEN"
 	ActionTap              ActionKind = "TAP"
@@ -80,6 +82,15 @@ type BlockAssignment struct {
 	Attackers []int64 `json:"attackers,omitempty"`
 }
 
+// AttackOrder is one multi-blocked attacker's damage assignment order over
+// its blockers (CR 509.3) — the attacking player's choice, declared with
+// the blockers. An attacker absent from the orders assigns to its blockers
+// in id order.
+type AttackOrder struct {
+	Attacker int64   `json:"attacker"`
+	Blockers []int64 `json:"blockers,omitempty"`
+}
+
 // Action is a typed, validated proposal. One struct, one JSON shape — the
 // event row's cause column stores this verbatim so every log entry is
 // self-contained and amend prefills from the row itself. Fields are read
@@ -131,8 +142,9 @@ type Action struct {
 	AttachTo int64 `json:"attach_to,omitempty"`
 
 	// DECLARE_ATTACKERS / DECLARE_BLOCKERS.
-	Attackers []AttackAssignment `json:"attackers,omitempty"`
-	Blockers  []BlockAssignment  `json:"blockers,omitempty"`
+	Attackers    []AttackAssignment `json:"attackers,omitempty"`
+	Blockers     []BlockAssignment  `json:"blockers,omitempty"`
+	AttackOrders []AttackOrder      `json:"attack_orders,omitempty"`
 
 	// ADJUST_COUNTERS / SET_COUNTERS: the counter target — OnObject when
 	// set, TargetSeat otherwise. CounterName is data, never schema.
@@ -164,7 +176,7 @@ type Action struct {
 	// DRAW / MILL identities when spoken; REVEAL / LOOK card names.
 	Cards []string `json:"cards,omitempty"`
 
-	// DECLARE_EFFECT: the declared shape or prose.
+	// DECLARE_EFFECT / DECLARE_TRIGGER: the declared shape or prose.
 	Effect string `json:"effect,omitempty"`
 
 	// ADD_MODIFIER / REMOVE_MODIFIER.
