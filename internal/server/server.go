@@ -304,6 +304,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/games/{id}/events", s.handleGameEvents)
 	mux.HandleFunc("GET /api/games/{id}/stream", s.handleGameStream)
 	mux.HandleFunc("POST /api/games/{id}/rewind", s.handleRewindGame)
+	mux.HandleFunc("POST /api/games/{id}/amend", s.handleAmendGame)
 	mux.HandleFunc("GET /api/encounters", s.handleListEncounters)
 	mux.HandleFunc("POST /api/encounters", s.handleCreateEncounter)
 	mux.HandleFunc("GET /api/encounters/{id}", s.handleGetEncounter)

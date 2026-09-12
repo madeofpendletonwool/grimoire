@@ -446,10 +446,6 @@ func (s *Store) append(ctx context.Context, gameID string, action Action, evs []
 	if len(evs) == 0 {
 		return nil, nil
 	}
-	cause, err := json.Marshal(action)
-	if err != nil {
-		return nil, fmt.Errorf("encode cause: %w", err)
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("append tx: %w", err)
@@ -461,37 +457,12 @@ func (s *Store) append(ctx context.Context, gameID string, action Action, evs []
 		`SELECT COALESCE(MAX(ord), 0) + 1 FROM mtg_events WHERE game_id = ?`, gameID).Scan(&next); err != nil {
 		return nil, fmt.Errorf("next ord: %w", err)
 	}
-	now := s.now().UnixMilli()
-	out := make([]Event, 0, len(evs))
-	hasStart, hasEnd := false, false
-	for i := range evs {
-		e := evs[i]
-		e.ID = uuid.NewString()
-		e.Ord = next + int64(i)
-		e.CreatedAt = now
-		if e.Cause == "" {
-			e.Cause = string(cause)
-		}
-		switch e.Kind {
-		case EventGameStarted:
-			hasStart = true
-		case EventGameEnded:
-			hasEnd = true
-		}
-		payload, err := json.Marshal(e)
-		if err != nil {
-			return nil, fmt.Errorf("encode event: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO mtg_events (id, game_id, ord, kind, actor_seat, source, cause, payload, visibility, visible_seat, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			e.ID, gameID, e.Ord, string(e.Kind), nullInt(e.ActorSeat), sourceOrDefault(e.Source),
-			e.Cause, string(payload), string(e.Visibility), nullInt(e.VisibleSeat), e.CreatedAt); err != nil {
-			return nil, fmt.Errorf("insert event %d: %w", e.Ord, err)
-		}
-		out = append(out, e)
+	out, hasStart, hasEnd, err := s.writeEvents(ctx, tx, gameID, action, evs, next)
+	if err != nil {
+		return nil, err
 	}
 
+	now := s.now().UnixMilli()
 	sets, args := "updated_at = ?", []any{now}
 	if hasEnd {
 		sets += ", status = ?, started_at = COALESCE(started_at, ?), ended_at = ?"
@@ -508,6 +479,52 @@ func (s *Store) append(ctx context.Context, gameID string, action Action, evs []
 		return nil, fmt.Errorf("append commit: %w", err)
 	}
 	return out, nil
+}
+
+// writeEvents stamps ids, ords, timestamps, cause and batch onto the
+// reducer's rows and inserts them inside the caller's transaction — the
+// shared half of Submit and AmendAt. The batch stamp, one uuid per
+// Submit, is what makes "the events one action produced" exactly
+// addressable afterwards: cause strings repeat for identical
+// consecutive actions, stamps never do.
+func (s *Store) writeEvents(ctx context.Context, tx *sql.Tx, gameID string, action Action, evs []Event, firstOrd int64) ([]Event, bool, bool, error) {
+	cause, err := json.Marshal(action)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("encode cause: %w", err)
+	}
+	batch := uuid.NewString()
+	now := s.now().UnixMilli()
+	out := make([]Event, 0, len(evs))
+	hasStart, hasEnd := false, false
+	for i := range evs {
+		e := evs[i]
+		e.ID = uuid.NewString()
+		e.Ord = firstOrd + int64(i)
+		e.CreatedAt = now
+		e.Batch = batch
+		if e.Cause == "" {
+			e.Cause = string(cause)
+		}
+		switch e.Kind {
+		case EventGameStarted:
+			hasStart = true
+		case EventGameEnded:
+			hasEnd = true
+		}
+		payload, err := json.Marshal(e)
+		if err != nil {
+			return nil, false, false, fmt.Errorf("encode event: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO mtg_events (id, game_id, ord, kind, actor_seat, source, cause, payload, visibility, visible_seat, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.ID, gameID, e.Ord, string(e.Kind), nullInt(e.ActorSeat), sourceOrDefault(e.Source),
+			e.Cause, string(payload), string(e.Visibility), nullInt(e.VisibleSeat), e.CreatedAt); err != nil {
+			return nil, false, false, fmt.Errorf("insert event %d: %w", e.Ord, err)
+		}
+		out = append(out, e)
+	}
+	return out, hasStart, hasEnd, nil
 }
 
 // Events reads the log past an ordinal, oldest first. After 0 with
@@ -527,6 +544,11 @@ func (s *Store) Events(ctx context.Context, gameID string, after int64, limit in
 		return nil, fmt.Errorf("read events: %w", err)
 	}
 	defer rows.Close()
+	return scanEvents(rows)
+}
+
+// scanEvents decodes event rows — the read half every log query shares.
+func scanEvents(rows *sql.Rows) ([]Event, error) {
 	var out []Event
 	for rows.Next() {
 		var (
@@ -617,18 +639,12 @@ func (s *Store) RewindTo(ctx context.Context, gameID string, ord int64) (*State,
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	status := StatusSetup
-	if hasEnd {
-		status = StatusFinished
-	} else if hasStart {
-		status = StatusActive
-	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE mtg_games SET status = ?, updated_at = ?,
 			started_at = CASE WHEN ? THEN started_at ELSE NULL END,
 			ended_at   = CASE WHEN ? THEN ended_at ELSE NULL END
 		WHERE id = ?`,
-		string(status), s.now().UnixMilli(), hasStart, hasEnd, gameID); err != nil {
+		lifecycle(hasStart, hasEnd).String(), s.now().UnixMilli(), hasStart, hasEnd, gameID); err != nil {
 		return nil, fmt.Errorf("restate game: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

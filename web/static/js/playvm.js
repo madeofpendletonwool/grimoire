@@ -334,33 +334,59 @@ export function modifierLabel(mod) {
 /* ---------- the current action ---------- */
 
 /**
- * The last applied action and its event rows: the contiguous tail of the
- * log sharing one cause. One Submit is one cause — the action's own rows,
- * the state-based sweep it triggered and the triggers it flushed all ride
- * the same stamp — so this tail is exactly "what the engine last applied",
- * and the ordinal before it is where undo rewinds to.
+ * Two rows share a batch when they sit on contiguous ords and carry the
+ * same writer stamp — the uuid the store mints per Submit. Rows from
+ * before the stamp fall back to cause equality, the best a repeating
+ * cause allows.
  */
-export function lastActionBatch(events) {
-	const log = (events || []).filter((e) => e.ord).slice().sort((a, b) => a.ord - b.ord);
-	if (!log.length) return null;
-	const end = log[log.length - 1];
-	const cause = end.cause || "";
-	let start = log.length - 1;
-	while (start > 0 && (log[start - 1].cause || "") === cause && log[start - 1].ord === log[start].ord - 1) {
-		start--;
-	}
+function sameBatch(a, b) {
+	if (a.ord + 1 !== b.ord) return false;
+	if (!!a.batch !== !!b.batch) return false;
+	if (a.batch) return a.batch === b.batch;
+	return !!a.cause && a.cause === b.cause;
+}
+
+const sortedLog = (events) => (events || []).filter((e) => e.ord).slice().sort((a, b) => a.ord - b.ord);
+
+/**
+ * The batch of events one Submit produced around an ordinal: the unit
+ * amend rewrites and undo removes. `action` is the recorded cause
+ * parsed — the prefill for the correction, straight from the log entry.
+ */
+export function actionBatchAt(events, ord) {
+	const log = sortedLog(events);
+	const idx = log.findIndex((e) => e.ord === ord);
+	if (idx < 0) return null;
+	let lo = idx, hi = idx;
+	while (lo > 0 && sameBatch(log[lo - 1], log[lo])) lo--;
+	while (hi + 1 < log.length && sameBatch(log[hi], log[hi + 1])) hi++;
+	const cause = log[idx].cause || "";
 	let action = null;
 	if (cause) {
 		try { action = JSON.parse(cause); } catch (_) { /* a cause we cannot parse is not ours to amend */ }
 	}
 	return {
-		from: log[start].ord,
-		to: end.ord,
+		from: log[lo].ord,
+		to: log[hi].ord,
 		cause,
 		action,
-		events: log.slice(start),
-		undoTo: log[start].ord - 1,
+		events: log.slice(lo, hi + 1),
+		undoTo: log[lo].ord - 1,
 	};
+}
+
+/**
+ * The last applied action and its event rows: the contiguous tail of the
+ * log sharing one writer stamp. One Submit is one batch — the action's
+ * own rows, the state-based sweep it triggered and the triggers it
+ * flushed all ride the same stamp — so this tail is exactly "what the
+ * engine last applied", and the ordinal before it is where undo rewinds
+ * to.
+ */
+export function lastActionBatch(events) {
+	const log = sortedLog(events);
+	if (!log.length) return null;
+	return actionBatchAt(log, log[log.length - 1].ord);
 }
 
 /** The current-action pane's headline: the sentence for a submitted action. */

@@ -17,7 +17,7 @@ import { api } from "./api.js";
 import {
 	seatName, turnLine, formatCount, objectName, ptLine,
 	counterChips, commanderTax, zoneTally, defaultActingSeat, canPass,
-	describeEvent, lastActionBatch, actionSummary, baseCharsFromCard, isType,
+	describeEvent, lastActionBatch, actionBatchAt, actionSummary, baseCharsFromCard, isType,
 } from "./playvm.js";
 
 let games = [];
@@ -29,7 +29,7 @@ let cursor = 0;           // the last ordinal this client has seen
 let seen = new Set();     // event ids — dedupe between POST answers and the stream
 let actingOverride = 0;   // the manually picked acting seat; 0 follows priority
 let acknowledged = 0;     // the ord the current-action pane was ✓ed at
-let editDraft = null;     // {rewindTo, action} — ✎ not it, awaiting the corrected submit
+let editDraft = null;     // {at, from} — ✎ not it, awaiting the corrected submit
 
 // The context strip's subject — the one thing the board pane is "about"
 // between taps. It survives re-paints, which happen on every ordinal.
@@ -580,6 +580,14 @@ function renderLog() {
 		if (ev.source && ev.source !== "tap" && ev.source !== "system") {
 			row.append(el("i", { class: "play-row-src", text: ev.source }));
 		}
+		// Every entry carries both halves of the correction contract:
+		// ✎ rewrites it (amend, two taps — the second is the composer's
+		// submit), ⟲ rewinds to it. Neither covers the log.
+		row.append(el("button", {
+			class: "play-row-fix",
+			attrs: { type: "button", "data-amend": String(ev.ord), title: "Not it — correct this entry" },
+			text: "✎",
+		}));
 		row.append(el("button", {
 			class: "play-row-rewind",
 			attrs: { type: "button", "data-rewind": String(ev.ord), title: `Rewind to #${ev.ord} — everything after it is undone` },
@@ -629,15 +637,23 @@ function cancelEdit() {
 }
 
 /** ✎ not it: prefill the composer from the applied action's own cause.
-    Submitting rewinds to before it and applies the correction — amend,
-    two taps, the log telling both halves. */
+     Submitting rewrites it — amend, two taps, the log telling both
+     halves. */
 function startEdit() {
 	const batch = lastActionBatch(events);
+	if (batch) startEditAt(batch.to);
+}
+
+/** ✎ not it, on any log entry: the same amend, reachable from the entry
+     itself. Everything after the entry is undone with it — amend is a
+     rewind with a correction riding along. */
+function startEditAt(ord) {
+	const batch = actionBatchAt(events, ord);
 	if (!batch?.action) return;
-	editDraft = { rewindTo: batch.undoTo, action: { ...batch.action } };
+	editDraft = { at: batch.from, from: batch.from };
 	const banner = $("play-edit-banner");
 	clear(banner);
-	banner.append(document.createTextNode(`editing #${batch.from} — submitting rewrites it `));
+	banner.append(document.createTextNode(`editing #${batch.from} — submitting rewrites it, everything after is undone `));
 	banner.append(el("button", {
 		class: "enc-btn", attrs: { type: "button" }, text: "cancel",
 		on: { click: cancelEdit },
@@ -647,8 +663,8 @@ function startEdit() {
 }
 
 /** Load an action's cause into the composer's fields — amend prefills
-    from the log entry itself, so the common fix is "type the right card
-    and submit". */
+     from the log entry itself, so the common fix is "type the right card
+     and submit". */
 function prefillComposer(action) {
 	if (action.card) $("play-card").value = action.card;
 	if (action.from_zone) $("play-from").value = action.from_zone;
@@ -659,31 +675,39 @@ function prefillComposer(action) {
 		$("play-token-count").value = action.count || 1;
 		$("play-more").open = true;
 	}
+	if (action.kind === "DEAL_DAMAGE" && action.amount) {
+		$("play-damage-amount").value = action.amount;
+		if (action.source_card) $("play-damage-source").value = action.source_card;
+		$("play-more").open = true;
+	}
+	if ((action.kind === "ADJUST_COUNTERS" || action.kind === "SET_COUNTERS") && action.counter_name) {
+		$("play-counter-name").value = action.counter_name;
+		if (action.delta) $("play-counter-delta").value = action.delta;
+		$("play-more").open = true;
+	}
 	$("play-card").focus();
 }
 
-/** Submit the corrected action: rewind, then apply. */
+/** Submit the corrected action: one call that truncates at the edited
+     entry's batch and applies the correction in a single server
+     transaction — no client ever sees the rewound intermediate, and a
+     rejected correction leaves the log untouched (the draft stays, so
+     the fix can be adjusted and resubmitted). */
 async function submitEdited(action) {
 	const draft = editDraft;
 	if (!draft) {
 		submit(action);
 		return;
 	}
-	editDraft = null;
 	try {
-		await api.gameRewind(gameID, draft.rewindTo);
+		await api.gameAmend(gameID, draft.at, { ...action, source: "tap" });
 	} catch (err) {
 		currentMeta(err.message, true);
 		return;
 	}
 	cancelEdit();
-	try {
-		absorb(await api.gameAction(gameID, { ...action, source: "tap" }));
-	} catch (err) {
-		currentMeta(err.message, true);
-	}
-	// Re-read either way: our own stream will also announce the rewind,
-	// and the composer's next paint should stand on the post-edit truth.
+	// Our own stream announces the rewind too; re-read either way so the
+	// composer's next paint stands on the post-edit truth.
 	await reloadGame().catch(() => {});
 	render();
 }
@@ -972,6 +996,11 @@ function wire() {
 	$("play-edit").addEventListener("click", startEdit);
 
 	$("play-log").addEventListener("click", (e) => {
+		const amend = e.target.closest("[data-amend]");
+		if (amend) {
+			startEditAt(Number(amend.dataset.amend));
+			return;
+		}
 		const btn = e.target.closest("[data-rewind]");
 		if (btn) rewindTo(Number(btn.dataset.rewind));
 	});

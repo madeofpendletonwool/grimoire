@@ -269,9 +269,13 @@ Invariants — these are the acceptance properties MAD-323 tests:
    it is not an event. A death by state-based action depends on the whole
    modifier stack at that instant, so it is asserted (`DIED`, cause `sba_*`)
    and viewers never re-run CR 704.
-5. **`cause` rides on the events.** Every event row carries the Action that
-   produced it (`source`, confidence, disposition), so a log entry is
-   self-contained and amend (3c) prefills from the row itself.
+5. **`cause` rides on the events, and one Submit's rows share a batch
+   stamp.** Every event row carries the Action that produced it
+   (`source`, confidence, disposition), so a log entry is self-contained
+   and amend (3c) prefills from the row itself. The writer also mints a
+   per-Submit uuid onto that Submit's rows, because cause strings repeat
+   for identical consecutive actions and undo and amend must address
+   exactly one action's events, never a merge of two.
 
 ## Hidden information and visibility
 

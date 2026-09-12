@@ -10,8 +10,8 @@ import assert from "node:assert/strict";
 import {
 	stepLabel, seatName, turnLine, formatCount, objectName, ptLine, computedPT,
 	computedTypes, isType, counterChips, commanderTax, zoneTally,
-	defaultActingSeat, canPass, describeEvent, lastActionBatch, actionSummary,
-	baseCharsFromCard,
+	defaultActingSeat, canPass, describeEvent, lastActionBatch, actionBatchAt,
+	actionSummary, baseCharsFromCard,
 } from "../web/static/js/playvm.js";
 
 /* ---------- fixtures ---------- */
@@ -227,6 +227,54 @@ test("lastActionBatch: the contiguous tail sharing one cause is the undo target"
 	const opaque = lastActionBatch([{ ord: 5, id: "z", cause: "not json" }]);
 	assert.equal(opaque.action, null);
 	assert.equal(opaque.undoTo, 4);
+});
+
+test("the writer's batch stamp is the authority — identical repeats stay separate", () => {
+	const cause = JSON.stringify({ kind: "ADVANCE", seat: 1, source: "tap" });
+	const log = [
+		{ ord: 1, id: "a", batch: "b1", cause },
+		{ ord: 2, id: "b", batch: "b1", cause },
+		{ ord: 3, id: "c", batch: "b2", cause }, // the same action submitted again
+		{ ord: 4, id: "d", batch: "b3", cause: JSON.stringify({ kind: "DRAW", seat: 1 }) },
+	];
+	// Undo removes exactly the last Submit — one advance, not all three.
+	assert.equal(lastActionBatch(log).undoTo, 3);
+	// Amend at any of a batch's rows addresses the whole batch.
+	const mid = actionBatchAt(log, 1);
+	assert.equal(mid.from, 1);
+	assert.equal(mid.to, 2);
+	assert.equal(mid.action.kind, "ADVANCE");
+	// A stamp on one side and not the other is a boundary (legacy rows).
+	const mixed = [
+		{ ord: 1, id: "x", cause },
+		{ ord: 2, id: "y", batch: "b9", cause },
+	];
+	assert.equal(actionBatchAt(mixed, 1).to, 1);
+	assert.equal(actionBatchAt(mixed, 2).from, 2);
+});
+
+test("actionBatchAt finds the amend target from any log entry", () => {
+	const cast = JSON.stringify({ kind: "CAST", seat: 1, card: "Rhystic Study", source: "tap" });
+	const log = [
+		{ ord: 1, id: "a", batch: "b1", cause: JSON.stringify({ kind: "ADVANCE", seat: 1 }) },
+		{ ord: 2, id: "b", batch: "b2", cause: cast },
+		{ ord: 3, id: "c", batch: "b2", cause: cast },
+		{ ord: 4, id: "d", batch: "b3", cause: JSON.stringify({ kind: "DRAW", seat: 2 }) },
+	];
+	// Any row of the batch resolves to the batch: the ✎ on either log
+	// entry corrects the same action.
+	for (const ord of [2, 3]) {
+		const batch = actionBatchAt(log, ord);
+		assert.equal(batch.from, 2);
+		assert.equal(batch.to, 3);
+		assert.equal(batch.undoTo, 1);
+		assert.equal(batch.action.card, "Rhystic Study");
+		assert.equal(batch.events.length, 2);
+	}
+	assert.equal(actionBatchAt(log, 4).from, 4);
+	assert.equal(actionBatchAt(log, 99), null);
+	assert.equal(actionBatchAt([], 1), null);
+	assert.equal(actionBatchAt(null, 1), null);
 });
 
 test("actionSummary spells the action the pane announces", () => {
