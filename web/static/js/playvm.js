@@ -331,6 +331,79 @@ export function modifierLabel(mod) {
 	return `${mod.layer}`;
 }
 
+/* ---------- provenance traces (MAD-334) ---------- */
+
+/** Duration spellings for trace rows — the table-facing words. */
+export const DURATION_LABELS = {
+	until_end_of_turn: "until end of turn",
+	while_source_present: "while source present",
+	permanent: "",
+};
+
+const signed = (n) => `${n > 0 ? "+" : ""}${n}`;
+
+/**
+ * One P/T trace row's main text: "base 2/2", "+1/+1 from Glorious
+ * Anthem", "+1/+1 counter", "6/6". The rows the engine's PTTrace holds,
+ * spelled the way the model doc's worked example reads.
+ */
+export function ptRowText(l) {
+	if (!l) return "";
+	switch (l.kind) {
+		case "base": return `base ${l.power}/${l.toughness}`;
+		case "counter": return `${signed(l.power)}/${signed(l.toughness)} ${l.label}`;
+		case "total": return `${l.power}/${l.toughness}`;
+		default: {
+			const pt = l.layer === "pt_set"
+				? `base becomes ${l.power}/${l.toughness}`
+				: l.note === "P/T swapped" ? "P/T swapped" : `${signed(l.power)}/${signed(l.toughness)}`;
+			return `${pt} from ${l.label}`;
+		}
+	}
+}
+
+/**
+ * One P/T trace row's side note: the layer and duration the effect
+ * rides with, and — the honest case — that a row's source has left the
+ * battlefield and is not applied.
+ */
+export function ptRowMeta(l) {
+	if (!l) return "";
+	const parts = [];
+	if (l.kind === "modifier" && l.layer) parts.push(l.layer);
+	if (l.kind === "modifier" && l.duration && DURATION_LABELS[l.duration]) {
+		parts.push(DURATION_LABELS[l.duration]);
+	}
+	if (l.source_gone) parts.push("not applied — source has left the battlefield");
+	if (l.note && l.kind !== "modifier") parts.push(l.note); // "base P/T unknown", "P/T unknown"
+	return parts.join(" · ");
+}
+
+/** A characteristic-change row: "Glorious Anthem: gains Goblin". */
+export function changeRowText(c) {
+	if (!c) return "";
+	return `${c.label}: ${c.change}`;
+}
+
+/** The death report's headline: the who, the rule, the trigger. */
+export function deathHeadline(rep, describeTrigger) {
+	if (!rep) return "";
+	const where = rep.turn ? ` on turn ${rep.turn}` : "";
+	const by = describeTrigger ? ` — after ${describeTrigger}` : "";
+	return `${rep.name} died${where}: ${rep.cause_note}${by}`;
+}
+
+/** One damage line of a death report: "1 from King Cheetah (deathtouch)". */
+export function damageRowText(d) {
+	if (!d) return "";
+	return `${d.amount} from ${d.source}${d.deathtouch ? " (deathtouch — any amount is lethal)" : ""}`;
+}
+
+/** The turn slice's headline: "Turn 3 — Bob". */
+export function turnHeadline(n, seat) {
+	return `Turn ${n} — ${seat || ""}`;
+}
+
 /* ---------- the current action ---------- */
 
 /**

@@ -478,6 +478,20 @@ func (s *State) foldPlayerLeft(e Event) {
 	for id := range gone {
 		delete(s.Objects, id)
 	}
+	// Their permanents' continuous effects end with them (CR 800.4a):
+	// while_source_present modifiers they were the source of drop, or
+	// the board would keep counting a bonus whose source has left the
+	// game — and the trace would have a dangling row to spell.
+	for _, o := range s.Objects {
+		keep := o.Modifiers[:0:0]
+		for _, mod := range o.Modifiers {
+			if mod.Duration == WhileSourcePresent && gone[mod.SourceObj] {
+				continue
+			}
+			keep = append(keep, mod)
+		}
+		o.Modifiers = keep
+	}
 	for _, o := range s.Objects {
 		if gone[o.AttachedTo] {
 			o.AttachedTo = 0

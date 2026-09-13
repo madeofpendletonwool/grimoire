@@ -201,9 +201,18 @@ func (s *State) leaveEvents(a Action, seat int, cause, card string) []Event {
 			evs = append(evs, s.detachAll(a, o)...)
 			continue
 		}
-		// CR 800.4a: effects giving the leaving player control end.
+		// CR 800.4a: effects giving the leaving player control end, and
+		// so do the continuous effects their permanents were the source
+		// of — the objects leave the game, and a while_source_present
+		// effect without its source is a dangling row, not a bonus.
 		for _, mod := range o.Modifiers {
-			if mod.Layer == LayerControl && mod.Delta.Controller != nil && *mod.Delta.Controller == seat {
+			ends := mod.Layer == LayerControl && mod.Delta.Controller != nil && *mod.Delta.Controller == seat
+			if !ends && mod.Duration == WhileSourcePresent && mod.SourceObj != 0 {
+				if src, ok := s.Objects[mod.SourceObj]; ok && src.Owner == seat {
+					ends = true
+				}
+			}
+			if ends {
 				evs = append(evs, a.stamp(Event{Kind: EventModifierRemoved, Object: o.ID, ModifierID: mod.ID}))
 			}
 		}

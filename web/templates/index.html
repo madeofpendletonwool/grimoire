@@ -1676,7 +1676,23 @@
 					<button type="submit" class="enc-btn primary" id="play-judge-ask">Ask</button>
 					<button type="button" class="enc-btn" id="play-judge-stop" hidden>Stop</button>
 				</form>
-				<div class="play-judge-thread" id="play-judge-thread" aria-live="polite"></div>
+			<div class="play-judge-thread" id="play-judge-thread" aria-live="polite"></div>
+		</section>
+
+			<!-- The provenance panel (MAD-334): the deterministic half of
+			     the reasoning layer. Every computed value on the board
+			     opens the rows that produced it — the ⓘ on a permanent's
+			     P/T, the "why?" on a death, the turn number on a TURN
+			     row. Pure reads over the log, no model in the path, and
+			     like the judge it is a row above the panes rather than a
+			     modal, so the board and log keep moving under it. -->
+			<section class="play-trace f-stone" id="play-trace-panel" hidden aria-label="Trace">
+				<header class="play-trace-head">
+					<b class="play-trace-title">ⓘ trace</b>
+					<span class="play-trace-sub" id="play-trace-sub"></span>
+					<button type="button" class="play-question-x" id="play-trace-close" title="Close the trace">✕</button>
+				</header>
+				<div class="play-trace-body" id="play-trace-body"></div>
 			</section>
 
 				<!-- The two panes that must never leave the screen together. -->

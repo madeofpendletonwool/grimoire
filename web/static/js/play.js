@@ -22,6 +22,7 @@ import {
 	counterChips, commanderTax, zoneTally, defaultActingSeat, canPass,
 	describeEvent, lastActionBatch, actionBatchAt, actionSummary, baseCharsFromCard, isType,
 	confirmHighlight, voicePlan,
+	ptRowText, ptRowMeta, changeRowText, deathHeadline, damageRowText, turnHeadline,
 } from "./playvm.js";
 
 let games = [];
@@ -50,6 +51,7 @@ let pending = [];            // open questions — the unresolved tray (MAD-331)
 let voiceMode = null;        // "web" | "server" | null — the hold-to-talk path (MAD-332)
 let talk = null;             // the live hold: {kind, seat, text, dead, session}
 let judgeAbort = null;       // the in-flight judge answer's stop handle (MAD-333)
+let traceAt = 0;             // the ordinal a trace snapshot rendered at (MAD-334)
 let wired = false;
 let mounted = false;
 let streamCtl = null;
@@ -89,6 +91,7 @@ async function openGame(id) {
 	cancelEdit();
 	closeContext();
 	closeJudge();
+	closeTrace();
 	attackDraft = new Set();
 	blockDraft = new Map();
 	blockPick = 0;
@@ -188,6 +191,7 @@ function startStream() {
 			cursor = 0;
 			cancelEdit();
 			closeContext();
+			closeTrace(); // a trace snapshot may spell rows the rewind removed
 			reloadGame().then(render).catch(() => { /* the next wake retries */ });
 			loadPending();
 		});
@@ -784,7 +788,8 @@ function seatCard(seat) {
 		}));
 	}
 	for (const g of groups.values()) {
-		field.append(g.token ? tokenChip(g) : objectChip(g.objs[0]));
+		const chip = g.token ? tokenChip(g) : objectChip(g.objs[0]);
+		field.append(objCell(chip, g.objs[0]));
 	}
 	if (!field.children.length) {
 		field.append(el("span", { class: "play-field-empty", text: dead ? "" : "nothing on the battlefield" }));
@@ -800,8 +805,21 @@ function seatObjects(seat) {
 		.sort((a, b) => a.id - b.id);
 }
 
-function tokenChip(g) {
-	const t = g.token;
+/** A chip and its ⓘ — every computed characteristic on the board is
+    one tap from the rows that produced it (MAD-334). */
+function objCell(chip, o) {
+	const cell = el("span", { class: "play-obj-cell" });
+	cell.append(chip);
+	const pt = ptLine(o);
+	cell.append(el("button", {
+		class: "play-obj-info",
+		attrs: { type: "button", "data-trace-obj": String(o.id), title: `Why ${pt || objectName(o)}? — the rows that produced it` },
+		text: "ⓘ",
+	}));
+	return cell;
+}
+
+function tokenChip(g) {	const t = g.token;
 	const pt = t?.power != null && t?.toughness != null ? ` ${t.power}/${t.toughness}` : "";
 	return el("button", {
 		class: "play-chip play-obj is-token",
@@ -885,6 +903,23 @@ function renderLog() {
 		);
 		if (ev.source && ev.source !== "tap" && ev.source !== "system") {
 			row.append(el("i", { class: "play-row-src", text: ev.source }));
+		}
+		// Provenance affordances (MAD-334): a death walks back to the
+		// check that caused it and the rows in force; a turn row opens
+		// the turn's slice. Both ride the row they are about.
+		if (ev.kind === "DIED") {
+			row.append(el("button", {
+				class: "play-row-fix",
+				attrs: { type: "button", "data-death": String(ev.ord), title: "Why did it die? — the rule, the rows in force, the last table act" },
+				text: "ⓘ",
+			}));
+		}
+		if (ev.kind === "TURN_STARTED" && ev.turn) {
+			row.append(el("button", {
+				class: "play-row-fix",
+				attrs: { type: "button", "data-turn": String(ev.turn), title: `What happened on turn ${ev.turn}` },
+				text: "▸",
+			}));
 		}
 		// Every entry carries both halves of the correction contract:
 		// ✎ rewrites it (amend, two taps — the second is the composer's
@@ -1397,6 +1432,131 @@ function judgeRow(kind, text) {
 	return row;
 }
 
+/* ---------- provenance traces (MAD-334) ---------- */
+
+// The deterministic half of the reasoning layer: every computed value
+// on the board opens the rows that produced it. The ⓘ on a permanent's
+// P/T, the "why?" on a death, the turn number on a TURN row — all one
+// panel, all pure reads over the log, no model anywhere in the path.
+// A trace is a snapshot at an ordinal; a rewind closes it, because the
+// rows it spelled may no longer exist.
+
+function closeTrace() {
+	const panel = $("play-trace-panel");
+	if (!panel) return;
+	panel.hidden = true;
+	traceAt = 0;
+}
+
+function showTrace(sub, bodyEl) {
+	const panel = $("play-trace-panel");
+	$("play-trace-sub").textContent = sub || "";
+	const host = clear($("play-trace-body"));
+	host.append(bodyEl);
+	panel.hidden = false;
+}
+
+/** The ⓘ on a computed characteristic: the object's full stack — base,
+    modifiers in CR 613 order, counters, the total — plus every other
+    layer's changes, each row naming its source and duration. */
+async function openObjectTrace(id, at = 0) {
+	if (!gameID) return;
+	try {
+		const data = await api.gameTrace(gameID, id, at);
+		const trace = data.trace || null;
+		if (!trace) return;
+		traceAt = data.at || 0;
+		showTrace(`${trace.name} · ${trace.zone || "battlefield"}`, traceBody(trace.pt, trace.changes));
+	} catch (err) {
+		showTrace("", el("p", { class: "drawer-note", text: err.message }));
+	}
+}
+
+/** "Why did it die?" from a DIED log row: the state-based action with
+    its rule, the stack in force the instant before, the damage with
+    its sources, and the table act that set the sweep off. */
+async function openDeathTrace(ord) {
+	if (!gameID) return;
+	try {
+		const data = await api.gameDeath(gameID, ord);
+		const rep = data.death || null;
+		if (!rep) return;
+		traceAt = rep.ord || 0;
+		const body = el("div", { class: "play-trace-death" });
+		const trigger = rep.triggered_by ? describeEvent(rep.triggered_by, state || {}) : "";
+		body.append(el("p", { class: "play-trace-cause", text: deathHeadline(rep, trigger) }));
+		if (rep.damage?.length) {
+			const dmg = el("p", { class: "play-trace-damage" });
+			dmg.append(el("b", { text: "marked damage " }));
+			dmg.append(document.createTextNode(
+				`${rep.damage_total} vs toughness ${rep.toughness} — ` +
+				rep.damage.map(damageRowText).join(", ")));
+			body.append(dmg);
+		}
+		body.append(traceStack(rep.pt));
+		showTrace(`${rep.name} · #${rep.ord}`, body);
+	} catch (err) {
+		showTrace("", el("p", { class: "drawer-note", text: err.message }));
+	}
+}
+
+/** "What happened on turn N?" from a TURN row: the turn's slice of the
+    log, spelled by the same voice the log pane uses. */
+async function openTurnSlice(n) {
+	if (!gameID) return;
+	try {
+		const data = await api.gameTurn(gameID, n);
+		const evs = data.events || [];
+		traceAt = evs.length ? evs[evs.length - 1].ord : 0;
+		const list = el("ol", { class: "play-trace-turn" });
+		for (const ev of evs) {
+			list.append(el("li", { class: "play-trace-turn-row" },
+				el("b", { class: "play-row-ord", text: String(ev.ord) }),
+				el("span", { text: describeEvent(ev, state || {}) })));
+		}
+		showTrace(turnHeadline(data.turn, seatName(state || {}, data.turn_seat)), list);
+	} catch (err) {
+		showTrace("", el("p", { class: "drawer-note", text: err.message }));
+	}
+}
+
+function traceBody(pt, changes) {
+	const body = el("div", { class: "play-trace-obj" });
+	body.append(traceStack(pt));
+	if (changes?.length) {
+		const list = el("ul", { class: "play-trace-changes" });
+		for (const c of changes) {
+			list.append(el("li", { class: c.source_gone ? "is-gone" : "" },
+				el("span", { text: changeRowText(c) }),
+				c.source_gone ? el("i", { class: "play-trace-meta", text: "not applied — source has left the battlefield" }) : null,
+				!c.source_gone && c.duration && c.duration !== "permanent"
+					? el("i", { class: "play-trace-meta", text: c.duration.replace(/_/g, " ") }) : null));
+		}
+		body.append(el("h4", { text: "other characteristics" }));
+		body.append(list);
+	}
+	return body;
+}
+
+/** The P/T stack: one row per line, the total ruled off underneath —
+    the model doc's worked example, rendered. */
+function traceStack(pt) {
+	const stack = el("ul", { class: "play-trace-stack" });
+	for (const l of pt || []) {
+		if (l.kind === "total") continue;
+		stack.append(el("li", { class: `play-trace-row${l.source_gone ? " is-gone" : ""}` },
+			el("span", { class: "play-trace-main", text: ptRowText(l) }),
+			el("i", { class: "play-trace-meta", text: ptRowMeta(l) })));
+	}
+	const total = (pt || []).find((l) => l.kind === "total");
+	if (total) {
+		stack.append(el("li", { class: "play-trace-row is-total" },
+			el("span", { class: "play-trace-main", text: ptRowText(total) }),
+			el("i", { class: "play-trace-meta", text: total.note || "" })));
+	}
+	return stack;
+}
+
 /* ---------- wiring ---------- */
 
 function wire() {
@@ -1432,6 +1592,16 @@ function wire() {
 	$("play-edit").addEventListener("click", startEdit);
 
 	$("play-log").addEventListener("click", (e) => {
+		const death = e.target.closest("[data-death]");
+		if (death) {
+			openDeathTrace(Number(death.dataset.death));
+			return;
+		}
+		const turnBtn = e.target.closest("[data-turn]");
+		if (turnBtn) {
+			openTurnSlice(Number(turnBtn.dataset.turn));
+			return;
+		}
 		const amend = e.target.closest("[data-amend]");
 		if (amend) {
 			startEditAt(Number(amend.dataset.amend));
@@ -1440,6 +1610,9 @@ function wire() {
 		const btn = e.target.closest("[data-rewind]");
 		if (btn) rewindTo(Number(btn.dataset.rewind));
 	});
+
+	// The trace panel's close (MAD-334).
+	$("play-trace-close").addEventListener("click", closeTrace);
 
 	$("play-cast").addEventListener("click", () => castCard(false));
 	$("play-land").addEventListener("click", () => castCard(true));
@@ -1590,6 +1763,7 @@ function onBoardTap(e) {
 	if (ds.resolve) { resolveTop(); return; }
 	if (ds.act) { contextAction(ds); return; }
 	if (ds.blockPick) { blockPick = Number(ds.blockPick); render(); return; }
+	if (ds.traceObj) { openObjectTrace(Number(ds.traceObj)); return; }
 
 	// A counter chip on a seat opens that counter's stepper.
 	if (ds.counterSeat) {
@@ -1963,9 +2137,10 @@ export const tool = {
 				// The stream stops with the window: nothing else consumes
 				// it yet, unlike the dice curtain. A hold in flight dies
 				// with it — the mic is freed and nothing is said.
-				cancelTalk();
-				closeJudge();
-				stopStream();
+			cancelTalk();
+			closeJudge();
+			closeTrace();
+			stopStream();
 			},
 		};
 	},

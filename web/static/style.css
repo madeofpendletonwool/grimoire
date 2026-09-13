@@ -2966,6 +2966,100 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .play-judge-row .thinking { color: var(--ink-soft); font-style: italic; }
 .play-judge-row .citations { margin-top: var(--sp-1); }
 
+/* The provenance panel (MAD-334): the same row-above-the-panes shape
+   the judge uses — a tool on the table, never a modal over the log. */
+.play-trace {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	padding: var(--sp-2) var(--sp-3);
+	max-height: min(24rem, 42%);
+	overflow-y: auto;
+	box-shadow: var(--shadow-1);
+}
+.play-trace-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sp-1) var(--sp-2);
+}
+.play-trace-title {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-sm);
+	color: var(--gold-bright);
+}
+.play-trace-sub {
+	flex: 1;
+	min-width: 14em;
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	font-style: italic;
+}
+.play-trace-sub + .play-question-x { margin-left: auto; }
+.play-trace-body { min-height: 0; overflow-y: auto; }
+.play-trace-stack, .play-trace-changes, .play-trace-turn {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-1);
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.play-trace-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sp-1) var(--sp-2);
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+}
+.play-trace-row.is-total {
+	margin-top: var(--sp-1);
+	padding-top: var(--sp-1);
+	border-top: 1px solid var(--stone-line);
+	font-family: var(--font-pixel);
+	font-size: var(--fs-md);
+}
+.play-trace-row.is-gone .play-trace-main { opacity: 0.6; }
+.play-trace-main { font-weight: 600; }
+.play-trace-meta { font-size: var(--fs-xs); color: var(--ink-soft); font-style: italic; }
+.play-trace-cause {
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	margin: 0;
+}
+.play-trace-damage { font-size: var(--fs-xs); color: var(--ink-soft); margin: 0; }
+.play-trace h4 {
+	margin: var(--sp-2) 0 0;
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	text-transform: none;
+	letter-spacing: 0.04em;
+}
+.play-trace-turn-row {
+	display: flex;
+	gap: var(--sp-2);
+	font-size: var(--fs-sm);
+	font-family: var(--font-prose);
+}
+.play-trace-changes li { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); font-size: var(--fs-sm); }
+.play-trace-changes li.is-gone span { opacity: 0.6; }
+
+/* The ⓘ beside every object chip: the computed-characteristic trace,
+   one tap away (MAD-334). */
+.play-obj-cell { display: inline-flex; align-items: center; gap: 2px; }
+.play-obj-info {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	background: none;
+	border: none;
+	padding: 0 var(--sp-1);
+	cursor: pointer;
+}
+.play-obj-info:hover { color: var(--gold-bright); }
+
 /* The two panes that must never leave the screen together. */
 .play-main {
 	flex: 1;
