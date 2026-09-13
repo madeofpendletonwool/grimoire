@@ -315,6 +315,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/games/{id}/actions", s.handleSubmitAction)
 	mux.HandleFunc("POST /api/games/{id}/resolve", s.handleResolveName)
 	mux.HandleFunc("POST /api/games/{id}/intent", s.handleIntent)
+	mux.HandleFunc("POST /api/games/{id}/ask", s.handleGameAsk)
 	mux.HandleFunc("POST /api/games/{id}/transcribe", s.handleGameTranscribe)
 	mux.HandleFunc("GET /api/games/{id}/pending", s.handlePendingList)
 	mux.HandleFunc("POST /api/games/{id}/pending/{pid}", s.handlePendingAnswer)

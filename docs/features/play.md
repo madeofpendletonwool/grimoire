@@ -4,11 +4,12 @@ The play window is the Magic table's tracker: **board state, event log,
 and current action, all visible at once**, live for everyone watching the
 game. Open it from the tool picker (`Ctrl+G` then `P`) in the Magic shell.
 
-It is a tracker with no AI anywhere in it — deliberately. The tap surface
-is the correction UI the voice and grammar layers will lean on, it exercises
-the deterministic engine with real hands before a model ever touches it,
-and it is the fallback for the moment something is misheard. Every change
-you make is an action the engine validated; there is no second write path.
+It is a tracker whose core has no AI anywhere in it — deliberately. The
+tap surface is the correction UI the voice and grammar layers lean on,
+it exercises the deterministic engine with real hands before a model
+ever touches it, and it is the fallback the moment something is
+misheard. Every change you make is an action the engine validated; there
+is no second write path.
 
 ## The three panes
 
@@ -129,6 +130,41 @@ text}`), and `GET /api/games/{id}/pending` plus `POST
 `POST /api/games/{id}/transcribe` — one short clip in, its transcript
 out, in the same request. No path through the pipeline can block the
 log: questions are rows beside it, never a modal over it.
+
+## The rules judge
+
+**⚖ judge** in the turn strip opens the judge panel — *ask Grimoire
+anything about the game you're currently playing*. The question rides
+the **live** board, stack, priority holder and step, folded from the
+same event log every pane reads, so nobody types their board in again:
+the board's permanents (with computed P/T, counters and attachments),
+the waiting triggers and the stack in resolution order, whose turn it
+is, which step, who holds priority, every seat's visible numbers, and
+the tracked zones beyond the battlefield all travel with the question.
+
+That position is what makes the questions a tracker could never answer
+answerable at one tap: **what resolves next**, **can I respond to
+this**, **what happens if I counter this**, **is that a legal target**.
+Quick chips ask the first of these outright; anything else can be typed.
+
+The answer is the interaction resolver's, verbatim: it grounds in real
+card oracle text (Scryfall) and the interaction chapters — 117
+timing/priority/stack, 603 triggered abilities, 613 layers, 616
+replacement effects — walks the ruling step by step citing each rule,
+and shows its citations under the answer exactly as the resolve mode
+does. It remains an **assistant, not a Comprehensive Rules oracle**, and
+the panel keeps saying so. What the table cannot verify it says plainly:
+hands are count-only (only cards spoken or revealed are known, and only
+the asking seat's), library order is never modelled, and unidentified
+permanents stay unidentified — the answer is told to report the gap
+rather than guess. Asking never touches the log; it is a read over the
+fold, and the board and log keep moving under the panel while the
+answer streams.
+
+`POST /api/games/{id}/ask` is the surface (`{seat, question}`), streaming
+the resolver's SSE framing (meta carries the citations, delta the
+answer). It requires the LLM configured — unset means the judge button
+stays honest about being unreachable rather than failing mid-question.
 
 ## Honesty rules the surface inherits
 
