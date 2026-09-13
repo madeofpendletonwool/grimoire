@@ -1398,6 +1398,13 @@ export function streamResolve(board, sequence, note, handlers, signal) {
 	return postSSE("/api/resolve", { board, sequence, note }, handlers, signal);
 }
 
+/** Ask the play surface's rules judge (MAD-333): the live board, stack,
+ *  priority holder and step travel with the question automatically, and
+ *  the cited answer streams back in the resolver's SSE framing. */
+export function streamGameAsk(gameID, seat, question, handlers, signal) {
+	return postSSE(`/api/games/${encodeURIComponent(gameID)}/ask`, { seat, question }, handlers, signal);
+}
+
 /** Ask the designer for a whole encounter and consume it as server-sent
  *  events. Everything in the payload is optional — an empty brief is the case
  *  the designer exists for. */

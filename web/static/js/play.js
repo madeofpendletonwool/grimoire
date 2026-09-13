@@ -13,9 +13,10 @@
 // path, which is the whole easy-adjust contract.
 
 import { $, el, clear } from "./dom.js";
-import { api } from "./api.js";
+import { api, streamGameAsk } from "./api.js";
 import { state as appState } from "./state.js";
 import { webSpeechSupport, dictate, canRecordClip, recordClip } from "./voice.js";
+import { renderAnswer, bindRuleRefs, renderCitations } from "./render.js";
 import {
 	seatName, turnLine, formatCount, objectName, ptLine,
 	counterChips, commanderTax, zoneTally, defaultActingSeat, canPass,
@@ -48,6 +49,7 @@ let decksLoaded = false;     // one attempt per mount; a failed read hides the p
 let pending = [];            // open questions — the unresolved tray (MAD-331)
 let voiceMode = null;        // "web" | "server" | null — the hold-to-talk path (MAD-332)
 let talk = null;             // the live hold: {kind, seat, text, dead, session}
+let judgeAbort = null;       // the in-flight judge answer's stop handle (MAD-333)
 let wired = false;
 let mounted = false;
 let streamCtl = null;
@@ -86,6 +88,7 @@ async function openGame(id) {
 	if (!id) return;
 	cancelEdit();
 	closeContext();
+	closeJudge();
 	attackDraft = new Set();
 	blockDraft = new Map();
 	blockPick = 0;
@@ -654,6 +657,9 @@ function renderSetup() {
 function renderStrip() {
 	const active = state?.status === "active";
 	$("play-strip").hidden = !active;
+	// The judge reads the live fold: offered once there is one, kept for
+	// finished games (disputes outlast the last attack).
+	$("play-judge").hidden = !(state?.status === "active" || state?.status === "finished");
 	if (!active) return;
 
 	$("play-turnline").textContent = turnLine(game, state);
@@ -1276,6 +1282,121 @@ function renderBlockDraft(host) {
 	host.append(el("button", { class: "enc-btn", attrs: { type: "button", "data-act": "close" }, text: "✕" }));
 }
 
+/* ---------- the rules judge (MAD-333) ---------- */
+
+// The questions the live state answers at one tap — the affordances the
+// board makes answerable that typed text did not.
+const JUDGE_QUICK = [
+	"What resolves next?",
+	"Can I respond to this?",
+	"What happens if I counter this?",
+	"Is that a legal target?",
+];
+
+function toggleJudge() {
+	const panel = $("play-judge-panel");
+	if (panel.hidden) {
+		panel.hidden = false;
+		$("play-judge-q").focus();
+	} else {
+		closeJudge();
+	}
+}
+
+/** Closing the judge stops its stream and clears the thread — the panel
+    is a scratch surface, not a transcript the log owes. */
+function closeJudge() {
+	if (judgeAbort) judgeAbort.abort();
+	judgeAbort = null;
+	$("play-judge-panel").hidden = true;
+	clear($("play-judge-thread"));
+	const q = $("play-judge-q");
+	if (q) q.value = "";
+	syncJudgeForm();
+}
+
+function syncJudgeForm(streaming) {
+	const ask = $("play-judge-ask");
+	const stop = $("play-judge-stop");
+	if (!ask || !stop) return;
+	ask.hidden = !!streaming;
+	stop.hidden = !streaming;
+}
+
+/** Ask the judge: the question rides the live board, stack, priority
+    holder and step — nobody types their board in again. The answer
+    streams into the thread with the citations it grounded in; an error
+    says so in place, and nothing here ever touches the log. */
+async function askJudge(question) {
+	const q = (question || "").trim();
+	if (!q || judgeAbort) return;
+	if (!gameID || (state?.status !== "active" && state?.status !== "finished")) {
+		judgeRow("note", "Start the game first — the judge reads the live board.");
+		return;
+	}
+
+	const thread = $("play-judge-thread");
+	thread.append(judgeRow("q", q));
+	const answer = judgeRow("a", "");
+	const prose = el("div", { class: "prose" },
+		el("span", { class: "thinking", text: "reading the live board…" }));
+	answer.append(prose);
+	thread.append(answer);
+	thread.scrollTop = thread.scrollHeight;
+
+	const controller = new AbortController();
+	judgeAbort = controller;
+	syncJudgeForm(true);
+	let text = "";
+	let meta = { sources: [], cards: [], unresolved_cards: [] };
+
+	try {
+		await streamGameAsk(gameID, actingSeat(), q, {
+			onMeta: (payload) => { meta = payload; },
+			onDelta: (chunk) => {
+				text += chunk;
+				renderAnswer(prose, text, "mtg");
+				thread.scrollTop = thread.scrollHeight;
+			},
+			onDone: () => finishJudge(answer, prose, text, meta),
+			onError: (message) => {
+				if (text) {
+					finishJudge(answer, prose, text, meta);
+					answer.append(el("p", { class: "drawer-note", text: message }));
+				} else {
+					prose.innerHTML = "";
+					prose.append(el("p", { text: message }));
+				}
+			},
+		}, controller.signal);
+	} catch (err) {
+		if (err.name === "AbortError") {
+			finishJudge(answer, prose, text || "(stopped)", meta);
+		} else {
+			prose.innerHTML = "";
+			prose.append(el("p", { text: `The judge could not be reached: ${err.message}` }));
+		}
+	} finally {
+		if (judgeAbort === controller) judgeAbort = null;
+		syncJudgeForm(false);
+		thread.scrollTop = thread.scrollHeight;
+	}
+}
+
+function finishJudge(row, prose, text, meta) {
+	renderAnswer(prose, text, "mtg");
+	bindRuleRefs(prose, "mtg");
+	const cites = renderCitations(meta.sources, meta.cards, null, meta.unresolved_cards, "mtg");
+	if (cites) row.append(cites);
+}
+
+/** One thread row: the question asked, the answer given, or a note. */
+function judgeRow(kind, text) {
+	const row = el("div", { class: `play-judge-row is-${kind}` });
+	if (text) row.append(el("span", { class: "play-judge-row-q", text }));
+	return row;
+}
+
 /* ---------- wiring ---------- */
 
 function wire() {
@@ -1378,6 +1499,29 @@ function wire() {
 		const answer = input?.value || "";
 		if (answer) answerQuestion(form.dataset.answerForm, answer);
 	});
+
+	// The rules judge (MAD-333): the live board travels with the
+	// question, the cited answer streams into the panel's thread.
+	$("play-judge").addEventListener("click", toggleJudge);
+	$("play-judge-close").addEventListener("click", closeJudge);
+	$("play-judge-form").addEventListener("submit", (e) => {
+		e.preventDefault();
+		const input = $("play-judge-q");
+		const text = input.value;
+		input.value = "";
+		askJudge(text);
+	});
+	$("play-judge-stop").addEventListener("click", () => {
+		if (judgeAbort) judgeAbort.abort();
+	});
+	for (const q of JUDGE_QUICK) {
+		$("play-judge-quick").append(el("button", {
+			class: "chip play-judge-chip",
+			attrs: { type: "button" },
+			text: q,
+			on: { click: () => askJudge(q) },
+		}));
+	}
 
 	$("play-card").addEventListener("input", cardSearchDebounced);
 	$("play-card").addEventListener("keydown", (e) => {
@@ -1820,6 +1964,7 @@ export const tool = {
 				// it yet, unlike the dice curtain. A hold in flight dies
 				// with it — the mic is freed and nothing is said.
 				cancelTalk();
+				closeJudge();
 				stopStream();
 			},
 		};

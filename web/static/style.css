@@ -2905,6 +2905,67 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 }
 .play-strip-controls { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-left: auto; }
 
+/* The rules judge (MAD-333): a row above the panes, never a modal — the
+   board and the log keep moving under it. Stone frame like the context
+   strip: it is a tool sitting on the table, not content of the book. */
+.play-judge {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	padding: var(--sp-2) var(--sp-3);
+	max-height: min(26rem, 45%);
+	overflow-y: auto;
+	box-shadow: var(--shadow-1);
+}
+.play-judge-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sp-1) var(--sp-2);
+}
+.play-judge-title {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-sm);
+	color: var(--gold-bright);
+}
+/* The standing honesty line: an assistant, not a Comprehensive Rules
+   oracle — the pane keeps saying so, not just the answers. */
+.play-judge-sub {
+	flex: 1;
+	min-width: 14em;
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	font-style: italic;
+}
+.play-judge-close, .play-judge-sub + .play-question-x { margin-left: auto; }
+.play-judge-quick { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.play-judge-chip { flex: none; }
+.play-judge-form { display: flex; align-items: center; gap: var(--sp-2); }
+.play-judge-thread {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	min-height: 0;
+	overflow-y: auto;
+}
+.play-judge-row { display: flex; flex-direction: column; gap: var(--sp-1); }
+.play-judge-row.is-q { align-items: flex-end; }
+.play-judge-row-q {
+	max-width: 85%;
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+	color: var(--parchment);
+	background: var(--stone-700);
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	padding: var(--sp-1) var(--sp-2);
+}
+.play-judge-row.is-a .prose { font-size: var(--fs-sm); }
+.play-judge-row.is-note { font-size: var(--fs-xs); color: var(--ink-soft); font-style: italic; }
+.play-judge-row .thinking { color: var(--ink-soft); font-style: italic; }
+.play-judge-row .citations { margin-top: var(--sp-1); }
+
 /* The two panes that must never leave the screen together. */
 .play-main {
 	flex: 1;

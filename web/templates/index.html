@@ -1642,15 +1642,42 @@
 						<span>acting as</span>
 						<select id="play-acting" aria-label="Acting seat"></select>
 					</label>
-					<div class="play-strip-controls" role="group" aria-label="Turn controls">
-						<button type="button" class="enc-btn" id="play-advance" title="Next step or phase">Next step</button>
-						<button type="button" class="enc-btn" id="play-pass" title="Pass priority">Pass</button>
-						<button type="button" class="enc-btn" id="play-give" hidden title="Rotate priority to the acting seat">Give priority →</button>
-						<button type="button" class="enc-btn" id="play-draw" title="Draw a card">Draw</button>
-						<button type="button" class="enc-btn" id="play-untap-all" title="Untap the acting seat's permanents">Untap all</button>
-						<button type="button" class="enc-btn" id="play-resolve-combat" hidden>Resolve combat</button>
-					</div>
+				<div class="play-strip-controls" role="group" aria-label="Turn controls">
+					<button type="button" class="enc-btn" id="play-advance" title="Next step or phase">Next step</button>
+					<button type="button" class="enc-btn" id="play-pass" title="Pass priority">Pass</button>
+					<button type="button" class="enc-btn" id="play-give" hidden title="Rotate priority to the acting seat">Give priority →</button>
+					<button type="button" class="enc-btn" id="play-draw" title="Draw a card">Draw</button>
+					<button type="button" class="enc-btn" id="play-untap-all" title="Untap the acting seat's permanents">Untap all</button>
+					<button type="button" class="enc-btn" id="play-resolve-combat" hidden>Resolve combat</button>
+					<button type="button" class="enc-btn" id="play-judge" hidden
+						title="Ask the rules judge — carries the live board, stack and priority with the question">⚖ judge</button>
 				</div>
+			</div>
+
+			<!-- The rules judge (MAD-333): ask anything about the game
+			     being played. The live board, stack, priority holder and
+			     step travel with the question — nobody types their board
+			     in again. It is an assistant, not a Comprehensive Rules
+			     oracle, and the answers say where they cannot verify
+			     something. A row above the panes, never a modal: the
+			     board and the log keep moving under it. -->
+			<section class="play-judge f-stone" id="play-judge-panel" hidden aria-label="Rules judge">
+				<header class="play-judge-head">
+					<b class="play-judge-title">⚖ rules judge</b>
+					<span class="play-judge-sub">reads the live board, stack and priority — assistant, not a Comprehensive Rules oracle</span>
+					<button type="button" class="play-question-x" id="play-judge-close" title="Close the judge">✕</button>
+				</header>
+				<div class="play-judge-quick" id="play-judge-quick"></div>
+				<form class="play-judge-form" id="play-judge-form" autocomplete="off">
+					<span class="play-talk-icon" aria-hidden="true">?</span>
+					<input class="enc-field play-talk-input" id="play-judge-q" type="text" maxlength="300"
+						placeholder="Ask about this game — what happens if I counter this? is that a legal target?"
+						aria-label="Rules question">
+					<button type="submit" class="enc-btn primary" id="play-judge-ask">Ask</button>
+					<button type="button" class="enc-btn" id="play-judge-stop" hidden>Stop</button>
+				</form>
+				<div class="play-judge-thread" id="play-judge-thread" aria-live="polite"></div>
+			</section>
 
 				<!-- The two panes that must never leave the screen together. -->
 				<div class="play-main">
