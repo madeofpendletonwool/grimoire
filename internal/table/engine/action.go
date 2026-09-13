@@ -100,6 +100,12 @@ type Action struct {
 	Seat       int        `json:"seat,omitempty"`
 	Source     string     `json:"source,omitempty"`
 	Confidence float64    `json:"confidence,omitempty"`
+	// Disposition is the confirmation ladder's verdict (MAD-331):
+	// auto | confirm | ask, stamped by the intent pipeline before
+	// submission. It rides the cause column so the log says not just
+	// how an action was entered but how confidently — the current
+	// action pane highlights what was applied optimistically.
+	Disposition string `json:"disposition,omitempty"`
 
 	// START_GAME: the loaded seat table the log echoes, with config
 	// defaults the fold adopts when set.

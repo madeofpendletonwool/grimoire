@@ -14,10 +14,13 @@
 
 import { $, el, clear } from "./dom.js";
 import { api } from "./api.js";
+import { state as appState } from "./state.js";
+import { webSpeechSupport, dictate, canRecordClip, recordClip } from "./voice.js";
 import {
 	seatName, turnLine, formatCount, objectName, ptLine,
 	counterChips, commanderTax, zoneTally, defaultActingSeat, canPass,
 	describeEvent, lastActionBatch, actionBatchAt, actionSummary, baseCharsFromCard, isType,
+	confirmHighlight, voicePlan,
 } from "./playvm.js";
 
 let games = [];
@@ -42,6 +45,9 @@ let blockDraft = new Map();  // attacker id → blocker ids
 let cardCache = new Map();   // card name → cardView, this client's own universe
 let decks = [];              // the account's saved decks, the setup picker's options
 let decksLoaded = false;     // one attempt per mount; a failed read hides the picker
+let pending = [];            // open questions — the unresolved tray (MAD-331)
+let voiceMode = null;        // "web" | "server" | null — the hold-to-talk path (MAD-332)
+let talk = null;             // the live hold: {kind, seat, text, dead, session}
 let wired = false;
 let mounted = false;
 let streamCtl = null;
@@ -95,6 +101,7 @@ async function openGame(id) {
 	}
 	startStream();
 	render();
+	loadPending();
 }
 
 /** Re-read the game row, the folded state and the log window — the full
@@ -140,6 +147,9 @@ function scheduleRefresh() {
 				cursor = Math.max(cursor, win.latest || 0);
 			}
 			render();
+			// A wake means someone wrote — their answer may have closed a
+			// question this tray still shows.
+			loadPending();
 		} catch (_) { /* the next wake retries; the panes keep the last good paint */ }
 	}, 90);
 }
@@ -176,6 +186,7 @@ function startStream() {
 			cancelEdit();
 			closeContext();
 			reloadGame().then(render).catch(() => { /* the next wake retries */ });
+			loadPending();
 		});
 		es.onerror = () => {
 			es.close();
@@ -249,6 +260,7 @@ async function rewindTo(ord) {
 		await reloadLog();
 		cancelEdit();
 		render();
+		loadPending(); // the tray closed what the rewind truncated
 	} catch (err) {
 		currentMeta(err.message, true);
 	}
@@ -290,6 +302,254 @@ async function resolveTop() {
 	render();
 }
 
+/* ---------- table talk (MAD-331) ---------- */
+
+/** Say what happened: one utterance through the intent pipeline. The
+    reply is the confirmation ladder's verdict — auto and confirm are
+    already applied (absorb paints them), ask carries a one-tap
+    question, and a no-parse says so. Nothing here ever blocks the log.
+    source "voice" marks a push-to-talk utterance: the log's cause
+    column records how it arrived. */
+async function say(text, source = "", seat) {
+	const trimmed = (text || "").trim();
+	if (!trimmed) return;
+	try {
+		const data = await api.gameIntent(gameID, seat ?? actingSeat(), trimmed, source);
+		const reply = data.reply || {};
+		if (reply.applied) {
+			absorb(reply);
+			render();
+			if (reply.disposition === "confirm") {
+				currentMeta("applied — worth a look ✓", false);
+			} else {
+				currentMeta("", false);
+			}
+		} else if (reply.question) {
+			currentMeta("not applied — one tap answers it", false);
+			await loadPending();
+		} else {
+			currentMeta(reply.note || "couldn't parse that", true);
+		}
+	} catch (err) {
+		currentMeta(err.message, true);
+	}
+}
+
+/* ---------- push-to-talk (MAD-332) ---------- */
+
+/** Decide the voice path from what this browser and this install can
+    do, and show or hide the hold-to-talk button to match. Web Speech
+    wins when it exists (interims are the point); otherwise a
+    MediaRecorder clip goes to the transcription endpoint when the
+    install configured one; otherwise the button is simply absent —
+    the same "unset means not there" contract the embeddings keep. */
+function resolveVoiceMode() {
+	voiceMode = voicePlan({
+		webSpeech: webSpeechSupport().ok,
+		recorder: canRecordClip(),
+		serverTranscribe: !!appState.meta?.transcribe_configured,
+	});
+	const mic = $("play-talk-mic");
+	if (!mic) return;
+	mic.hidden = !voiceMode;
+	if (voiceMode) {
+		mic.title = voiceMode === "web"
+			? "Hold to talk — words appear as you speak; release to say it"
+			: "Hold to talk — transcribed when you release";
+	}
+}
+
+/** /api/meta arrives after boot on a slow network; one fetch fills the
+    gap so the server path is not hidden by a race. */
+async function ensureMeta() {
+	if (appState.meta) return;
+	try {
+		appState.meta = await api.meta();
+	} catch (_) { /* offline: the web path needs no meta anyway */ }
+}
+
+/** The hold. The seat that holds the button is the seat that acted —
+    attribution solved by the gesture itself. On the web path the pane
+    shows the interim transcript live, so a misheard word is visible
+    before it becomes an action; on the server path the pane holds a
+    listening state and the transcript lands when the endpoint
+    answers. */
+function holdTalk() {
+	if (talk || !voiceMode || !gameID) return;
+	if (state?.status !== "active" && state?.status !== "finished") {
+		currentMeta("start the game first", true);
+		return;
+	}
+	const seat = actingSeat();
+	const mic = $("play-talk-mic");
+	const holder = { kind: voiceMode, seat, text: "", dead: false, session: null };
+
+	const finish = (text) => {
+		if (holder.dead) { render(); return; }
+		talk = null;
+		mic.classList.remove("is-live");
+		deliverTalk(text, seat);
+	};
+	const fail = (msg) => {
+		if (holder.dead) { render(); return; }
+		talk = null;
+		mic.classList.remove("is-live");
+		render();
+		currentMeta(msg, true);
+	};
+
+	if (voiceMode === "web") {
+		const session = dictate({
+			onInterim: (text) => {
+				if (talk !== holder || holder.dead) return;
+				holder.text = text;
+				renderCurrent();
+			},
+			onFinal: finish,
+			onError: fail,
+		});
+		holder.session = session;
+	} else {
+		const session = recordClip();
+		holder.session = session;
+		session.ready.catch((err) => {
+			if (talk !== holder) return;
+			fail(err?.name === "NotAllowedError"
+				? "Microphone access was blocked." : (err?.message || "the microphone was unavailable"));
+		});
+	}
+
+	talk = holder;
+	mic.classList.add("is-live");
+	currentMeta(voiceMode === "web" ? "listening — release to say it" : "listening — transcribed on release", false);
+	renderCurrent();
+}
+
+/** The release: the utterance goes to the intent pipeline like any
+    other table talk, marked voice. An empty transcript is a note, not
+    an error — nothing was said. */
+async function deliverTalk(text, seat) {
+	render();
+	const trimmed = (text || "").trim();
+	if (!trimmed) {
+		currentMeta("nothing was heard", false);
+		return;
+	}
+	await say(trimmed, "voice", seat);
+}
+
+function releaseTalk() {
+	const t = talk;
+	if (!t) return;
+	talk = null;
+	const mic = $("play-talk-mic");
+	mic.classList.remove("is-live");
+	if (t.kind === "web") {
+		// onend follows the stop and finish() delivers what was heard.
+		t.session.stop();
+		return;
+	}
+	currentMeta("transcribing…", false);
+	t.session.stop()
+		.then(({ blob, name }) => {
+			// A tap too quick to record is nothing said, not a failure.
+			if (!blob?.size) return deliverTalk("", t.seat);
+			return api.gameTranscribe(gameID, blob, name)
+				.then((data) => deliverTalk(data.text || "", t.seat));
+		})
+		.catch((err) => {
+			render();
+			currentMeta(err?.message || "transcription failed", true);
+		});
+}
+
+/** The hold broke off (pointer cancelled, window closed): drop the
+    utterance, free the mic, say nothing. */
+function cancelTalk() {
+	const t = talk;
+	if (!t) return;
+	talk = null;
+	t.dead = true;
+	$("play-talk-mic").classList.remove("is-live");
+	if (t.kind === "web") t.session.stop();
+	else t.session.abort();
+	render();
+	currentMeta("", false);
+}
+
+/** The unresolved tray's read: asked questions ride the strip under the
+    current action, parked ones wait with play continuing. */
+async function loadPending() {
+	if (!gameID) return;
+	try {
+		const data = await api.gamePending(gameID);
+		pending = data.pending || [];
+	} catch (_) {
+		pending = [];
+	}
+	renderQuestions();
+}
+
+/** The question strip: every asked question renders its tappable
+    answers; parked ones take a typed answer. Never a modal — the log
+    keeps moving under all of it. */
+function renderQuestions() {
+	const host = $("play-questions");
+	if (!host) return;
+	clear(host);
+	const active = state?.status === "active";
+	host.hidden = !active || pending.length === 0;
+	if (!active || pending.length === 0) return;
+	for (const row of pending) {
+		const q = el("div", { class: "play-question" + (row.options?.length ? " is-asked" : " is-parked") });
+		q.append(el("span", { class: "play-question-text", text: row.question }));
+		if (row.options?.length) {
+			for (const opt of row.options) {
+				q.append(el("button", {
+					class: "enc-btn primary play-question-opt",
+					attrs: { type: "button", "data-answer-id": row.id, "data-answer": opt.label },
+					text: opt.label,
+				}));
+			}
+		} else {
+			const form = el("form", { class: "play-question-form", attrs: { "data-answer-form": row.id } });
+			form.append(el("input", {
+				class: "enc-field play-question-input",
+				attrs: { type: "text", maxlength: "120", placeholder: "answer when you can…", "aria-label": "Answer" },
+			}));
+			form.append(el("button", { class: "enc-btn", attrs: { type: "submit" }, text: "answer" }));
+			q.append(form);
+		}
+		q.append(el("button", {
+			class: "play-question-x", attrs: { type: "button", "data-dismiss-q": row.id, title: "Drop the question" },
+			text: "✕",
+		}));
+		host.append(q);
+	}
+}
+
+/** One tappable answer — or a typed one for a parked question. The
+    server applies (or records) and the tray re-reads. */
+async function answerQuestion(pid, answer) {
+	try {
+		const data = await api.gamePendingAnswer(gameID, pid, answer, actingSeat());
+		if (data.reply?.applied) {
+			absorb(data.reply);
+			render();
+		}
+	} catch (err) {
+		currentMeta(err.message, true);
+	}
+	await loadPending();
+}
+
+async function dismissQuestion(pid) {
+	try {
+		await api.gamePendingDismiss(gameID, pid);
+	} catch (_) { /* the tray re-reads regardless */ }
+	await loadPending();
+}
+
 /* ---------- acting seat ---------- */
 
 function actingSeat() {
@@ -306,6 +566,7 @@ function render() {
 	renderBoard();
 	renderLog();
 	renderCurrent();
+	renderQuestions();
 	renderComposerTargets();
 	renderMeta();
 }
@@ -657,15 +918,30 @@ function renderCurrent() {
 	const text = $("play-current-text");
 	const ok = $("play-ok");
 	const edit = $("play-edit");
+	if (talk) {
+		// A hold is live: the pane is the interim transcript's stage —
+		// the one place every eye already sits — so a misheard word is
+		// visible before it becomes an action (MAD-332).
+		text.textContent = talk.text || (talk.kind === "web" ? "listening…" : "recording…");
+		ok.disabled = edit.disabled = true;
+		pane.classList.add("is-listening");
+		pane.classList.remove("is-fresh", "is-confirm");
+		return;
+	}
+	pane.classList.remove("is-listening");
 	if (!batch) {
 		text.textContent = "—";
 		ok.disabled = edit.disabled = true;
-		pane.classList.remove("is-fresh");
+		pane.classList.remove("is-fresh", "is-confirm");
 		return;
 	}
 	text.textContent = actionSummary(batch.action, state || {}) || describeEvent(batch.events[0], state || {});
 	ok.disabled = edit.disabled = false;
 	pane.classList.toggle("is-fresh", batch.to > acknowledged);
+	// The ladder's verdict rides the cause: an optimistic application
+	// stays highlighted as "worth a look" until ✓, even after the
+	// fresh-paint glow fades (MAD-331).
+	pane.classList.toggle("is-confirm", confirmHighlight(batch, acknowledged));
 }
 
 function cancelEdit() {
@@ -1049,6 +1325,59 @@ function wire() {
 	$("play-token-make").addEventListener("click", makeToken);
 	$("play-damage-deal").addEventListener("click", dealDamage);
 	$("play-counter-apply").addEventListener("click", applyCounter);
+
+	// Table talk (MAD-331): say it, the ladder lands it. Questions ride
+	// the strip under the current action — one delegated listener for
+	// their taps, one for their typed answers.
+	$("play-talk").addEventListener("submit", (e) => {
+		e.preventDefault();
+		const input = $("play-say");
+		const text = input.value;
+		input.value = "";
+		say(text);
+	});
+	// Push-to-talk (MAD-332): hold the mic, speak, release to say it.
+	// Pointer capture keeps the release even if the finger slides off;
+	// Space held on the keyboard is the same gesture.
+	const mic = $("play-talk-mic");
+	mic.addEventListener("pointerdown", (e) => {
+		e.preventDefault();
+		try { mic.setPointerCapture(e.pointerId); } catch (_) { /* capture is best-effort */ }
+		holdTalk();
+	});
+	mic.addEventListener("pointerup", releaseTalk);
+	mic.addEventListener("pointercancel", cancelTalk);
+	mic.addEventListener("keydown", (e) => {
+		if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+			e.preventDefault();
+			holdTalk();
+		}
+	});
+	mic.addEventListener("keyup", (e) => {
+		if (e.key === " " || e.key === "Enter") {
+			e.preventDefault();
+			releaseTalk();
+		}
+	});
+	// A long-press must not raise the browser's menu over the hold.
+	mic.addEventListener("contextmenu", (e) => e.preventDefault());
+	$("play-questions").addEventListener("click", (e) => {
+		const opt = e.target.closest("[data-answer]");
+		if (opt) {
+			answerQuestion(opt.dataset.answerId, opt.dataset.answer);
+			return;
+		}
+		const x = e.target.closest("[data-dismiss-q]");
+		if (x) dismissQuestion(x.dataset.dismissQ);
+	});
+	$("play-questions").addEventListener("submit", (e) => {
+		const form = e.target.closest("[data-answer-form]");
+		if (!form) return;
+		e.preventDefault();
+		const input = form.querySelector("input");
+		const answer = input?.value || "";
+		if (answer) answerQuestion(form.dataset.answerForm, answer);
+	});
 
 	$("play-card").addEventListener("input", cardSearchDebounced);
 	$("play-card").addEventListener("keydown", (e) => {
@@ -1477,6 +1806,10 @@ export const tool = {
 			wire();
 			wired = true;
 		}
+		// The hold-to-talk button appears when a voice path exists; the
+		// web path is knowable now, the server path needs /api/meta.
+		resolveVoiceMode();
+		ensureMeta().then(resolveVoiceMode);
 		loadDecks();
 		if (!games.length) loadGames();
 		else if (gameID && !streamCtl) openGame(gameID);
@@ -1484,7 +1817,9 @@ export const tool = {
 			destroy() {
 				mounted = false;
 				// The stream stops with the window: nothing else consumes
-				// it yet, unlike the dice curtain.
+				// it yet, unlike the dice curtain. A hold in flight dies
+				// with it — the mic is freed and nothing is said.
+				cancelTalk();
 				stopStream();
 			},
 		};

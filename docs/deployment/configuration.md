@@ -61,6 +61,8 @@ Changing the model later requires a reindex; a dimension mismatch falls back to 
 
 Turns a session recording into a timed `transcript` source — identical in shape to a pasted transcript, so spans, extraction and the canon engine work over it unchanged. Targets the OpenAI `POST /v1/audio/transcriptions` multipart contract that whisper.cpp's server, faster-whisper-server, LocalAI and OpenAI all speak. **Off by default; unset means the audio upload affordance is simply not there** — no button, no degraded path, no warning. See [Sessions](../features/sessions.md) for the flow.
 
+The same endpoint also serves the Magic table's push-to-talk: `POST /api/games/{id}/transcribe` sends a held button's worth of audio (seconds, in-request, never persisted to disk) and answers with its transcript — the server-side voice path for browsers without the Web Speech API. One configured endpoint, two consumers.
+
 | Variable                  | Default                     | Notes                                                                       |
 | ------------------------- | --------------------------- | --------------------------------------------------------------------------- |
 | `TRANSCRIBE_BASE_URL`     | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint. With the compose profile service: `http://transcribe:8000/v1`. |

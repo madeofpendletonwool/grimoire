@@ -316,3 +316,44 @@ func TestDecklessGame(t *testing.T) {
 		t.Fatalf("deckless sol ring → %+v", r)
 	}
 }
+
+/* ---------- the ask rung's candidate list (MAD-331) ---------- */
+
+// Candidates walks the deck tiers in Resolve's order and lists the
+// gated matches an ambiguous span could mean — the one-tap question's
+// options. An exact match is not a candidate: it is Resolve's answer.
+func TestCandidates(t *testing.T) {
+	st := started(t, pod())
+	u := FromState(st)
+	// "Rhystic" is gated shorthand for both the Study (own deck) and
+	// the Cave (Bob's): exactly the ambiguity a question resolves.
+	got := u.Candidates(1, "Rhystic", 3)
+	if len(got) != 2 || got[0] != "Rhystic Study" || got[1] != "Rhystic Cave" {
+		t.Fatalf("candidates = %v, want [Rhystic Study Rhystic Cave]", got)
+	}
+	// The speaker's deck leads regardless of who else matches.
+	if got := u.Candidates(2, "Rhystic", 3); got[0] != "Rhystic Cave" {
+		t.Fatalf("from seat 2 = %v, want the Cave first", got)
+	}
+	// The limit is the one-tap rule's small set.
+	if got := u.Candidates(1, "Rhystic", 1); len(got) != 1 || got[0] != "Rhystic Study" {
+		t.Fatalf("capped candidates = %v", got)
+	}
+	// An exact match is Resolve's business, not a question.
+	if got := u.Candidates(1, "Sol Ring", 3); len(got) != 0 {
+		t.Fatalf("exact-match candidates = %v, want none", got)
+	}
+	// Nothing gated, nothing listed — and the question parks.
+	if got := u.Candidates(1, "blorptidious", 3); len(got) != 0 {
+		t.Fatalf("unmatched candidates = %v, want none", got)
+	}
+}
+
+// Seats lists the attached decks in seating order — the prompt's and
+// the gate's walk order.
+func TestSeats(t *testing.T) {
+	got := FromState(started(t, pod())).Seats()
+	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("seats = %v, want [1 2 3] (seat 3 carries its commander)", got)
+	}
+}

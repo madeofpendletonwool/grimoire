@@ -177,3 +177,37 @@ func TestEmptySpokenRefused(t *testing.T) {
 		t.Fatal("empty correction key accepted")
 	}
 }
+
+// The model fallback's identification (MAD-331): the llm tier joins
+// the cache, capped at ConfLLM whatever the model claimed — the cache
+// must not launder a model identification into a higher band on replay.
+func TestRecordLLMCapsAndCaches(t *testing.T) {
+	_, f := newFixture(t)
+	store, err := NewStore(f.db, nil)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if err := store.RecordLLM(f.ctx, f.game, "the study thing", "Rhystic Study", 1.0); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	r, ok := store.Cached(f.ctx, f.game, "the study thing")
+	if !ok || r.Card != "Rhystic Study" || r.Method != MethodLLM {
+		t.Fatalf("cached = %+v ok %v, want the llm-tier row", r, ok)
+	}
+	if r.Confidence != ConfLLM {
+		t.Fatalf("confidence = %v, want the ceiling %v", r.Confidence, ConfLLM)
+	}
+	// The tiers answer from the cache before they ever run — the same
+	// mumble is never re-inferred, never re-billed.
+	r, err = store.ResolveGame(f.ctx, f.state, f.game, 1, "The Study Thing")
+	if err != nil || r.Scope != ScopeCache || r.Card != "Rhystic Study" {
+		t.Fatalf("resolve → %+v err %v, want the cached answer", r, err)
+	}
+	// A correction still wins over the model's word, being human.
+	if err := store.Record(f.ctx, f.game, "the study thing", "Mystic Study"); err != nil {
+		t.Fatalf("correct: %v", err)
+	}
+	if r, _ := store.Cached(f.ctx, f.game, "the study thing"); r.Method != MethodManual || r.Confidence != ConfManual {
+		t.Fatalf("after correction = %+v, want manual at full confidence", r)
+	}
+}
