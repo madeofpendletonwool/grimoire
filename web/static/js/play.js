@@ -18,6 +18,7 @@ import {
 	seatName, turnLine, formatCount, objectName, ptLine,
 	counterChips, commanderTax, zoneTally, defaultActingSeat, canPass,
 	describeEvent, lastActionBatch, actionBatchAt, actionSummary, baseCharsFromCard, isType,
+	confirmHighlight,
 } from "./playvm.js";
 
 let games = [];
@@ -42,6 +43,7 @@ let blockDraft = new Map();  // attacker id → blocker ids
 let cardCache = new Map();   // card name → cardView, this client's own universe
 let decks = [];              // the account's saved decks, the setup picker's options
 let decksLoaded = false;     // one attempt per mount; a failed read hides the picker
+let pending = [];            // open questions — the unresolved tray (MAD-331)
 let wired = false;
 let mounted = false;
 let streamCtl = null;
@@ -95,6 +97,7 @@ async function openGame(id) {
 	}
 	startStream();
 	render();
+	loadPending();
 }
 
 /** Re-read the game row, the folded state and the log window — the full
@@ -140,6 +143,9 @@ function scheduleRefresh() {
 				cursor = Math.max(cursor, win.latest || 0);
 			}
 			render();
+			// A wake means someone wrote — their answer may have closed a
+			// question this tray still shows.
+			loadPending();
 		} catch (_) { /* the next wake retries; the panes keep the last good paint */ }
 	}, 90);
 }
@@ -176,6 +182,7 @@ function startStream() {
 			cancelEdit();
 			closeContext();
 			reloadGame().then(render).catch(() => { /* the next wake retries */ });
+			loadPending();
 		});
 		es.onerror = () => {
 			es.close();
@@ -249,6 +256,7 @@ async function rewindTo(ord) {
 		await reloadLog();
 		cancelEdit();
 		render();
+		loadPending(); // the tray closed what the rewind truncated
 	} catch (err) {
 		currentMeta(err.message, true);
 	}
@@ -290,6 +298,110 @@ async function resolveTop() {
 	render();
 }
 
+/* ---------- table talk (MAD-331) ---------- */
+
+/** Say what happened: one utterance through the intent pipeline. The
+    reply is the confirmation ladder's verdict — auto and confirm are
+    already applied (absorb paints them), ask carries a one-tap
+    question, and a no-parse says so. Nothing here ever blocks the log. */
+async function say(text) {
+	const trimmed = (text || "").trim();
+	if (!trimmed) return;
+	try {
+		const data = await api.gameIntent(gameID, actingSeat(), trimmed);
+		const reply = data.reply || {};
+		if (reply.applied) {
+			absorb(reply);
+			render();
+			if (reply.disposition === "confirm") {
+				currentMeta("applied — worth a look ✓", false);
+			} else {
+				currentMeta("", false);
+			}
+		} else if (reply.question) {
+			currentMeta("not applied — one tap answers it", false);
+			await loadPending();
+		} else {
+			currentMeta(reply.note || "couldn't parse that", true);
+		}
+	} catch (err) {
+		currentMeta(err.message, true);
+	}
+}
+
+/** The unresolved tray's read: asked questions ride the strip under the
+    current action, parked ones wait with play continuing. */
+async function loadPending() {
+	if (!gameID) return;
+	try {
+		const data = await api.gamePending(gameID);
+		pending = data.pending || [];
+	} catch (_) {
+		pending = [];
+	}
+	renderQuestions();
+}
+
+/** The question strip: every asked question renders its tappable
+    answers; parked ones take a typed answer. Never a modal — the log
+    keeps moving under all of it. */
+function renderQuestions() {
+	const host = $("play-questions");
+	if (!host) return;
+	clear(host);
+	const active = state?.status === "active";
+	host.hidden = !active || pending.length === 0;
+	if (!active || pending.length === 0) return;
+	for (const row of pending) {
+		const q = el("div", { class: "play-question" + (row.options?.length ? " is-asked" : " is-parked") });
+		q.append(el("span", { class: "play-question-text", text: row.question }));
+		if (row.options?.length) {
+			for (const opt of row.options) {
+				q.append(el("button", {
+					class: "enc-btn primary play-question-opt",
+					attrs: { type: "button", "data-answer-id": row.id, "data-answer": opt.label },
+					text: opt.label,
+				}));
+			}
+		} else {
+			const form = el("form", { class: "play-question-form", attrs: { "data-answer-form": row.id } });
+			form.append(el("input", {
+				class: "enc-field play-question-input",
+				attrs: { type: "text", maxlength: "120", placeholder: "answer when you can…", "aria-label": "Answer" },
+			}));
+			form.append(el("button", { class: "enc-btn", attrs: { type: "submit" }, text: "answer" }));
+			q.append(form);
+		}
+		q.append(el("button", {
+			class: "play-question-x", attrs: { type: "button", "data-dismiss-q": row.id, title: "Drop the question" },
+			text: "✕",
+		}));
+		host.append(q);
+	}
+}
+
+/** One tappable answer — or a typed one for a parked question. The
+    server applies (or records) and the tray re-reads. */
+async function answerQuestion(pid, answer) {
+	try {
+		const data = await api.gamePendingAnswer(gameID, pid, answer, actingSeat());
+		if (data.reply?.applied) {
+			absorb(data.reply);
+			render();
+		}
+	} catch (err) {
+		currentMeta(err.message, true);
+	}
+	await loadPending();
+}
+
+async function dismissQuestion(pid) {
+	try {
+		await api.gamePendingDismiss(gameID, pid);
+	} catch (_) { /* the tray re-reads regardless */ }
+	await loadPending();
+}
+
 /* ---------- acting seat ---------- */
 
 function actingSeat() {
@@ -306,6 +418,7 @@ function render() {
 	renderBoard();
 	renderLog();
 	renderCurrent();
+	renderQuestions();
 	renderComposerTargets();
 	renderMeta();
 }
@@ -660,12 +773,16 @@ function renderCurrent() {
 	if (!batch) {
 		text.textContent = "—";
 		ok.disabled = edit.disabled = true;
-		pane.classList.remove("is-fresh");
+		pane.classList.remove("is-fresh", "is-confirm");
 		return;
 	}
 	text.textContent = actionSummary(batch.action, state || {}) || describeEvent(batch.events[0], state || {});
 	ok.disabled = edit.disabled = false;
 	pane.classList.toggle("is-fresh", batch.to > acknowledged);
+	// The ladder's verdict rides the cause: an optimistic application
+	// stays highlighted as "worth a look" until ✓, even after the
+	// fresh-paint glow fades (MAD-331).
+	pane.classList.toggle("is-confirm", confirmHighlight(batch, acknowledged));
 }
 
 function cancelEdit() {
@@ -1049,6 +1166,34 @@ function wire() {
 	$("play-token-make").addEventListener("click", makeToken);
 	$("play-damage-deal").addEventListener("click", dealDamage);
 	$("play-counter-apply").addEventListener("click", applyCounter);
+
+	// Table talk (MAD-331): say it, the ladder lands it. Questions ride
+	// the strip under the current action — one delegated listener for
+	// their taps, one for their typed answers.
+	$("play-talk").addEventListener("submit", (e) => {
+		e.preventDefault();
+		const input = $("play-say");
+		const text = input.value;
+		input.value = "";
+		say(text);
+	});
+	$("play-questions").addEventListener("click", (e) => {
+		const opt = e.target.closest("[data-answer]");
+		if (opt) {
+			answerQuestion(opt.dataset.answerId, opt.dataset.answer);
+			return;
+		}
+		const x = e.target.closest("[data-dismiss-q]");
+		if (x) dismissQuestion(x.dataset.dismissQ);
+	});
+	$("play-questions").addEventListener("submit", (e) => {
+		const form = e.target.closest("[data-answer-form]");
+		if (!form) return;
+		e.preventDefault();
+		const input = form.querySelector("input");
+		const answer = input?.value || "";
+		if (answer) answerQuestion(form.dataset.answerForm, answer);
+	});
 
 	$("play-card").addEventListener("input", cardSearchDebounced);
 	$("play-card").addEventListener("keydown", (e) => {

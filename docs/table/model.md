@@ -202,7 +202,10 @@ The input side. Actions are typed values; the grammar (MAD-330), the board UI
 (MAD-327), and the model fallback (MAD-331) all produce the *same* type, and
 the reducer is the only consumer. Each action carries the acting seat, and
 each lists its default ladder disposition
-([Interaction](interaction.md#the-confirmation-ladder)).
+([Interaction](interaction.md#the-confirmation-ladder)); the intent pipeline
+stamps the `disposition` field (`auto | confirm | ask`) before submission so
+the cause column — and with it every log entry — records how confidently the
+action landed.
 
 | Group | Actions | Notes |
 |---|---|---|
@@ -316,7 +319,7 @@ query, and 6a's reflection leak test is the hard CI version of it.
 | Table | Columns | Notes |
 |---|---|---|
 | `mtg_pending` | `id, game_id, question, options, context, status, answer, answered_seat, created_at, answered_at` | The unresolved tray (4c). A clarification the one-tap rule could not reduce to tappable answers is parked here, `open`, and play continues. On rewind, an open question whose context ordinal was truncated is auto-dismissed. |
-| `mtg_name_resolutions` | `game_id, spoken, card_name, method, confidence, resolved_at` | The per-game identity cache (4a/4c): `spoken` (normalized) → canonical name, `method` `deck_exact \| deck_fuzzy \| global \| manual`. The same mumble is **never re-inferred, never re-billed**. Survives rewind — a corrected card is still the resolution of that mumble. No FK to `cards(name)`: the card index is bulk-replaced on re-index; this cache is game history. |
+| `mtg_name_resolutions` | `game_id, spoken, card_name, method, confidence, resolved_at` | The per-game identity cache (4a/4c): `spoken` (normalized) → canonical name, `method` `deck_exact \| deck_fuzzy \| global \| manual \| llm`. The same mumble is **never re-inferred, never re-billed**. Survives rewind — a corrected card is still the resolution of that mumble. No FK to `cards(name)`: the card index is bulk-replaced on re-index; this cache is game history. |
 | `mtg_trigger_registry` | `card_name, event_kind, effect, origin, confirmed_by, created_at, updated_at` | Cross-game, install-wide (5c): card knowledge is universal, like the rules corpora. `event_kind` is a structural kind (`LAND_PLAYED`, `CREATURE_ETB`, `CAST`, `ATTACKERS_DECLARED`, `DIED`, `STEP_ENTERED` with a step condition in `effect`); `origin` is `declared` (a human typed it) or `confirmed` (model-proposed, human-confirmed) — the declared-vs-simulated line again. |
 | `mtg_rulings` | `id, game_id, ord, ruled_by, note, created_at` | The judge log (6b): a ruling anchored to the ordinal it concerns. **Survives rewind** — a human record is never clobbered by a truncate, the same semantics as a decided canon review. |
 | `mtg_seat_notes` | `game_id, seat, body, updated_at` | Private per-seat scratch (6a). Editable, latest-wins, and never enters another seat's view or another seat's prompt. |

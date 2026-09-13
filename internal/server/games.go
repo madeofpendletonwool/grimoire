@@ -424,6 +424,9 @@ func (s *Server) handleRewindGame(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
+	// A question about an entry the rewind removed is not waiting on
+	// anything: the tray closes it (mtg_pending's contract).
+	s.dismissRewound(r, g.ID, state)
 	fresh, err := s.games.GetGame(r.Context(), g.ID)
 	if err != nil {
 		writeGameError(w, err)
@@ -477,6 +480,9 @@ func (s *Server) handleAmendGame(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
+	// Amend is a rewind with a correction riding: the tray's contract
+	// applies exactly as it does behind a bare rewind.
+	s.dismissRewound(r, g.ID, state)
 	fresh, err := s.games.GetGame(r.Context(), g.ID)
 	if err != nil {
 		writeGameError(w, err)

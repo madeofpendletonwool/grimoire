@@ -389,6 +389,18 @@ export function lastActionBatch(events) {
 	return actionBatchAt(log, log[log.length - 1].ord);
 }
 
+/**
+ * The pane's ladder emphasis (MAD-331): an optimistic application — the
+ * confirmation ladder's confirm rung, stamped on the action's cause —
+ * stays marked "worth a look" until acknowledged, long after the
+ * fresh-paint glow is gone. Auto needs no look; ask never applied.
+ */
+export function confirmHighlight(batch, acknowledged) {
+	return !!batch
+		&& batch.to > (acknowledged || 0)
+		&& batch?.action?.disposition === "confirm";
+}
+
 /** The current-action pane's headline: the sentence for a submitted action. */
 export function actionSummary(action, state) {
 	if (!action) return "";

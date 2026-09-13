@@ -1671,17 +1671,33 @@
 					</div>
 				</div>
 
-				<!-- The current action: what the engine last applied, one tap
-				     from correction. -->
-				<div class="play-current" id="play-current">
-					<span class="play-current-label">current action</span>
-					<span class="play-current-text" id="play-current-text"></span>
-					<span class="play-current-actions">
-						<button type="button" class="enc-btn" id="play-ok" title="Acknowledge — clears the highlight">✓ yes</button>
-						<button type="button" class="enc-btn" id="play-edit" title="Rewind here and re-submit a corrected action">✎ not it</button>
-					</span>
-					<span class="play-current-meta" id="play-current-meta" aria-live="polite"></span>
-				</div>
+			<!-- The current action: what the engine last applied, one tap
+			     from correction. -->
+			<div class="play-current" id="play-current">
+				<span class="play-current-label">current action</span>
+				<span class="play-current-text" id="play-current-text"></span>
+				<span class="play-current-actions">
+					<button type="button" class="enc-btn" id="play-ok" title="Acknowledge — clears the highlight">✓ yes</button>
+					<button type="button" class="enc-btn" id="play-edit" title="Rewind here and re-submit a corrected action">✎ not it</button>
+				</span>
+				<span class="play-current-meta" id="play-current-meta" aria-live="polite"></span>
+			</div>
+
+			<!-- Table talk (MAD-331): say what happened. The grammar or
+			     the model parses it; the confirmation ladder decides how
+			     it lands — applied immediately, applied with a highlight,
+			     or asked about, never a blocking modal. -->
+			<form class="play-talk" id="play-talk" autocomplete="off">
+				<span class="play-talk-icon" aria-hidden="true">“”</span>
+				<input class="enc-field play-talk-input" id="play-say" type="text" maxlength="200"
+					placeholder="Say it — cast Rhystic · Bob takes 3 · make two Treasures…"
+					aria-label="Table talk">
+				<button type="submit" class="enc-btn primary" id="play-say-btn">Say</button>
+			</form>
+
+			<!-- Open questions, asked and parked: every answer is one
+			     tap, and the log never waits on any of it. -->
+			<div class="play-questions" id="play-questions" hidden></div>
 
 				<!-- The composer: every tap action that is not a value on the
 				     board. -->

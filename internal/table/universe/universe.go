@@ -47,6 +47,12 @@ const (
 	MethodDeckFuzzy Method = "deck_fuzzy"
 	MethodGlobal    Method = "global"
 	MethodManual    Method = "manual"
+	// MethodLLM is the model fallback's tier (MAD-331): the grammar
+	// refused the utterance and the model identified the name against
+	// the known-card universe. Distinguishable in the cache because an
+	// audit trail that says how a name was found is only honest if the
+	// model tier is not dressed up as a deck tier or a human's word.
+	MethodLLM Method = "llm"
 )
 
 // Scope is where the winning match lived. The tiers of the resolution
@@ -70,15 +76,20 @@ const (
 // certain by being in a deck; the deck's value is that shorthand and
 // mishearing resolve credibly at all.
 const (
-	ConfExact          = 1.0  // a verbatim (normalized) name, any scope
-	ConfOwnFuzzy       = 0.95 // shorthand or a typo against the seat's own deck
-	ConfOwnSpelling    = 0.90
-	ConfOtherExact     = 0.95 // verbatim, but in someone else's list
-	ConfOtherFuzzy     = 0.85
-	ConfOtherSpelling  = 0.80
-	ConfGlobalExact    = 0.95 // verbatim against the index
-	ConfGlobalFuzzy    = 0.80 // carddb's fuzzy bar, passed but not trusted
-	ConfManual         = 1.0  // a human said what they meant
+	ConfExact         = 1.0  // a verbatim (normalized) name, any scope
+	ConfOwnFuzzy      = 0.95 // shorthand or a typo against the seat's own deck
+	ConfOwnSpelling   = 0.90
+	ConfOtherExact    = 0.95 // verbatim, but in someone else's list
+	ConfOtherFuzzy    = 0.85
+	ConfOtherSpelling = 0.80
+	ConfGlobalExact   = 0.95 // verbatim against the index
+	ConfGlobalFuzzy   = 0.80 // carddb's fuzzy bar, passed but not trusted
+	ConfManual        = 1.0  // a human said what they meant
+	// ConfLLM is the ceiling on a model identification (MAD-331): the
+	// model is a fallback parser, never the front door, so nothing it
+	// names is trusted above the fuzzy tiers — the confirmation ladder
+	// holds everything the model says at confirm-at-best.
+	ConfLLM            = 0.80
 	ConfAmbiguousDelta = 0.15 // a tied runner-up at the same quality
 )
 
@@ -189,6 +200,15 @@ func (u *Universe) sortSeats() {
 // Attached reports how many seats carry a deck — the setup hint's fact.
 // Zero is a working game with worse identification, never a blocker.
 func (u *Universe) Attached() int { return len(u.decks) }
+
+// Seats lists the seats carrying an attached deck, in seating order —
+// the prompt's and the model gate's walk order over the known cards
+// (MAD-331).
+func (u *Universe) Seats() []int {
+	out := make([]int, len(u.seats))
+	copy(out, u.seats)
+	return out
+}
 
 // Cards is one seat's known-card universe as a name → count multiset.
 // The seat's own client and the cache's prompts read this; nobody may
@@ -307,6 +327,79 @@ func deckResolution(spoken, card string, q quality, ambiguous bool, scope Scope,
 		res.Confidence -= ConfAmbiguousDelta
 	}
 	return res
+}
+
+// Candidates lists up to limit plausible canonical names for one spoken
+// span, best first, walking the deck tiers in Resolve's order: the
+// speaking seat's deck, then the table's decks in seating order. Only
+// gated matches (word-subset and close-spelling, the same credibility
+// rules Resolve uses) are candidates, and an exact match is not listed —
+// an exact match is Resolve's answer, not a question. The global index
+// is deliberately absent: a tappable answer set must be small and
+// credible, and 28,000 cards are neither. This exists for the ladder's
+// ask rung (MAD-331): a genuinely ambiguous name becomes a one-tap
+// question whose options are the candidates themselves.
+func (u *Universe) Candidates(seat int, spoken string, limit int) []string {
+	spoken = strings.TrimSpace(spoken)
+	if spoken == "" || limit <= 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	tiers := make([]int, 0, len(u.seats)+1)
+	tiers = append(tiers, seat)
+	for _, s := range u.seats {
+		if s != seat {
+			tiers = append(tiers, s)
+		}
+	}
+	for _, s := range tiers {
+		deck := u.decks[s]
+		if len(deck) == 0 {
+			continue
+		}
+		names := make([]string, 0, len(deck))
+		for name := range deck {
+			names = append(names, name)
+		}
+		sortNames(names)
+		// Rank this tier's gated candidates: class first, score within
+		// class, codepoint order as the deterministic tie-break.
+		type scored struct {
+			name  string
+			q     quality
+			score float64
+		}
+		var hits []scored
+		for _, name := range names {
+			q, score := classify(spoken, name)
+			if q == qNone || q == qExact {
+				continue
+			}
+			hits = append(hits, scored{name, q, score})
+		}
+		for i := 1; i < len(hits); i++ {
+			for j := i; j > 0; j-- {
+				a, b := hits[j], hits[j-1]
+				if a.q > b.q || (a.q == b.q && (a.score > b.score || (a.score == b.score && a.name < b.name))) {
+					hits[j], hits[j-1] = hits[j-1], hits[j]
+					continue
+				}
+				break
+			}
+		}
+		for _, h := range hits {
+			if seen[h.name] {
+				continue
+			}
+			seen[h.name] = true
+			out = append(out, h.name)
+			if len(out) == limit {
+				return out
+			}
+		}
+	}
+	return out
 }
 
 // matchDeck scores one seat's deck against the spoken phrase. It returns

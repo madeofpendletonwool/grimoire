@@ -111,6 +111,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/table"
 	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
+	"github.com/madeofpendletonwool/grimoire/internal/table/intent"
 	"github.com/madeofpendletonwool/grimoire/internal/table/universe"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/internal/uistate"
@@ -1725,6 +1726,21 @@ func runServe() error {
 		return err
 	}
 
+	// The Magic table's intent pipeline (MAD-331): the grammar first,
+	// the model fallback behind it, the confirmation ladder over both.
+	// The model is optional — without a configured client the pipeline
+	// runs grammar-only and what the grammar refuses is a clean
+	// no-parse, exactly the way an install without the card index loses
+	// only the last identification tier.
+	var intentModel intent.ModelClient
+	if chatClient != nil && chatClient.Configured() {
+		intentModel = intent.NewLLMModel(chatClient)
+	}
+	intentStore, err := intent.New(store.DB(), intentModel, magicEngine, universeStore)
+	if err != nil {
+		return err
+	}
+
 	// The state-aware encounter director (MAD-427): advisory monster
 	// tactics grounded in the live battle — the statblocks the tracker
 	// resolves plus the ledger's, effects engine's and tracker's own
@@ -1779,7 +1795,7 @@ func runServe() error {
 	srv = srv.WithDirector(directorEngine)
 	srv = srv.WithStats(statsEngine)
 	srv = srv.WithLeveling(levelingEngine)
-	srv = srv.WithGames(magicEngine).WithUniverse(universeStore)
+	srv = srv.WithGames(magicEngine).WithUniverse(universeStore).WithIntent(intentStore)
 	srv = srv.WithUIState(uistate.New(store.DB()))
 	srv = srv.WithTranscriber(transcribeClient(), transcribeOptions())
 	srv = srv.WithHandouts(handoutOptions())
