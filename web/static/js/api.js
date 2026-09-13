@@ -1244,6 +1244,18 @@ export const api = {
 	gameEvents: (id, after = 0, limit = 0) =>
 		fetch(`/api/games/${encodeURIComponent(id)}/events?after=${after}&limit=${limit}`).then(json),
 
+	// Provenance (MAD-334): the deterministic why-reads over the same
+	// log the panes render — the characteristic stack (optionally at a
+	// past ordinal), the walk back from one DIED row, and a turn's slice.
+	gameTrace: (id, object, at = 0) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/objects/${object}/trace${at ? `?at=${at}` : ""}`).then(json),
+
+	gameDeath: (id, ord) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/death/${ord}`).then(json),
+
+	gameTurn: (id, turn) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/turns/${turn}`).then(json),
+
 	gameRewind: (id, to) =>
 		fetch(`/api/games/${encodeURIComponent(id)}/rewind`, {
 			method: "POST",

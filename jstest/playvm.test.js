@@ -12,6 +12,7 @@ import {
 	computedTypes, isType, counterChips, commanderTax, zoneTally,
 	defaultActingSeat, canPass, describeEvent, lastActionBatch, actionBatchAt,
 	actionSummary, baseCharsFromCard, confirmHighlight, voicePlan,
+	ptRowText, ptRowMeta, changeRowText, deathHeadline, damageRowText, turnHeadline,
 } from "../web/static/js/playvm.js";
 
 /* ---------- fixtures ---------- */
@@ -350,4 +351,52 @@ test("voicePlan: Web Speech wins, the server path backs it up, else absent", () 
 	assert.equal(voicePlan({ webSpeech: false, recorder: false, serverTranscribe: true }), null);
 	assert.equal(voicePlan({ webSpeech: false, recorder: false, serverTranscribe: false }), null);
 	assert.equal(voicePlan(), null);
+});
+
+/* ---------- provenance rows (MAD-334) ---------- */
+
+// The engine's PTTrace rows, spelled the way the model doc's worked
+// example reads — the stack a table argues with, one line per row.
+test("ptRowText and ptRowMeta spell the 7/7 stack", () => {
+	assert.equal(ptRowText({ kind: "base", label: "Grizzly Bears", power: 2, toughness: 2 }), "base 2/2");
+	assert.equal(ptRowText({ kind: "modifier", label: "Glorious Anthem", power: 1, toughness: 1,
+		layer: "pt_modify", duration: "while_source_present" }), "+1/+1 from Glorious Anthem");
+	assert.equal(ptRowText({ kind: "counter", label: "+1/+1 counter", power: 1, toughness: 1 }), "+1/+1 +1/+1 counter");
+	assert.equal(ptRowText({ kind: "modifier", label: "Giant Growth", power: 3, toughness: 3,
+		layer: "pt_modify", duration: "until_end_of_turn" }), "+3/+3 from Giant Growth");
+	assert.equal(ptRowText({ kind: "total", power: 7, toughness: 7 }), "7/7");
+	assert.equal(ptRowText({ kind: "modifier", label: "Turn to Frog", power: 1, toughness: 1,
+		layer: "pt_set", note: "base becomes" }), "base becomes 1/1 from Turn to Frog");
+
+	// The side notes: layer, duration, and the honest source-gone case.
+	assert.equal(ptRowMeta({ kind: "modifier", layer: "pt_modify", duration: "until_end_of_turn" }),
+		"pt_modify · until end of turn");
+	assert.equal(ptRowMeta({ kind: "modifier", layer: "pt_modify", duration: "permanent" }), "pt_modify");
+	assert.equal(ptRowMeta({ kind: "modifier", layer: "pt_modify", duration: "while_source_present", source_gone: true }),
+		"pt_modify · while source present · not applied — source has left the battlefield");
+	assert.equal(ptRowMeta({ kind: "total", note: "P/T unknown" }), "P/T unknown");
+});
+
+test("changeRowText spells the non-P/T layers", () => {
+	assert.equal(changeRowText({ label: "Act of Treason", change: "controller → Bob" }),
+		"Act of Treason: controller → Bob");
+	assert.equal(changeRowText({ label: "Conspiracy", change: "gains Goblin" }),
+		"Conspiracy: gains Goblin");
+	assert.equal(changeRowText(null), "");
+});
+
+test("deathHeadline and damageRowText carry the rule and the sources", () => {
+	const rep = { name: "Snapdax", turn: 5, cause_note: "toughness was 0 or less (CR 704.5f)" };
+	assert.equal(deathHeadline(rep, "Bob adds Last Gasp"),
+		"Snapdax died on turn 5: toughness was 0 or less (CR 704.5f) — after Bob adds Last Gasp");
+	assert.equal(deathHeadline({ name: "Bear", cause_note: "x" }, ""),
+		"Bear died: x");
+	assert.equal(damageRowText({ amount: 1, source: "King Cheetah", deathtouch: true }),
+		"1 from King Cheetah (deathtouch — any amount is lethal)");
+	assert.equal(damageRowText({ amount: 3, source: "Lightning Bolt" }), "3 from Lightning Bolt");
+});
+
+test("turnHeadline names the turn's seat", () => {
+	assert.equal(turnHeadline(5, "Bob"), "Turn 5 — Bob");
+	assert.equal(turnHeadline(2, ""), "Turn 2 — ");
 });

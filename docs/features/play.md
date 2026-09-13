@@ -166,6 +166,47 @@ the resolver's SSE framing (meta carries the citations, delta the
 answer). It requires the LLM configured — unset means the judge button
 stays honest about being unreachable rather than failing mid-question.
 
+## Provenance — why is it 7/7, why did it die
+
+Every computed value on the board opens the rows that produced it. The
+deterministic half of the reasoning layer — no model, no tokens, a read
+over the log that answers in milliseconds:
+
+- **ⓘ on a permanent** — the characteristic stack, spelled row by row:
+
+  ```
+  base 2/2
+  +1/+1 from Glorious Anthem      (pt_modify · while source present)
+  +1/+1 +1/+1 counter
+  +3/+3 from Giant Growth         (pt_modify · until end of turn)
+  ────
+  7/7
+  ```
+
+  The walk is CR 613's layer order — the same computation the board
+  paints — so the trace and the number can never disagree. Non-P/T
+  changes ride along with their sources too: control, types, colors,
+  granted keywords. A `while source present` row whose source has since
+  left the battlefield is shown but marked *not applied* — history, not
+  arithmetic.
+- **ⓘ why on a death in the log** — the walk back from that `DIED` row:
+  the state-based action with its rule ("toughness was 0 or less — CR
+  704.5f", "damage from a deathtouch source — CR 702.2c"), the full
+  stack in force the *instant before* the death, the marked damage with
+  each source named, and the last table act that set the sweep off. A
+  rewind-and-refold to the moment, asserted rows only — viewers never
+  re-run CR 704.
+- **▸ on a turn row** — the turn's slice of the log, spelled by the
+  same voice the log pane uses.
+
+The panel is a row above the panes, never a modal — the board and the
+log keep moving under it, and a rewind closes it because the rows it
+spelled may no longer exist. The surfaces are `GET
+/api/games/{id}/objects/{oid}/trace` (optionally `?at=` an ordinal for
+a past moment), `GET /api/games/{id}/death/{ord}` and `GET
+/api/games/{id}/turns/{n}` — pure folds, nothing materialized, so a
+correction is reflected the moment it lands.
+
 ## Honesty rules the surface inherits
 
 - **Unknown is a value.** A hand the tracker was never told about reads

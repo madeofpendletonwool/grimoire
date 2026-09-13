@@ -49,10 +49,18 @@ func (s *State) Characteristics(id int64) Characteristics {
 	}
 
 	// The seven layers through pt_modify, in order. pt_switch waits: the
-	// switch is the last thing that happens to P/T, after counters.
+	// switch is the last thing that happens to P/T, after counters. A
+	// while_source_present modifier whose source is not on the
+	// battlefield (phased out with it, or a foreign log's dangling row)
+	// does not apply — CR 702.26k's "treated as though it doesn't
+	// exist" — and PTTrace is the surface that says which rows those
+	// were instead of silently keeping the bonus.
 	for _, layer := range layerOrder[:len(layerOrder)-1] {
 		for _, mod := range o.Modifiers {
 			if mod.Layer != layer {
+				continue
+			}
+			if modifierSourceGone(s, mod) {
 				continue
 			}
 			switch layer {
@@ -118,7 +126,7 @@ func (s *State) Characteristics(id int64) Characteristics {
 
 	// The switch, last of all.
 	for _, mod := range o.Modifiers {
-		if mod.Layer == LayerPTSwitch && mod.Delta.Swap {
+		if mod.Layer == LayerPTSwitch && mod.Delta.Swap && !modifierSourceGone(s, mod) {
 			power, toughness = toughness, power
 			break
 		}
@@ -151,6 +159,18 @@ type PTLine struct {
 	Layer     string `json:"layer,omitempty"`
 	Duration  string `json:"duration,omitempty"`
 	Note      string `json:"note,omitempty"`
+	// SourceGone marks a while_source_present row whose source object
+	// is no longer on the battlefield — rendered for the record, not
+	// applied to the total.
+	SourceGone bool `json:"source_gone,omitempty"`
+}
+
+// modifierSourceGone reports whether a modifier's source has left the
+// battlefield, which suspends the effect (CR 702.26k) and makes the
+// trace spell the row as history rather than arithmetic.
+func modifierSourceGone(s *State, mod Modifier) bool {
+	return mod.Duration == WhileSourcePresent && mod.SourceObj != 0 &&
+		!sourceOnBattlefield(s, mod.SourceObj)
 }
 
 // PTTrace renders the stack that produces an object's current power and
@@ -182,28 +202,41 @@ func (s *State) PTTrace(id int64) []PTLine {
 			if mod.Layer != layer {
 				continue
 			}
+			gone := modifierSourceGone(s, mod)
 			switch layer {
 			case LayerPTSet:
-				if mod.Delta.SetPower != nil {
-					power = *mod.Delta.SetPower
+				if !gone {
+					if mod.Delta.SetPower != nil {
+						power = *mod.Delta.SetPower
+					}
+					if mod.Delta.SetToughness != nil {
+						toughness = *mod.Delta.SetToughness
+					}
+					knownPT = true
 				}
-				if mod.Delta.SetToughness != nil {
-					toughness = *mod.Delta.SetToughness
-				}
-				knownPT = true
-				lines = append(lines, PTLine{Kind: "modifier", Label: mod.label(s),
+				line := PTLine{Kind: "modifier", Label: mod.label(s),
 					Layer: string(mod.Layer), Duration: string(mod.Duration),
-					Power: power, Toughness: toughness, Note: "base becomes"})
+					Power: power, Toughness: toughness, Note: "base becomes"}
+				if gone {
+					line.SourceGone, line.Note = true, "source has left the battlefield — not applied"
+				}
+				lines = append(lines, line)
 			case LayerPTModify:
-				if mod.Delta.Power != nil {
-					power += *mod.Delta.Power
+				if !gone {
+					if mod.Delta.Power != nil {
+						power += *mod.Delta.Power
+					}
+					if mod.Delta.Toughness != nil {
+						toughness += *mod.Delta.Toughness
+					}
 				}
-				if mod.Delta.Toughness != nil {
-					toughness += *mod.Delta.Toughness
-				}
-				lines = append(lines, PTLine{Kind: "modifier", Label: mod.label(s),
+				line := PTLine{Kind: "modifier", Label: mod.label(s),
 					Layer: string(mod.Layer), Duration: string(mod.Duration),
-					Power: deref(mod.Delta.Power), Toughness: deref(mod.Delta.Toughness)})
+					Power: deref(mod.Delta.Power), Toughness: deref(mod.Delta.Toughness)}
+				if gone {
+					line.SourceGone, line.Note = true, "source has left the battlefield — not applied"
+				}
+				lines = append(lines, line)
 			}
 		}
 	}
@@ -218,12 +251,19 @@ func (s *State) PTTrace(id int64) []PTLine {
 		lines = append(lines, PTLine{Kind: "counter", Label: "-1/-1 counter", Power: -n, Toughness: -n})
 	}
 	for _, mod := range o.Modifiers {
-		if mod.Layer == LayerPTSwitch && mod.Delta.Swap {
-			power, toughness = toughness, power
+		if mod.Layer != LayerPTSwitch || !mod.Delta.Swap {
+			continue
+		}
+		if modifierSourceGone(s, mod) {
 			lines = append(lines, PTLine{Kind: "modifier", Label: mod.label(s),
-				Layer: string(mod.Layer), Duration: string(mod.Duration), Note: "P/T swapped"})
+				Layer: string(mod.Layer), Duration: string(mod.Duration),
+				Note: "P/T swapped", SourceGone: true})
 			break
 		}
+		power, toughness = toughness, power
+		lines = append(lines, PTLine{Kind: "modifier", Label: mod.label(s),
+			Layer: string(mod.Layer), Duration: string(mod.Duration), Note: "P/T swapped"})
+		break
 	}
 	if knownPT {
 		lines = append(lines, PTLine{Kind: "total", Label: "total", Power: power, Toughness: toughness})
