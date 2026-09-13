@@ -52,6 +52,7 @@ import (
 	"github.com/madeofpendletonwool/grimoire/internal/study"
 	"github.com/madeofpendletonwool/grimoire/internal/table"
 	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
+	"github.com/madeofpendletonwool/grimoire/internal/table/intent"
 	"github.com/madeofpendletonwool/grimoire/internal/table/universe"
 	"github.com/madeofpendletonwool/grimoire/internal/transcribe"
 	"github.com/madeofpendletonwool/grimoire/internal/uistate"
@@ -183,6 +184,11 @@ type Server struct {
 	// name-resolution cache in front. Wired with WithUniverse; nil
 	// disables the resolve endpoint (the game endpoints work on).
 	universe *universe.Store
+	// The Magic table's intent pipeline (MAD-331): table talk through
+	// the grammar, the LLM fallback behind it, and the confirmation
+	// ladder with its unresolved tray. Wired with WithIntent; nil
+	// disables the talk and pending endpoints.
+	intent *intent.Store
 	// The optional audio→transcript hook (MAD-320): an OpenAI-compatible
 	// transcription client plus its job worker. Wired with WithTranscriber;
 	// nil (or unconfigured) means the affordance is not there.
@@ -308,6 +314,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/games/{id}/start", s.handleStartGame)
 	mux.HandleFunc("POST /api/games/{id}/actions", s.handleSubmitAction)
 	mux.HandleFunc("POST /api/games/{id}/resolve", s.handleResolveName)
+	mux.HandleFunc("POST /api/games/{id}/intent", s.handleIntent)
+	mux.HandleFunc("GET /api/games/{id}/pending", s.handlePendingList)
+	mux.HandleFunc("POST /api/games/{id}/pending/{pid}", s.handlePendingAnswer)
 	mux.HandleFunc("GET /api/games/{id}/events", s.handleGameEvents)
 	mux.HandleFunc("GET /api/games/{id}/stream", s.handleGameStream)
 	mux.HandleFunc("POST /api/games/{id}/rewind", s.handleRewindGame)

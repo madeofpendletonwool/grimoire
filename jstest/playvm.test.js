@@ -11,7 +11,7 @@ import {
 	stepLabel, seatName, turnLine, formatCount, objectName, ptLine, computedPT,
 	computedTypes, isType, counterChips, commanderTax, zoneTally,
 	defaultActingSeat, canPass, describeEvent, lastActionBatch, actionBatchAt,
-	actionSummary, baseCharsFromCard,
+	actionSummary, baseCharsFromCard, confirmHighlight,
 } from "../web/static/js/playvm.js";
 
 /* ---------- fixtures ---------- */
@@ -315,4 +315,20 @@ test("baseCharsFromCard declares only what the lookup actually carries", () => {
 	const hybrid = baseCharsFromCard({ name: "Figure of Destiny", mana_cost: "{R/W}" });
 	assert.deepEqual(hybrid.colors.sort(), ["R", "W"]);
 	assert.deepEqual(baseCharsFromCard(null), {});
+});
+
+/* ---------- the confirmation ladder's pane emphasis (MAD-331) ---------- */
+
+test("confirmHighlight marks an optimistic application until acknowledged", () => {
+	const confirmBatch = { to: 12, action: { kind: "CAST", disposition: "confirm" } };
+	const autoBatch = { to: 12, action: { kind: "CHANGE_LIFE", disposition: "auto" } };
+	// Fresh and confirm-rung: marked.
+	assert.equal(confirmHighlight(confirmBatch, 10), true);
+	// Acknowledged: the mark clears even though the disposition rides on.
+	assert.equal(confirmHighlight(confirmBatch, 12), false);
+	assert.equal(confirmHighlight(confirmBatch, 20), false);
+	// Auto never needed a look.
+	assert.equal(confirmHighlight(autoBatch, 10), false);
+	// No batch, no mark.
+	assert.equal(confirmHighlight(null, 0), false);
 });

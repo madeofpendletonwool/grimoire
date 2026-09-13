@@ -104,6 +104,23 @@ func (s *Store) Record(ctx context.Context, gameID, spoken, card string) error {
 	return s.write(ctx, gameID, key, strings.TrimSpace(card), MethodManual, ConfManual)
 }
 
+// RecordLLM writes the model fallback's identification (MAD-331, the
+// llm tier): the grammar refused the utterance and the model named the
+// card against the known-card universe. Capped at ConfLLM by the
+// caller's honesty, whatever the model claimed — a model identification
+// is worth the confirm rung at best, and the cache must not launder it
+// into a higher one on replay.
+func (s *Store) RecordLLM(ctx context.Context, gameID, spoken, card string, confidence float64) error {
+	key := carddb.NormalizeName(spoken)
+	if key == "" || strings.TrimSpace(card) == "" {
+		return fmt.Errorf("%w: a model identification needs both the spoken name and the card", ErrInvalid)
+	}
+	if confidence > ConfLLM {
+		confidence = ConfLLM
+	}
+	return s.write(ctx, gameID, key, strings.TrimSpace(card), MethodLLM, confidence)
+}
+
 // write is the single INSERT the cache ever does. OR REPLACE because the
 // cache miss and a concurrent correction can race, and the correction —
 // being human — is the winner either way if it lands last.

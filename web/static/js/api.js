@@ -1260,6 +1260,34 @@ export const api = {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ at, action }),
 		}).then(json),
+
+	// Table talk (MAD-331): one utterance through the intent pipeline —
+	// grammar first, the model fallback behind it, the confirmation
+	// ladder over both.
+	gameIntent: (id, seat, text, source = "") =>
+		fetch(`/api/games/${encodeURIComponent(id)}/intent`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ seat, text, source }),
+		}).then(json),
+
+	// The unresolved tray (MAD-331): open questions beside the log.
+	gamePending: (id) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/pending`).then(json),
+
+	gamePendingAnswer: (id, pid, answer, seat) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/pending/${encodeURIComponent(pid)}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ answer, seat }),
+		}).then(json),
+
+	gamePendingDismiss: (id, pid) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/pending/${encodeURIComponent(pid)}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ dismiss: true }),
+		}).then(json),
 };
 
 /**

@@ -103,6 +103,35 @@ func sortInts(v []int) {
 
 /* ---------- battlefield objects ---------- */
 
+// SeatBySpoken resolves a spoken seat reference against the state —
+// the exported half of seatByToken, for the model fallback's gate
+// (MAD-331): a model that names a target by name is resolved by the
+// same deterministic lookup the grammar trusts, never by a guess.
+func SeatBySpoken(st *engine.State, seat int, spoken string) (int, bool) {
+	if st == nil {
+		return 0, false
+	}
+	g := &game{ctx: context.Background(), st: st, seat: seat}
+	return g.seatByToken(spoken)
+}
+
+// ObjectBySpoken finds the battlefield object a spoken card name means —
+// the exported half of objectBySpan with no state preference, for the
+// model fallback's gate: the model references objects by name and the
+// engine resolves the name to an id. multi reports a name that matched
+// several objects; the caller decides whether that is its business.
+func ObjectBySpoken(st *engine.State, seat int, spoken string) (obj *engine.Object, multi bool, ok bool) {
+	if st == nil {
+		return nil, false, false
+	}
+	g := &game{ctx: context.Background(), st: st, seat: seat}
+	ref, found := g.objectBySpan(spoken, nil)
+	if !found {
+		return nil, false, false
+	}
+	return ref.obj, ref.multi, true
+}
+
 // objRef is one name's answer from the battlefield: the object, whether
 // the name matched several (confidence territory), and whether it matched
 // at all.

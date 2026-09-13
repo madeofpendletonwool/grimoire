@@ -72,6 +72,42 @@ you make is an action the engine validated; there is no second write path.
   attacker; the engine owns the damage arithmetic (first strike,
   trample, deathtouch, lifelink and friends) when you resolve.
 
+## Talking to the table
+
+The **say** strip under the current action takes table talk — typed now,
+push-to-talk in the next stage. Every utterance walks the same pipeline:
+the deterministic grammar first (instant, offline, consistent), and what
+it refuses goes to the model fallback, which sees the live game state
+and the known-card universe and is gated onto the same deterministic
+lookups the grammar trusts. A model reply that invents a card, misnames
+a seat, or reaches outside its small action vocabulary is refused — a
+no-parse, never a guess.
+
+What comes back is the **confirmation ladder's** verdict, and the
+verdict decides what you see:
+
+- **auto** — high confidence on a cheap-to-undo shape (life,
+  tap/untap, draws, land drops, damage, pass). Applied immediately; its
+  log entry's `⟲` is the one-tap undo. Nothing the model emits ever
+  lands here — the auto tier is the deterministic layers' alone.
+- **confirm** — applied optimistically and marked *"applied with a
+  look"* until you `✓` it. `✎ not it` corrects it in the usual two
+  taps. Fuzzy card identification and everything the model parsed live
+  here.
+- **ask** — genuinely ambiguous, **not applied**. The question appears
+  in the strip below with tappable answers (the deck's candidate
+  cards); one tap applies the answer's action and caches the
+  identification, so the same mumble is never re-asked. A question that
+  cannot be reduced to tappable answers is *parked* instead — it waits
+  in the strip with a typed-answer box while the log keeps moving.
+  Rewinding past the entry a question was asked about closes it.
+
+`POST /api/games/{id}/intent` is the pipeline's surface (`{seat,
+text}`), and `GET /api/games/{id}/pending` plus `POST
+/api/games/{id}/pending/{pid}` are the tray's. No path through the
+pipeline can block the log: questions are rows beside it, never a modal
+over it.
+
 ## Honesty rules the surface inherits
 
 - **Unknown is a value.** A hand the tracker was never told about reads

@@ -3127,6 +3127,55 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .play-current-actions { display: flex; gap: var(--sp-1); flex: none; }
 .play-current-meta { font-size: var(--fs-xs); color: var(--ink-soft); flex-basis: 100%; min-height: 1em; }
 .play-current-meta.warn { color: var(--gold-bright); }
+/* An optimistic application (the ladder's confirm rung) stays marked:
+   worth a look, accept or fix one tap away, until acknowledged. */
+.play-current.is-confirm { background: color-mix(in srgb, var(--gold-bright) 7%, transparent); }
+.play-current.is-confirm .play-current-text::after {
+	content: " · applied with a look";
+	font-size: var(--fs-xs);
+	color: var(--gold-bright);
+}
+
+/* Table talk (MAD-331): say what happened, the ladder lands it. */
+.play-talk {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	padding: var(--sp-2) var(--sp-3);
+	border-top: 1px solid var(--stone-line);
+}
+.play-talk-icon { font-family: var(--font-prose); color: var(--ink-soft); flex: none; }
+.play-talk-input { flex: 1; min-width: 12em; }
+
+/* Open questions: asked ones with tappable answers, parked ones with a
+   typed answer — riding beside the log, never blocking it. */
+.play-questions { flex: none; display: flex; flex-direction: column; gap: var(--sp-1); padding: 0 var(--sp-3) var(--sp-2); }
+.play-question {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1) var(--sp-2);
+	padding: var(--sp-1) var(--sp-2);
+	border: 1px solid var(--stone-line);
+	font-family: var(--font-prose);
+	font-size: var(--fs-sm);
+}
+.play-question.is-asked { border-color: color-mix(in srgb, var(--gold-bright) 45%, var(--stone-line)); }
+.play-question-text { flex: 1; min-width: 10em; }
+.play-question-opt { flex: none; }
+.play-question-form { display: flex; gap: var(--sp-1); flex: 1; min-width: 10em; }
+.play-question-input { flex: 1; min-width: 8em; }
+.play-question-x {
+	flex: none;
+	background: none;
+	border: none;
+	color: var(--ink-soft);
+	cursor: pointer;
+	font-size: var(--fs-sm);
+	padding: 0 var(--sp-1);
+}
+.play-question-x:hover { color: var(--gold-bright); }
 
 /* The composer: card entry with live autocomplete, then the rarer taps
    folded away behind one summary. */
