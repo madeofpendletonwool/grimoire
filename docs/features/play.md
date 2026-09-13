@@ -74,14 +74,35 @@ you make is an action the engine validated; there is no second write path.
 
 ## Talking to the table
 
-The **say** strip under the current action takes table talk — typed now,
-push-to-talk in the next stage. Every utterance walks the same pipeline:
-the deterministic grammar first (instant, offline, consistent), and what
-it refuses goes to the model fallback, which sees the live game state
-and the known-card universe and is gated onto the same deterministic
-lookups the grammar trusts. A model reply that invents a card, misnames
-a seat, or reaches outside its small action vocabulary is refused — a
-no-parse, never a guess.
+The **say** strip under the current action takes table talk — typed, or
+spoken through the **hold-to-talk mic** beside it. Every utterance walks
+the same pipeline: the deterministic grammar first (instant, offline,
+consistent), and what it refuses goes to the model fallback, which sees
+the live game state and the known-card universe and is gated onto the
+same deterministic lookups the grammar trusts. A model reply that
+invents a card, misnames a seat, or reaches outside its small action
+vocabulary is refused — a no-parse, never a guess.
+
+**Push-to-talk, not ambient listening** — a deliberate v1 choice.
+Cross-talk at a four-player table is unsolved, and holding the button
+solves speaker attribution for free: **the seat the *acting as* picker
+names is the seat that spoke**. Hold the mic, say it, release; the
+transcript enters the say strip's pipeline marked as voice, and the
+ladder lands it exactly as a typed utterance lands.
+
+The mic takes whichever path this browser and install can offer, and is
+simply absent when neither exists — the same "unset means not there"
+contract the embeddings keep:
+
+- **Web Speech** (Chrome/Edge over HTTPS) — the interim transcript
+  streams into the current-action pane while you hold, so a misheard
+  word is visible *before* it becomes an action.
+- **The server endpoint** (Firefox, Safari — any browser that can record
+  a clip, when `TRANSCRIBE_MODEL` is configured) — the clip is posted on
+  release and transcribed through the same OpenAI-compatible endpoint
+  the session audio hook uses ([ADR 5](../decisions.md)). The clip is
+  never written to disk; it goes from the request to the endpoint and
+  stops existing.
 
 What comes back is the **confirmation ladder's** verdict, and the
 verdict decides what you see:
@@ -104,9 +125,10 @@ verdict decides what you see:
 
 `POST /api/games/{id}/intent` is the pipeline's surface (`{seat,
 text}`), and `GET /api/games/{id}/pending` plus `POST
-/api/games/{id}/pending/{pid}` are the tray's. No path through the
-pipeline can block the log: questions are rows beside it, never a modal
-over it.
+/api/games/{id}/pending/{pid}` are the tray's. The mic's server path is
+`POST /api/games/{id}/transcribe` — one short clip in, its transcript
+out, in the same request. No path through the pipeline can block the
+log: questions are rows beside it, never a modal over it.
 
 ## Honesty rules the surface inherits
 

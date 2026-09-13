@@ -1683,11 +1683,16 @@
 				<span class="play-current-meta" id="play-current-meta" aria-live="polite"></span>
 			</div>
 
-			<!-- Table talk (MAD-331): say what happened. The grammar or
-			     the model parses it; the confirmation ladder decides how
-			     it lands — applied immediately, applied with a highlight,
-			     or asked about, never a blocking modal. -->
+		<!-- Table talk (MAD-331): say what happened. The grammar or
+		     the model parses it; the confirmation ladder decides how
+		     it lands — applied immediately, applied with a highlight,
+		     or asked about, never a blocking modal. The mic (MAD-332)
+		     is hold-to-talk: hold to speak, release to say it. It is
+		     hidden until the client knows a voice path exists — Web
+		     Speech here, or the install's transcription endpoint. -->
 			<form class="play-talk" id="play-talk" autocomplete="off">
+				<button type="button" class="play-talk-mic" id="play-talk-mic" hidden
+					aria-label="Hold to talk" title="Hold to talk — release to say it" data-gi="mic"></button>
 				<span class="play-talk-icon" aria-hidden="true">“”</span>
 				<input class="enc-field play-talk-input" id="play-say" type="text" maxlength="200"
 					placeholder="Say it — cast Rhystic · Bob takes 3 · make two Treasures…"

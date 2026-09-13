@@ -11,7 +11,7 @@ import {
 	stepLabel, seatName, turnLine, formatCount, objectName, ptLine, computedPT,
 	computedTypes, isType, counterChips, commanderTax, zoneTally,
 	defaultActingSeat, canPass, describeEvent, lastActionBatch, actionBatchAt,
-	actionSummary, baseCharsFromCard, confirmHighlight,
+	actionSummary, baseCharsFromCard, confirmHighlight, voicePlan,
 } from "../web/static/js/playvm.js";
 
 /* ---------- fixtures ---------- */
@@ -331,4 +331,23 @@ test("confirmHighlight marks an optimistic application until acknowledged", () =
 	assert.equal(confirmHighlight(autoBatch, 10), false);
 	// No batch, no mark.
 	assert.equal(confirmHighlight(null, 0), false);
+});
+
+/* ---------- push-to-talk's path decision (MAD-332) ---------- */
+
+test("voicePlan: Web Speech wins, the server path backs it up, else absent", () => {
+	// Web Speech here: interims are the point, even when the server
+	// endpoint is also configured.
+	assert.equal(voicePlan({ webSpeech: true, recorder: true, serverTranscribe: true }), "web");
+	assert.equal(voicePlan({ webSpeech: true, recorder: false, serverTranscribe: false }), "web");
+	// No Web Speech (Firefox, Safari): a recorder plus the configured
+	// endpoint is the server path.
+	assert.equal(voicePlan({ webSpeech: false, recorder: true, serverTranscribe: true }), "server");
+	// The endpoint unset means the affordance is simply absent — the
+	// EMBEDDINGS_* contract — and a browser that cannot record a clip
+	// has no path either.
+	assert.equal(voicePlan({ webSpeech: false, recorder: true, serverTranscribe: false }), null);
+	assert.equal(voicePlan({ webSpeech: false, recorder: false, serverTranscribe: true }), null);
+	assert.equal(voicePlan({ webSpeech: false, recorder: false, serverTranscribe: false }), null);
+	assert.equal(voicePlan(), null);
 });

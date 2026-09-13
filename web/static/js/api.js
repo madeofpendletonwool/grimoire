@@ -1271,6 +1271,18 @@ export const api = {
 			body: JSON.stringify({ seat, text, source }),
 		}).then(json),
 
+	// Push-to-talk's server path (MAD-332): one held button's clip to
+	// the configured transcription endpoint, its transcript back in the
+	// same request. The filename's extension names the container.
+	gameTranscribe: (id, blob, filename) => {
+		const body = new FormData();
+		body.set("file", blob, filename);
+		return fetch(`/api/games/${encodeURIComponent(id)}/transcribe`, {
+			method: "POST",
+			body,
+		}).then(json);
+	},
+
 	// The unresolved tray (MAD-331): open questions beside the log.
 	gamePending: (id) =>
 		fetch(`/api/games/${encodeURIComponent(id)}/pending`).then(json),

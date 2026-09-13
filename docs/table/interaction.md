@@ -120,6 +120,13 @@ visible *before* it becomes an action, and the resolved phrase lands on the
 ladder like any other input. Ambient listening, diarisation, and cameras are
 later experiments; nothing in the plan depends on them.
 
+Two paths serve one gesture: the browser's Web Speech API where it exists
+(Chrome/Edge — that is where the live interim transcript comes from), and
+otherwise a recorded clip sent to the configured transcription endpoint (ADR
+5's seam, the same one the campaign audio hook uses) when the install has
+one. A browser with neither offers no mic at all — the affordance is absent,
+not degraded.
+
 ## What the engine refuses
 
 The refusals are the product's honesty, and they are load-bearing:

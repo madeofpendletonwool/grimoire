@@ -401,6 +401,21 @@ export function confirmHighlight(batch, acknowledged) {
 		&& batch?.action?.disposition === "confirm";
 }
 
+/**
+ * Which voice path the play surface offers (MAD-332), from three
+ * capabilities: Web Speech here, a clip recorder here, and the install's
+ * transcription endpoint configured. Web Speech wins whenever it exists
+ * — interim results are the point — and the server path is the fallback
+ * for the browsers without it (Firefox, Safari). Anything else is no
+ * path, and no path means the hold-to-talk button is simply absent, the
+ * same "unset means not there" contract EMBEDDINGS_* keeps.
+ */
+export function voicePlan({ webSpeech, recorder, serverTranscribe } = {}) {
+	if (webSpeech) return "web";
+	if (recorder && serverTranscribe) return "server";
+	return null;
+}
+
 /** The current-action pane's headline: the sentence for a submitted action. */
 export function actionSummary(action, state) {
 	if (!action) return "";

@@ -238,6 +238,10 @@ loads from a third party unless the operator pointed it there on purpose**.
   `up` stays small.
 - Transcription is skippable and off the critical path. The canon engine is
   fully usable with pasted text.
+- One configured endpoint, two consumers (MAD-332): the Magic table's
+  push-to-talk sends a held button's worth of audio through the same seam —
+  in-request, never persisted — so browsers without the Web Speech API get
+  the server path with no second endpoint to configure.
 
 ---
 

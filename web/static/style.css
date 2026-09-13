@@ -3147,6 +3147,43 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 }
 .play-talk-icon { font-family: var(--font-prose); color: var(--ink-soft); flex: none; }
 .play-talk-input { flex: 1; min-width: 12em; }
+/* Hold-to-talk (MAD-332): the mic beside the say strip. Holding is the
+   whole gesture — touch-action none so a finger hold never scrolls,
+   and the live state reads as the button being held down. */
+.play-talk-mic {
+	flex: none;
+	width: 2.2rem;
+	height: 2.2rem;
+	display: grid;
+	place-items: center;
+	padding: 0;
+	border: 1px solid var(--stone-line);
+	border-radius: var(--r-sm);
+	background: var(--stone-700);
+	color: var(--parchment);
+	cursor: pointer;
+	opacity: 0.75;
+	font-size: var(--fs-sm);
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+	transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.play-talk-mic:hover { opacity: 1; }
+.play-talk-mic.is-live {
+	background: var(--accent);
+	border-color: var(--accent-deep);
+	color: #fff;
+	opacity: 1;
+	animation: voice-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.play-talk-mic.is-live { animation: none; }
+}
+/* The pane while a hold is live: the interim transcript's stage. The
+   label swaps to what is happening; the text grows as words arrive. */
+.play-current.is-listening .play-current-label { color: var(--gold-bright); }
+.play-current.is-listening .play-current-text { color: var(--gold-bright); font-style: italic; }
 
 /* Open questions: asked ones with tappable answers, parked ones with a
    typed answer — riding beside the log, never blocking it. */
