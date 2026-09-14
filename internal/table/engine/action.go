@@ -26,6 +26,7 @@ const (
 	ActionCast             ActionKind = "CAST"
 	ActionActivate         ActionKind = "ACTIVATE"
 	ActionDeclareTrigger   ActionKind = "DECLARE_TRIGGER"
+	ActionOrderTriggers    ActionKind = "ORDER_TRIGGERS"
 	ActionMoveZone         ActionKind = "MOVE_ZONE"
 	ActionCreateToken      ActionKind = "CREATE_TOKEN"
 	ActionTap              ActionKind = "TAP"
@@ -184,6 +185,10 @@ type Action struct {
 
 	// DECLARE_EFFECT / DECLARE_TRIGGER: the declared shape or prose.
 	Effect string `json:"effect,omitempty"`
+
+	// ORDER_TRIGGERS: the waiting triggers' fired ords in their new
+	// order — the actor may permute only their own entries (MAD-335).
+	Order []int64 `json:"order,omitempty"`
 
 	// ADD_MODIFIER / REMOVE_MODIFIER.
 	Modifier   *Modifier `json:"modifier,omitempty"`

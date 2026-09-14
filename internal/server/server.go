@@ -326,6 +326,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/games/{id}/objects/{oid}/trace", s.handleObjectTrace)
 	mux.HandleFunc("GET /api/games/{id}/death/{ord}", s.handleDeathTrace)
 	mux.HandleFunc("GET /api/games/{id}/turns/{n}", s.handleTurnSlice)
+	// The trigger registry (MAD-335): registered card knowledge fired on
+	// structural events, the registration surface itself, the model's
+	// proposal half, and the don't-forget nudges.
+	mux.HandleFunc("GET /api/games/{id}/triggers", s.handleTriggerList)
+	mux.HandleFunc("POST /api/games/{id}/triggers", s.handleTriggerRegister)
+	mux.HandleFunc("DELETE /api/games/{id}/triggers", s.handleTriggerDelete)
+	mux.HandleFunc("POST /api/games/{id}/triggers/propose", s.handleTriggerPropose)
+	mux.HandleFunc("GET /api/games/{id}/nudges", s.handleNudges)
 	mux.HandleFunc("GET /api/encounters", s.handleListEncounters)
 	mux.HandleFunc("POST /api/encounters", s.handleCreateEncounter)
 	mux.HandleFunc("GET /api/encounters/{id}", s.handleGetEncounter)

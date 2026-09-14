@@ -28,6 +28,13 @@ func (s *Store) AmendAt(ctx context.Context, gameID string, ord int64, action Ac
 	if ord < 1 {
 		return nil, nil, fmt.Errorf("%w: amend ordinal %d is not a log row", ErrInvalid, ord)
 	}
+	// The registry loads before the transaction opens: the database
+	// handle allows a single connection, so no query may run while the
+	// transaction holds it.
+	reg, err := s.TriggerRegistry(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("amend tx: %w", err)
@@ -49,10 +56,12 @@ func (s *Store) AmendAt(ctx context.Context, gameID string, ord int64, action Ac
 	}
 
 	// The correction validates against the surviving prefix, inside the
-	// transaction: a rejection rolls the truncate back with it.
+	// transaction: a rejection rolls the truncate back with it. The
+	// registry (MAD-335) plays on the correction exactly as it would
+	// have on the row it replaces.
 	prefix := evs[:lo]
 	state := Fold(prefix)
-	fresh, err := Apply(state, action)
+	fresh, err := ApplyWithTriggers(state, action, reg)
 	if err != nil {
 		return nil, nil, err
 	}

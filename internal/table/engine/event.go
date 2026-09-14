@@ -41,7 +41,8 @@ const (
 	EventUnattached        EventKind = "UNATTACHED"
 	EventModifierAdded     EventKind = "MODIFIER_ADDED"
 	EventModifierRemoved   EventKind = "MODIFIER_REMOVED"
-	EventTriggerFired      EventKind = "TRIGGER_FIRED" // queues; stacks at the next priority grant
+	EventTriggerFired      EventKind = "TRIGGER_FIRED"    // queues; stacks at the next priority grant
+	EventTriggersOrdered   EventKind = "TRIGGERS_ORDERED" // the queue reordered by its owner (MAD-335)
 	EventCardDrawn         EventKind = "CARD_DRAWN"
 	EventCardKnown         EventKind = "CARD_KNOWN"
 	EventCardRevealed      EventKind = "CARD_REVEALED"
@@ -175,6 +176,10 @@ type Event struct {
 
 	// TRIGGER_FIRED / EFFECT_DECLARED: the declared spec or prose.
 	Effect string `json:"effect,omitempty"`
+
+	// TRIGGERS_ORDERED: the waiting triggers' fired ords, in the order
+	// their controller chose (MAD-335).
+	Order []int64 `json:"order,omitempty"`
 }
 
 // Public builds a public event stamped with the action's audit trail.

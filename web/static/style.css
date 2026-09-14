@@ -3197,6 +3197,14 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .play-stack-item.is-top { color: var(--gold-bright); }
 .play-stack-item.is-trigger { color: var(--ink-soft); font-style: italic; }
 .play-stack-item .enc-btn { margin-left: auto; }
+.play-stack-item .play-queue-mark {
+	flex: none;
+	font-size: var(--fs-xs);
+	color: var(--gold-bright);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+.play-queue-move { padding: 0 6px; }
 .play-stack-who { font-size: var(--fs-xs); opacity: 0.7; }
 
 /* The context strip: the board pane's second row, never over the log. */
@@ -3368,6 +3376,37 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 	padding: 0 var(--sp-1);
 }
 .play-question-x:hover { color: var(--gold-bright); }
+
+/* The don't-forget nudges (MAD-335): chips riding the current-action
+   pane — a trigger waiting to stack, one unresolved on the stack, an
+   unused attack trigger. */
+.play-nudges { flex: none; display: flex; flex-wrap: wrap; gap: var(--sp-1); padding: 0 var(--sp-3) var(--sp-2); }
+.play-nudge {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sp-1);
+	padding: 2px var(--sp-2);
+	border: 1px solid color-mix(in srgb, var(--gold-bright) 45%, var(--stone-line));
+	color: var(--gold-bright);
+	font-family: var(--font-prose);
+	font-size: var(--fs-xs);
+}
+.play-nudge.is-hint { border-color: var(--stone-line); color: var(--ink-soft); }
+
+/* The trigger registration strip (MAD-335): one card's rows, the
+   register form, the propose button. */
+.play-trig-row {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sp-1);
+	padding: 2px var(--sp-2);
+	border: 1px solid var(--stone-line);
+	font-size: var(--fs-xs);
+}
+.play-trig-form { flex-wrap: nowrap; }
+.play-trig-form .enc-field { min-width: 0; }
+.play-trig-form select.enc-field { max-width: 15em; }
+.play-trig-form input.enc-field { width: 14em; }
 
 /* The composer: card entry with live autocomplete, then the rarer taps
    folded away behind one summary. */
