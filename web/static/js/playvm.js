@@ -284,8 +284,9 @@ export function describeEvent(ev, state) {
 		case "MODIFIER_REMOVED":
 			return `${objName(ev.object)}: effect ends`;
 		case "TRIGGER_FIRED":
-			return `${ev.card || objName(ev.source_obj)} triggers`;
-		case "CARD_DRAWN":
+			return `${ev.card || objName(ev.source_obj)} triggers${ev.effect ? ` — ${ev.effect}` : ""}`;
+		case "TRIGGERS_ORDERED":
+			return `orders ${(ev.order || []).length} waiting trigger${(ev.order || []).length === 1 ? "" : "s"}`;		case "CARD_DRAWN":
 			return `${who(ev.target_seat)} draws ${ev.count}`;
 		case "CARD_KNOWN":
 			return `${who(ev.target_seat)} knows ${(ev.cards || []).join(", ")}`;
@@ -402,6 +403,75 @@ export function damageRowText(d) {
 /** The turn slice's headline: "Turn 3 — Bob". */
 export function turnHeadline(n, seat) {
 	return `Turn ${n} — ${seat || ""}`;
+}
+
+/* ---------- the trigger registry (MAD-335) ---------- */
+
+/** The registry's event vocabulary, spelled the way the registration
+ *  picker and the nudges read it. The engine's scope semantics ride
+ *  with each label. */
+export const TRIGGER_KINDS = [
+	{ value: "OPPONENT_CASTS_SPELL", label: "whenever an opponent casts" },
+	{ value: "LAND_PLAYED", label: "whenever you play a land" },
+	{ value: "CREATURE_ETB", label: "whenever your creature enters" },
+	{ value: "UPKEEP", label: "at your upkeep" },
+	{ value: "ATTACKS", label: "whenever this attacks" },
+	{ value: "DIES", label: "whenever your creature dies (or this dies)" },
+	{ value: "END_STEP", label: "at your end step" },
+];
+
+/** triggerKindLabel spells a kind's value with its label. */
+export function triggerKindLabel(kind) {
+	const row = TRIGGER_KINDS.find((k) => k.value === kind);
+	return row ? row.label : kind;
+}
+
+/** One registration row: "whenever an opponent casts — may draw". */
+export function triggerRowText(row) {
+	if (!row) return "";
+	return `${triggerKindLabel(row.event_kind)} — ${row.effect}`;
+}
+
+/** One don't-forget reminder, spelled: a waiting trigger, an
+ *  unresolved one on the stack, an unused attack trigger. Pure
+ *  derivation from the nudge the server derived. */
+export function nudgeText(nudge) {
+	if (!nudge) return "";
+	const card = nudge.card || "a trigger";
+	switch (nudge.kind) {
+		case "waiting": return `${card} is waiting to stack — ${nudge.effect || "resolve it"}`;
+		case "unresolved": return `${card}'s trigger is unresolved — ${nudge.effect || "resolve it"}`;
+		case "unused_attack": return `unused attack trigger: ${card}${nudge.effect ? ` — ${nudge.effect}` : ""}`;
+		default: return `${card}: ${nudge.kind}`;
+	}
+}
+
+/** The waiting queue in resolution order: the engine flushes the queue
+ *  head first and pushed-first resolves last, so the LAST queue entry
+ *  resolves FIRST. The pending panel lists that order — the row on top
+ *  is the trigger that goes off first. */
+export function queueResolutionOrder(queue) {
+	return (queue || []).slice().reverse();
+}
+
+/** The new full queue order (fired ords, engine flush order) after
+ *  moving one entry one step in RESOLUTION order: sooner = true moves
+ *  it toward resolving first, sooner = false toward resolving last.
+ *  The entry only moves past entries of its own controller — other
+ *  seats' order was never the mover's to choose, and the engine
+ *  rejects exactly that. Returns null when there is nowhere to move. */
+export function queueOrderAfterMove(queue, firedOrd, sooner) {
+	const q = (queue || []).slice();
+	const i = q.findIndex((x) => x.fired_ord === firedOrd);
+	if (i < 0) return null;
+	// Resolution order is reversed queue order: resolving sooner is
+	// moving later in the queue array.
+	const step = sooner ? 1 : -1;
+	let j = i + step;
+	while (j >= 0 && j < q.length && q[j].controller !== q[i].controller) j += step;
+	if (j < 0 || j >= q.length) return null;
+	[q[i], q[j]] = [q[j], q[i]];
+	return q.map((x) => x.fired_ord);
 }
 
 /* ---------- the current action ---------- */
@@ -533,6 +603,8 @@ export function actionSummary(action, state) {
 		case "CONCEDE": return `${who(action.seat)}concedes`;
 		case "SET_ZONE_COUNT": return `${names[action.target_seat || action.seat] || ""}'s ${action.zone} → ${action.to}`;
 		case "REVEAL": return `${who(action.seat)}reveals ${(action.cards || []).join(", ")}`;
+		case "DECLARE_TRIGGER": return `${who(action.seat)}declares a trigger — ${action.effect || ""}`;
+		case "ORDER_TRIGGERS": return `${who(action.seat)}orders the waiting triggers`;
 		default: return action.kind;
 	}
 }

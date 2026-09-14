@@ -155,13 +155,16 @@ type StackItem struct {
 // TriggerItem is one triggered ability waiting to go on the stack. The
 // queue is distinct from the stack on purpose (CR 603.2c/117.5): triggers
 // that fire mid-resolution wait in it for the next priority grant rather
-// than interleaving with the object still resolving.
+// than interleaving with the object still resolving. FiredOrd is the
+// ordinal of the TRIGGER_FIRED row that queued the item — the stable
+// identity ORDER_TRIGGERS addresses (MAD-335).
 type TriggerItem struct {
 	SourceObj  int64    `json:"source_obj,omitempty"`
 	Card       string   `json:"card,omitempty"`
 	Effect     string   `json:"effect,omitempty"`
 	Controller int      `json:"controller,omitempty"`
 	Targets    []Target `json:"targets,omitempty"`
+	FiredOrd   int64    `json:"fired_ord,omitempty"`
 }
 
 // Target is what a spell or ability was pointed at when it was put on the

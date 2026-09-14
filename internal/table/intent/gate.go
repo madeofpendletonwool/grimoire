@@ -160,6 +160,17 @@ func Gate(st *engine.State, seat int, utterance string, u *universe.Universe, re
 // it. Tolerates missing fences; refuses anything that is not one JSON
 // object.
 func decodeReply(reply string) (*rawAction, error) {
+	var raw rawAction
+	if err := decodeFencedJSON(reply, &raw); err != nil {
+		return nil, err
+	}
+	return &raw, nil
+}
+
+// decodeFencedJSON is the shared fence-tolerant decode: pull the first
+// fenced block if there is one, else the outermost braces, and decode
+// exactly one JSON object into v.
+func decodeFencedJSON(reply string, v any) error {
 	text := strings.TrimSpace(reply)
 	if i := strings.Index(text, "```"); i >= 0 {
 		rest := text[i+3:]
@@ -172,13 +183,12 @@ func decodeReply(reply string) (*rawAction, error) {
 	}
 	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
 	if start < 0 || end <= start {
-		return nil, fmt.Errorf("%w: no json object in reply", ErrGate)
+		return fmt.Errorf("%w: no json object in reply", ErrGate)
 	}
-	var raw rawAction
-	if err := json.Unmarshal([]byte(text[start:end+1]), &raw); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrGate, err)
+	if err := json.Unmarshal([]byte(text[start:end+1]), v); err != nil {
+		return fmt.Errorf("%w: %v", ErrGate, err)
 	}
-	return &raw, nil
+	return nil
 }
 
 // stamped copies the validated basics onto the action: seat, source,

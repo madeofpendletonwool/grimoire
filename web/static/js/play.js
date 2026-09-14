@@ -23,6 +23,8 @@ import {
 	describeEvent, lastActionBatch, actionBatchAt, actionSummary, baseCharsFromCard, isType,
 	confirmHighlight, voicePlan,
 	ptRowText, ptRowMeta, changeRowText, deathHeadline, damageRowText, turnHeadline,
+	nudgeText, queueResolutionOrder, queueOrderAfterMove, triggerKindLabel, triggerRowText,
+	TRIGGER_KINDS,
 } from "./playvm.js";
 
 let games = [];
@@ -48,6 +50,9 @@ let cardCache = new Map();   // card name → cardView, this client's own univer
 let decks = [];              // the account's saved decks, the setup picker's options
 let decksLoaded = false;     // one attempt per mount; a failed read hides the picker
 let pending = [];            // open questions — the unresolved tray (MAD-331)
+let nudges = [];             // don't-forget reminders — the current-action pane's strip (MAD-335)
+let trigRows = new Map();    // card name → registry rows, this client's registration cache (MAD-335)
+let trigOrigin = "declared"; // the register form's next write: declared by hand or confirmed proposal
 let voiceMode = null;        // "web" | "server" | null — the hold-to-talk path (MAD-332)
 let talk = null;             // the live hold: {kind, seat, text, dead, session}
 let judgeAbort = null;       // the in-flight judge answer's stop handle (MAD-333)
@@ -97,6 +102,8 @@ async function openGame(id) {
 	blockPick = 0;
 	actingOverride = 0;
 	acknowledged = 0;
+	nudges = [];
+	trigRows = new Map();
 	gameID = id;
 	localStorage.setItem("grimoire-play-game", id);
 	try {
@@ -108,6 +115,7 @@ async function openGame(id) {
 	startStream();
 	render();
 	loadPending();
+	loadNudges();
 }
 
 /** Re-read the game row, the folded state and the log window — the full
@@ -152,10 +160,12 @@ function scheduleRefresh() {
 				}
 				cursor = Math.max(cursor, win.latest || 0);
 			}
-			render();
-			// A wake means someone wrote — their answer may have closed a
-			// question this tray still shows.
-			loadPending();
+		render();
+		// A wake means someone wrote — their answer may have closed a
+		// question this tray still shows, and the trigger position may
+		// have moved under the nudges.
+		loadPending();
+		loadNudges();
 		} catch (_) { /* the next wake retries; the panes keep the last good paint */ }
 	}, 90);
 }
@@ -268,6 +278,7 @@ async function rewindTo(ord) {
 		cancelEdit();
 		render();
 		loadPending(); // the tray closed what the rewind truncated
+		loadNudges();  // and the trigger position rewound with it
 	} catch (err) {
 		currentMeta(err.message, true);
 	}
@@ -557,6 +568,107 @@ async function dismissQuestion(pid) {
 	await loadPending();
 }
 
+/* ---------- the don't-forget nudges (MAD-335) ---------- */
+
+/** The nudge strip's read: waiting triggers, unresolved triggered
+    abilities, unused attack triggers — derived server-side over the
+    fold and the registry, re-read on every wake beside the tray. */
+async function loadNudges() {
+	if (!gameID) return;
+	try {
+		const data = await api.gameNudges(gameID);
+		nudges = data.nudges || [];
+	} catch (_) {
+		nudges = [];
+	}
+	renderNudges();
+}
+
+/** The strip rides the current-action pane — the one place every eye
+    already sits. Never a modal; the log keeps moving under it. */
+function renderNudges() {
+	const host = $("play-nudges");
+	if (!host) return;
+	clear(host);
+	const active = state?.status === "active";
+	host.hidden = !active || nudges.length === 0;
+	if (!active || nudges.length === 0) return;
+	for (const n of nudges.slice(0, 6)) {
+		host.append(el("span", {
+			class: "play-nudge" + (n.kind === "unused_attack" ? " is-hint" : ""),
+			attrs: { title: `${seatName(state, n.seat)} — ${n.effect || ""}` },
+			text: nudgeText(n),
+		}));
+	}
+}
+
+/* ---------- the trigger registry (MAD-335) ---------- */
+
+/** The registration cache: one read per card per open, invalidated by
+    this client's own writes. A failed read hides the rows, not the
+    form — manual registration never depends on the wire being up. */
+async function loadTrigRows(card) {
+	try {
+		const data = await api.gameTriggers(gameID, card);
+		trigRows.set(card, data.triggers || []);
+	} catch (_) {
+		trigRows.set(card, []);
+	}
+	renderContext();
+}
+
+/** Register one trigger from the strip's form — declared by hand, or
+    confirmed when the words arrived from a proposal. */
+async function registerTrigger(card) {
+	const kind = $("play-trig-kind")?.value || "";
+	const effect = ($("play-trig-effect")?.value || "").trim();
+	if (!kind || !effect) {
+		currentMeta("pick the event and say the effect", true);
+		return;
+	}
+	try {
+		await api.gameTriggerRegister(gameID, { card, event_kind: kind, effect, origin: trigOrigin });
+		trigOrigin = "declared";
+		trigRows.delete(card);
+		await loadTrigRows(card);
+		currentMeta("registered — it fires from now on", false);
+	} catch (err) {
+		currentMeta(err.message, true);
+	}
+}
+
+/** The model proposes; the strip prefills; the human's register tap is
+    the only thing that writes. A NONE answers as a note, not an error. */
+async function proposeTrigger(card) {
+	currentMeta("proposing…", false);
+	try {
+		const data = await api.gameTriggerPropose(gameID, card, actingSeat());
+		const p = data.proposal;
+		if (!p) {
+			currentMeta(data.note || "no trigger the vocabulary can name", true);
+			return;
+		}
+		const kind = $("play-trig-kind");
+		if (kind) kind.value = p.event_kind;
+		const effect = $("play-trig-effect");
+		if (effect) effect.value = p.effect || "";
+		trigOrigin = "confirmed";
+		currentMeta(`proposed — register to confirm, edit freely`, false);
+	} catch (err) {
+		currentMeta(err.message, true);
+	}
+}
+
+async function deleteTrigger(card, kind) {
+	try {
+		await api.gameTriggerDelete(gameID, card, kind);
+		trigRows.delete(card);
+		await loadTrigRows(card);
+	} catch (err) {
+		currentMeta(err.message, true);
+	}
+}
+
 /* ---------- acting seat ---------- */
 
 function actingSeat() {
@@ -574,6 +686,7 @@ function render() {
 	renderLog();
 	renderCurrent();
 	renderQuestions();
+	renderNudges();
 	renderComposerTargets();
 	renderMeta();
 }
@@ -872,6 +985,7 @@ function renderStack() {
 		const row = el("li", { class: "play-stack-item" + (i === stack.length - 1 ? " is-top" : "") },
 			el("span", { text: what }),
 			el("i", { class: "play-stack-who", text: who }));
+		if (item.mode === "triggered") row.classList.add("is-trigger");
 		if (i === stack.length - 1) {
 			row.append(el("button", {
 				class: "enc-btn", attrs: { type: "button", "data-resolve": "1", title: "Everyone passes; the top resolves" },
@@ -880,9 +994,36 @@ function renderStack() {
 		}
 		list.append(row);
 	}
-	if (queue.length) {
-		list.append(el("li", { class: "play-stack-item is-trigger" },
-			el("span", { text: `${queue.length} trigger${queue.length === 1 ? "" : "s"} waiting` })));
+	// The pending-triggers panel (MAD-335): the waiting queue in
+	// resolution order — the row on top resolves first — with ordering
+	// controls on the acting seat's own entries, since CR 603.3b makes
+	// their order the controller's choice.
+	const waiting = queueResolutionOrder(queue);
+	for (let r = 0; r < waiting.length; r++) {
+		const it = waiting[r];
+		const row = el("li", { class: "play-stack-item is-trigger is-waiting" },
+			el("span", { text: it.card || it.effect || "a trigger" }),
+			el("i", { class: "play-stack-who", text: seatName(state, it.controller) }));
+		if (r === 0) row.append(el("b", { class: "play-queue-mark", text: "next" }));
+		// The buttons move within the mover's OWN entries only; a step
+		// that has nowhere to go is simply not offered.
+		const acting = actingSeat();
+		for (const sooner of [true, false]) {
+			const order = queueOrderAfterMove(queue, it.fired_ord, sooner);
+			const enabled = it.controller === acting && order;
+			row.append(el("button", {
+				class: "enc-btn play-queue-move",
+				attrs: {
+					type: "button",
+					"data-queue-move": String(it.fired_ord),
+					"data-sooner": sooner ? "1" : "0",
+					disabled: enabled ? null : "",
+					title: sooner ? "Resolve sooner" : "Resolve later",
+				},
+				text: sooner ? "▲" : "▼",
+			}));
+		}
+		list.append(row);
 	}
 }
 
@@ -1115,6 +1256,7 @@ function renderContext() {
 		case "counter": renderCounterContext(host); break;
 		case "attack": renderAttackDraft(host); break;
 		case "block": renderBlockDraft(host); break;
+		case "trigger": renderTriggerContext(host); break;
 	}
 	for (const field of host.querySelectorAll("input,select")) {
 		if (field.id && typed[field.id] != null && field.value !== typed[field.id]) {
@@ -1173,6 +1315,16 @@ function renderObjectContext(host) {
 	}));
 	counter.append(el("button", { class: "enc-btn", attrs: { type: "button", "data-act": "counter" }, text: "adjust" }));
 	host.append(counter);
+
+	// The registry affordance (MAD-335): register this card's trigger
+	// once and it fires forever. Cards only — a token has no name to
+	// register against.
+	if (o.identity?.card) {
+		host.append(el("button", {
+			class: "enc-btn", attrs: { type: "button", "data-act": "trigger", title: "Register a trigger for this card" },
+			text: "⟡ trigger",
+		}));
+	}
 
 	host.append(el("button", { class: "enc-btn", attrs: { type: "button", "data-act": "close" }, text: "✕" }));
 }
@@ -1291,8 +1443,7 @@ function renderAttackDraft(host) {
 
 /** While the step is declare_blockers: one attacker at a time, its
     blockers tapped in below. */
-function renderBlockDraft(host) {
-	const attackers = state.attackers || [];
+function renderBlockDraft(host) {	const attackers = state.attackers || [];
 	if (!attackers.length) {
 		host.append(el("span", { class: "camp-status", text: "No attackers to block." }));
 		return;
@@ -1314,6 +1465,47 @@ function renderBlockDraft(host) {
 	host.append(el("button", {
 		class: "enc-btn primary", attrs: { type: "button", "data-act": "declare-blockers" }, text: "declare",
 	}));
+	host.append(el("button", { class: "enc-btn", attrs: { type: "button", "data-act": "close" }, text: "✕" }));
+}
+
+/** The registration strip (MAD-335): one card's registered triggers,
+    the register form, and the propose button. Registration is the
+    declared-vs-simulated line in miniature — typed by a human, or
+    proposed by the model and confirmed by one — and once written it
+    fires on the structural event, automatically, every game after. */
+function renderTriggerContext(host) {
+	const card = ctx.card || "";
+	host.append(el("b", { class: "play-ctx-name", text: `⟡ ${card}` }));
+	const rows = trigRows.get(card) || [];
+	for (const row of rows) {
+		const chip = el("span", { class: "play-trig-row" },
+			el("span", { text: triggerRowText(row) }),
+			el("button", {
+				class: "play-question-x", attrs: { type: "button", "data-trig-del-kind": row.event_kind, title: "Remove this registration" },
+				text: "✕",
+			}));
+		host.append(chip);
+	}
+	if (!rows.length && trigRows.has(card)) {
+		host.append(el("span", { class: "play-ctx-note", text: "not registered yet" }));
+	}
+	const form = el("span", { class: "play-ctx-group play-trig-form" });
+	const kind = el("select", { class: "enc-field", attrs: { id: "play-trig-kind", "aria-label": "When it fires" } });
+	for (const k of TRIGGER_KINDS) {
+		kind.append(el("option", { text: k.label, attrs: { value: k.value } }));
+	}
+	form.append(kind);
+	form.append(el("input", {
+		class: "enc-field", attrs: { type: "text", id: "play-trig-effect", maxlength: "120", placeholder: "what it does — draw a card…", "aria-label": "Trigger effect" },
+	}));
+	form.append(el("button", {
+		class: "enc-btn", attrs: { type: "button", "data-act": "trig-propose", title: "Ask the model for a proposal — you confirm it" },
+		text: "✨ propose",
+	}));
+	form.append(el("button", {
+		class: "enc-btn primary", attrs: { type: "button", "data-act": "trig-register" }, text: "register",
+	}));
+	host.append(form);
 	host.append(el("button", { class: "enc-btn", attrs: { type: "button", "data-act": "close" }, text: "✕" }));
 }
 
@@ -1761,6 +1953,19 @@ function onBoardTap(e) {
 	const ds = btn.dataset;
 
 	if (ds.resolve) { resolveTop(); return; }
+	if (ds.queueMove) {
+		// The pending panel's ordering control: one entry moves one step
+		// within its controller's own entries (MAD-335).
+		const order = queueOrderAfterMove(state?.trigger_queue || [], Number(ds.queueMove), ds.sooner === "1");
+		if (order) submit({ kind: "ORDER_TRIGGERS", order });
+		return;
+	}
+	if (ds.trigDelKind) {
+		// A registration row's ✕ — the correction path for a row that
+		// over-fires.
+		if (ctx?.kind === "trigger") deleteTrigger(ctx.card, ds.trigDelKind);
+		return;
+	}
 	if (ds.act) { contextAction(ds); return; }
 	if (ds.blockPick) { blockPick = Number(ds.blockPick); render(); return; }
 	if (ds.traceObj) { openObjectTrace(Number(ds.traceObj)); return; }
@@ -1939,6 +2144,18 @@ function contextAction(ds) {
 			closeContext();
 			return;
 		}
+		case "trigger":
+			// The registration strip opens with the card's current rows.
+			ctx = { kind: "trigger", card: ctx.card || o?.identity?.card || "" };
+			if (!trigRows.has(ctx.card)) loadTrigRows(ctx.card);
+			render();
+			return;
+		case "trig-register":
+			if (ctx.kind === "trigger") registerTrigger(ctx.card);
+			return;
+		case "trig-propose":
+			if (ctx.kind === "trigger") proposeTrigger(ctx.card);
+			return;
 	}
 }
 

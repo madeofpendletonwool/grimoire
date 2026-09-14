@@ -416,7 +416,9 @@ func (s *Store) deckComposition(ctx context.Context, deckID string) (map[string]
 
 // Submit is the writer: fold the log from the database, apply, append.
 // A rejected action writes nothing — the transaction below only opens
-// once Apply has produced events.
+// once Apply has produced events. The trigger registry (MAD-335) rides
+// along as data: loaded here, one small read, fired inside the same
+// deterministic Apply.
 func (s *Store) Submit(ctx context.Context, gameID string, action Action) ([]Event, *State, error) {
 	if _, err := s.GetGame(ctx, gameID); err != nil {
 		return nil, nil, err
@@ -425,7 +427,11 @@ func (s *Store) Submit(ctx context.Context, gameID string, action Action) ([]Eve
 	if err != nil {
 		return nil, nil, err
 	}
-	evs, err := Apply(state, action)
+	reg, err := s.TriggerRegistry(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	evs, err := ApplyWithTriggers(state, action, reg)
 	if err != nil {
 		return nil, nil, err
 	}

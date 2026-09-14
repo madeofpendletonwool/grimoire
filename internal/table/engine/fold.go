@@ -243,7 +243,9 @@ func (s *State) foldEvent(e Event) {
 		}
 	case EventTriggerFired:
 		s.TriggerQueue = append(s.TriggerQueue, TriggerItem{SourceObj: e.Object, Card: e.Card,
-			Effect: e.Effect, Controller: e.Controller, Targets: e.Targets})
+			Effect: e.Effect, Controller: e.Controller, Targets: e.Targets, FiredOrd: e.Ord})
+	case EventTriggersOrdered:
+		s.reorderTriggerQueue(e.Order)
 	case EventCardDrawn:
 		if p, ok := s.Seats[e.TargetSeat]; ok {
 			p.Hand = Count{Known: true, N: p.Hand.N + e.Count}

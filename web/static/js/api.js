@@ -1312,6 +1312,35 @@ export const api = {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ dismiss: true }),
 		}).then(json),
+
+	// The trigger registry (MAD-335): registered card knowledge — list,
+	// register (declared by hand or confirmed from a proposal), remove,
+	// propose, and the don't-forget nudges for the current position.
+	gameTriggers: (id, card = "") =>
+		fetch(`/api/games/${encodeURIComponent(id)}/triggers${card ? `?card=${encodeURIComponent(card)}` : ""}`).then(json),
+
+	gameTriggerRegister: (id, trigger) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/triggers`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(trigger),
+		}).then(json),
+
+	gameTriggerDelete: (id, card, eventKind) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/triggers` +
+			`?card=${encodeURIComponent(card)}&event_kind=${encodeURIComponent(eventKind)}`, {
+			method: "DELETE",
+		}).then(json),
+
+	gameTriggerPropose: (id, card, seat = 0) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/triggers/propose`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ card, seat }),
+		}).then(json),
+
+	gameNudges: (id) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/nudges`).then(json),
 };
 
 /**

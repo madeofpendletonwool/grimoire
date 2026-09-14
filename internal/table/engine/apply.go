@@ -24,19 +24,10 @@ const maxTokenBatch = 1000
 // on the stack after the state-based actions, in APNAP order, at exactly
 // that same priority grant. The sweeps fold against a clone, so the
 // handed-in state is never touched and the caller folds one flat list.
+// The trigger registry plays no part here — ApplyWithTriggers is Apply
+// with it, and MAD-335's callers use that.
 func Apply(s *State, a Action) ([]Event, error) {
-	if s == nil {
-		s = NewState()
-	}
-	evs, err := applyAction(s, a)
-	if err != nil || len(evs) == 0 {
-		return evs, err
-	}
-	working := s.clone()
-	working.FoldInto(evs)
-	sba := sweepStateBasedActions(working, a)
-	evs = append(evs, sba...)
-	return append(evs, working.flushTriggers()...), nil
+	return ApplyWithTriggers(s, a, nil)
 }
 
 func applyAction(s *State, a Action) ([]Event, error) {
@@ -59,6 +50,8 @@ func applyAction(s *State, a Action) ([]Event, error) {
 		return applyActivate(s, a)
 	case ActionDeclareTrigger:
 		return applyDeclareTrigger(s, a)
+	case ActionOrderTriggers:
+		return applyOrderTriggers(s, a)
 	case ActionMoveZone:
 		return applyMoveZone(s, a)
 	case ActionCreateToken:

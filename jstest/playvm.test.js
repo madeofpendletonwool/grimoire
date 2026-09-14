@@ -400,3 +400,86 @@ test("turnHeadline names the turn's seat", () => {
 	assert.equal(turnHeadline(5, "Bob"), "Turn 5 — Bob");
 	assert.equal(turnHeadline(2, ""), "Turn 2 — ");
 });
+
+/* ---------- the trigger registry (MAD-335) ---------- */
+
+import {
+	nudgeText, queueResolutionOrder, queueOrderAfterMove,
+	triggerKindLabel, triggerRowText, TRIGGER_KINDS,
+} from "../web/static/js/playvm.js";
+
+test("nudgeText spells the three don't-forget reminders", () => {
+	assert.equal(nudgeText({ kind: "waiting", card: "Phyrexian Arena", effect: "lose 1 life, draw a card" }),
+		"Phyrexian Arena is waiting to stack — lose 1 life, draw a card");
+	assert.equal(nudgeText({ kind: "unresolved", card: "Rhystic Study", effect: "may draw a card" }),
+		"Rhystic Study's trigger is unresolved — may draw a card");
+	assert.equal(nudgeText({ kind: "unused_attack", card: "Rampaging Raptor", effect: "deal 2 damage" }),
+		"unused attack trigger: Rampaging Raptor — deal 2 damage");
+	assert.equal(nudgeText(null), "");
+});
+
+test("triggerKindLabel and triggerRowText spell registrations for the strip", () => {
+	assert.equal(triggerKindLabel("OPPONENT_CASTS_SPELL"), "whenever an opponent casts");
+	assert.equal(triggerKindLabel("SOMETHING_ELSE"), "SOMETHING_ELSE");
+	assert.equal(triggerRowText({ event_kind: "UPKEEP", effect: "draw a card" }),
+		"at your upkeep — draw a card");
+	assert.equal(triggerRowText(null), "");
+	// The picker's vocabulary is exactly the engine's seven kinds.
+	assert.equal(TRIGGER_KINDS.length, 7);
+	for (const k of ["LAND_PLAYED", "CREATURE_ETB", "UPKEEP", "OPPONENT_CASTS_SPELL", "ATTACKS", "DIES", "END_STEP"]) {
+		assert.ok(TRIGGER_KINDS.some((row) => row.value === k), `missing ${k}`);
+	}
+});
+
+test("queueResolutionOrder lists what resolves first on top", () => {
+	// The engine flushes the queue head first and pushed-first resolves
+	// last — the LAST entry resolves FIRST.
+	const queue = [
+		{ fired_ord: 31, controller: 1, card: "A" },
+		{ fired_ord: 32, controller: 2, card: "B" },
+		{ fired_ord: 33, controller: 1, card: "C" },
+	];
+	const order = queueResolutionOrder(queue);
+	assert.deepEqual(order.map((q) => q.card), ["C", "B", "A"]);
+	assert.deepEqual(queueResolutionOrder(null), []);
+});
+
+test("queueOrderAfterMove moves only within the mover's own entries", () => {
+	const queue = [
+		{ fired_ord: 31, controller: 1, card: "A" },
+		{ fired_ord: 32, controller: 1, card: "C" },
+		{ fired_ord: 33, controller: 2, card: "B" },
+	];
+	// A resolves sooner: it swaps with C, the next of its controller —
+	// cross-controller order is the APNAP sort's business, never the
+	// mover's, so a move only finds its own entries.
+	const sooner = queueOrderAfterMove(queue, 31, true);
+	assert.deepEqual(sooner, [32, 31, 33]);
+	// The same swap, seen from C's side: C resolves later.
+	const later = queueOrderAfterMove(queue, 32, false);
+	assert.deepEqual(later, [32, 31, 33]);
+	// C resolving sooner has nowhere to go — it is already its
+	// controller's first to resolve. Bob's lone entry moves nowhere.
+	assert.equal(queueOrderAfterMove(queue, 32, true), null);
+	assert.equal(queueOrderAfterMove(queue, 33, true), null);
+	assert.equal(queueOrderAfterMove(queue, 33, false), null);
+	// An unknown ordinal is nobody's move.
+	assert.equal(queueOrderAfterMove(queue, 999, true), null);
+	// Interleaved: the swap jumps the other seat's entry to reach its
+	// own — harmless to the flush's stable APNAP sort.
+	const mixed = [
+		{ fired_ord: 41, controller: 1, card: "A" },
+		{ fired_ord: 42, controller: 2, card: "B" },
+		{ fired_ord: 43, controller: 1, card: "C" },
+	];
+	assert.deepEqual(queueOrderAfterMove(mixed, 41, true), [43, 42, 41]);
+});
+
+test("describeEvent spells the registry's rows", () => {
+	assert.equal(describeEvent({ kind: "TRIGGER_FIRED", card: "Rhystic Study", effect: "may draw a card" }, state),
+		"Rhystic Study triggers — may draw a card");
+	assert.equal(describeEvent({ kind: "TRIGGERS_ORDERED", order: [3, 1, 2] }, state),
+		"orders 3 waiting triggers");
+	assert.equal(actionSummary({ kind: "ORDER_TRIGGERS", seat: 1 }, state),
+		"Collin orders the waiting triggers");
+});

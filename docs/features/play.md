@@ -207,6 +207,42 @@ a past moment), `GET /api/games/{id}/death/{ord}` and `GET
 /api/games/{id}/turns/{n}` — pure folds, nothing materialized, so a
 correction is reflected the moment it lands.
 
+## Triggers — the don't-forget assistant
+
+Commander turns stack triggers, and forgetting one is the most common
+self-inflicted loss at the table. The play surface's answer is a
+**trigger registry**: a trigger is registered once per card — typed by
+a player at the object's strip (`⟡ trigger`), or proposed by the model
+(`✨ propose`) and confirmed by the same register tap — against a
+structural event the engine already emits: a land drop, a creature
+entering, upkeep, an opponent's cast, an attack, a death, the end step.
+The engine then fires it automatically, into the same queue a manually
+declared trigger waits in, and it reaches the stack in APNAP order at
+the next priority grant. No oracle text is ever parsed (ADR 11) — the
+registration is declared knowledge, honest about where it came from,
+and it is cached across games: register Rhystic Study once and every
+future game knows.
+
+- **The pending panel** — the stack column lists waiting triggers in
+  resolution order (the row on top resolves first), each of the acting
+  seat's own entries carrying ▲▼ controls, because CR 603.3b makes
+  their order the controller's choice. A player may only reorder their
+  own entries; the engine rejects anything else.
+- **The nudge strip** — chips under the current action for what is
+  unresolved: a trigger waiting to stack, a triggered ability still on
+  the stack (the unpaid Rhystic), an attack trigger the active player
+  has not used while attackers are still undeclared. Deterministic
+  reads over the fold and the registry — no model in the path.
+- **Honesty about firing** — a source that has left the battlefield,
+  phased out, or left the game fires nothing. The one exception is the
+  dying source's own "when this dies" trigger, which fires precisely
+  because the source left.
+
+The surfaces: `GET/POST/DELETE /api/games/{id}/triggers` (the registry
+itself), `POST /api/games/{id}/triggers/propose` (the model's
+candidate, gated onto the vocabulary — nothing is written until the
+confirm tap), and `GET /api/games/{id}/nudges` (the strip's read).
+
 ## Honesty rules the surface inherits
 
 - **Unknown is a value.** A hand the tracker was never told about reads
