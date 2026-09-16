@@ -196,6 +196,36 @@ func TestSearchNames(t *testing.T) {
 	}
 }
 
+// TestSearchText covers the text-weighted FTS read the Magic table's
+// outs search uses (MAD-336): rules text first, garbage honest, and
+// the substring fallback for tokenizer-hostile input.
+func TestSearchText(t *testing.T) {
+	store, _ := populateFixture(t, kaaliaFixture(t))
+	hits, err := store.SearchText(context.Background(), "counter target spell", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) == 0 || hits[0].Name != "Counterspell" {
+		t.Fatalf("text hits = %+v, want Counterspell first", hits)
+	}
+
+	hits, err = store.SearchText(context.Background(), "exile target creatures", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) == 0 || hits[0].Name != "Angel of Serenity" {
+		t.Fatalf("exile hits = %+v, want Angel of Serenity first", hits)
+	}
+
+	hits, err = store.SearchText(context.Background(), "zzz-nothing", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("garbage query returned hits: %+v", hits)
+	}
+}
+
 func TestCommandersFilterAndRank(t *testing.T) {
 	store, _ := populateFixture(t, kaaliaFixture(t))
 
