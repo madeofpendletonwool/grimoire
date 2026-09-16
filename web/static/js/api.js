@@ -1222,15 +1222,28 @@ export const api = {
 
 	gameList: () => fetch("/api/games").then(json),
 
-	// The pod's front door (MAD-337): redeem a join code, land in a seat.
-	gameJoin: (code) =>
+	// The pod's front door (MAD-337): redeem a join code, land in a seat
+	// — or, with a role (MAD-338), join the live game as judge or
+	// spectator: the public stream, and for the judge the ruling pen.
+	gameJoin: (code, role = "") =>
 		fetch("/api/games/join", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ code }),
+			body: JSON.stringify(role ? { code, role } : { code }),
 		}).then(json),
 
 	gameGet: (id) => fetch(`/api/games/${encodeURIComponent(id)}`).then(json),
+
+	// The ruling log (MAD-338): the game's history carrying its own
+	// rulings, each anchored to the ordinal it concerns.
+	gameRulings: (id) => fetch(`/api/games/${encodeURIComponent(id)}/rulings`).then(json),
+
+	gameRulingAdd: (id, ord, note) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/rulings`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ ord, note }),
+		}).then(json),
 
 	// The viewer's own seat pad — private scratch, never another seat's.
 	gameNotes: (id) => fetch(`/api/games/${encodeURIComponent(id)}/notes`).then(json),

@@ -57,7 +57,9 @@ let voiceMode = null;        // "web" | "server" | null — the hold-to-talk pat
 let talk = null;             // the live hold: {kind, seat, text, dead, session}
 let judgeAbort = null;       // the in-flight judge answer's stop handle (MAD-333)
 let traceAt = 0;             // the ordinal a trace snapshot rendered at (MAD-334)
-let viewer = null;           // this client's entitlement (MAD-337): {owner, seats}
+let viewer = null;           // this client's entitlement (MAD-337): {owner, seats, role?}
+let rulings = [];            // the ruling log (MAD-338) — the game's history carrying its own
+let rulingDraft = 0;         // the ordinal a ⚖ was tapped on — the ruling form's anchor
 let notesOpen = false;       // the private pad drawer's open state
 let notesTimer = null;       // the pad's save debounce
 let notesLoaded = "";        // the pad body as last read or saved
@@ -108,6 +110,8 @@ async function openGame(id) {
 	acknowledged = 0;
 	nudges = [];
 	trigRows = new Map();
+	rulings = [];
+	rulingDraft = 0;
 	notesOpen = false; // the pad belongs to the seat, not the screen
 	clearTimeout(notesTimer);
 	notesLoaded = "";
@@ -123,6 +127,7 @@ async function openGame(id) {
 	render();
 	loadPending();
 	loadNudges();
+	loadRulings();
 }
 
 /** Re-read the game row, the folded state and the log window — the full
@@ -133,6 +138,7 @@ async function reloadGame() {
 	state = data.state || null;
 	viewer = data.viewer || null;
 	await reloadLog();
+	loadRulings(); // rulings survive rewinds, but the honest picture includes them
 }
 
 /** The viewer's own seat — the chair this client speaks and asks from.
@@ -146,6 +152,22 @@ function mySeat() {
     hides them and the server would refuse them anyway. */
 function isHost() {
 	return !viewer || !!viewer.owner;
+}
+
+/** The observer's chair (MAD-338): judge or spectator — no seat, the
+    public stream, and for the judge the ⚖ pen on the log. */
+function observerRole() {
+	if (!viewer || viewer.owner || (viewer.seats || []).length) return "";
+	return viewer.role || "";
+}
+
+function isObserver() {
+	return !!observerRole();
+}
+
+/** The ruling pen: the host's on a solo table, the judge's at a pod. */
+function canRule() {
+	return isHost() || observerRole() === "judge";
 }
 
 /** The log pane's window: the newest LOG_WINDOW rows. */
@@ -214,6 +236,18 @@ function startStream() {
 			cursor = Math.max(cursor, row.ord);
 			scheduleRefresh();
 		});
+		es.addEventListener("ruling", (ev) => {
+			// The judge's pen moved (MAD-338): a ruling landed, anchored
+			// to its ordinal. Merge by id and repaint — the frame is a
+			// live arrival, not the record of record.
+			let payload;
+			try { payload = JSON.parse(ev.data); } catch (_) { return; }
+			const r = payload.ruling;
+			if (!r || rulings.some((x) => x.id === r.id)) return;
+			rulings.push(r);
+			renderRulings();
+			renderLog(); // the ⚖ marks anchor to the rows that carry rulings
+		});
 		es.addEventListener("rewind", () => {
 			// The log this client holds no longer exists. Drop everything
 			// and re-read — folding stale rows would be worse than a blank.
@@ -264,6 +298,7 @@ function stopStream() {
     other client. A rejection answers 400 and writes nothing; the pane
     says why. */
 async function submit(action) {
+	if (isObserver()) return; // the observer's pen writes rulings, not actions
 	const seat = actingSeat();
 	if (!action.seat) action.seat = seat;
 	if (!action.source) action.source = "tap";
@@ -531,11 +566,16 @@ async function loadPending() {
 
 /** The question strip: every asked question renders its tappable
     answers; parked ones take a typed answer. Never a modal — the log
-    keeps moving under all of it. */
+    keeps moving under all of it. An observer watches the questions the
+    table answers (MAD-338); answering is a seat's act. */
 function renderQuestions() {
 	const host = $("play-questions");
 	if (!host) return;
 	clear(host);
+	if (isObserver()) {
+		host.hidden = true;
+		return;
+	}
 	const active = state?.status === "active";
 	host.hidden = !active || pending.length === 0;
 	if (!active || pending.length === 0) return;
@@ -708,6 +748,7 @@ function render() {
 	renderStrip();
 	renderBoard();
 	renderLog();
+	renderRulings();
 	renderCurrent();
 	renderQuestions();
 	renderNudges();
@@ -717,9 +758,13 @@ function render() {
 
 /** Viewer-shaped affordances (MAD-337): the host owns the log's history
     and the table's setup; a participant gets their chair, their pad,
-    and the one-tap correction of the current-action pane. */
+    and the one-tap correction of the current-action pane. An observer
+    (MAD-338) gets the read: the strip's chip says which chair they
+    hold, and every writer surface hides — the server would refuse them
+    anyway, and controls that only answer 403 are noise. */
 function renderViewer() {
 	const host = isHost();
+	const obs = observerRole();
 	const undo = $("play-undo");
 	if (undo) undo.hidden = !host;
 	// A participant's acting chair is fixed: talk, asks and edits are
@@ -728,6 +773,28 @@ function renderViewer() {
 	if (acting) acting.hidden = !host && !!mySeat();
 	$("play-notes-btn").hidden = !(mySeat() > 0);
 	$("play-notes").hidden = !notesOpen || !(mySeat() > 0);
+	// The observer's chip and the writer surfaces it does not hold.
+	const chip = $("play-obsv");
+	if (chip) {
+		chip.hidden = !obs;
+		if (obs) {
+			chip.textContent = obs === "judge"
+				? "⚖ judging — the public game, no seat"
+				: "watching — the public game, no seat";
+		}
+	}
+	// The observer writes nothing: the turn controls hide button by
+	// button, because the strip also carries the ⚖ ask — the judge's
+	// one writer-free tool, which stays (renderStrip gates it by role).
+	// Un-hiding stays renderStrip's: it re-decides give/combat per pass.
+	if (obs) {
+		for (const id of ["play-advance", "play-pass", "play-give", "play-draw", "play-untap-all", "play-resolve-combat"]) {
+			$(id).hidden = true;
+		}
+	}
+	$("play-talk").hidden = !!obs;
+	$("play-compose").hidden = !!obs;
+	$("play-current-actions").hidden = !!obs;
 }
 
 /* ---------- the private pad (MAD-337) ---------- */
@@ -771,8 +838,9 @@ function notesTyped() {
 async function joinByCode() {
 	const code = ($("play-join-code").value || "").trim();
 	if (!code) return;
+	const role = $("play-join-role")?.value || "";
 	try {
-		const data = await api.gameJoin(code);
+		const data = await api.gameJoin(code, role);
 		$("play-join-code").value = "";
 		await loadGames(data.game?.id || "");
 	} catch (err) {
@@ -780,14 +848,16 @@ async function joinByCode() {
 	}
 }
 
-/** A shared link carries ?join=CODE: consume it once, clean the URL,
-    land in the game. */
+/** A shared link carries ?join=CODE (and optionally &as=judge|spectator):
+    consume it once, clean the URL, land in the game. */
 async function consumeJoinLink() {
-	const code = (new URLSearchParams(location.search).get("join") || "").trim();
+	const params = new URLSearchParams(location.search);
+	const code = (params.get("join") || "").trim();
 	if (!code) return;
+	const role = params.get("as") || "";
 	history.replaceState(null, "", location.pathname);
 	try {
-		const data = await api.gameJoin(code);
+		const data = await api.gameJoin(code, role);
 		await loadGames(data.game?.id || "");
 	} catch (err) {
 		renderMeta(err.message, true);
@@ -812,6 +882,12 @@ function renderMeta(message, warn) {
 	}
 	if (!game) {
 		meta.textContent = "";
+		return;
+	}
+	if (isObserver()) {
+		meta.textContent = observerRole() === "judge"
+			? "Judging — the public game. ⚖ on a log entry records a ruling anchored to it."
+			: "Watching — the public game, no seat and no hidden zones.";
 		return;
 	}
 	if (state?.status === "active") meta.textContent = "Tap a value to change it — every edit is an action on the log.";
@@ -901,12 +977,16 @@ function renderStrip() {
 	const active = state?.status === "active";
 	$("play-strip").hidden = !active;
 	// The judge reads the live fold: offered once there is one, kept for
-	// finished games (disputes outlast the last attack).
-	$("play-judge").hidden = !(state?.status === "active" || state?.status === "finished");
+	// finished games (disputes outlast the last attack). A spectator
+	// watches — the tools are the judge's (MAD-338).
+	$("play-judge").hidden = !(state?.status === "active" || state?.status === "finished")
+		|| observerRole() === "spectator";
 	// Deck odds reads the attached deck through the fold: offered on the
 	// same terms as the judge — a deckless game answers honestly, so
-	// the button is not gated on one.
-	$("play-odds").hidden = !(state?.status === "active" || state?.status === "finished");
+	// the button is not gated on one. An observer holds no deck to ask
+	// over (MAD-338).
+	$("play-odds").hidden = !(state?.status === "active" || state?.status === "finished")
+		|| isObserver();
 	if (!active) return;
 
 	$("play-turnline").textContent = turnLine(game, state);
@@ -1165,8 +1245,9 @@ function renderLog() {
 	const logEl = $("play-log");
 	const nearHead = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 160;
 	for (const ev of rows) {
+		const ruled = rulings.some((r) => r.ord === ev.ord);
 		const row = el("li", {
-			class: "play-row" + (ev.visibility === "seat" ? " is-private" : ""),
+			class: "play-row" + (ev.visibility === "seat" ? " is-private" : "") + (ruled ? " is-ruled" : ""),
 			attrs: { "data-ord": String(ev.ord) },
 		},
 			el("b", { class: "play-row-ord", text: String(ev.ord) }),
@@ -1209,12 +1290,87 @@ function renderLog() {
 				text: "⟲",
 			}));
 		}
+		// The ruling pen (MAD-338): the judge anchors a ruling to the
+		// entry it concerns, straight from the row — the dispute is
+		// about *that*, and the log's history carries the answer.
+		if (canRule() && state?.status !== "setup") {
+			row.append(el("button", {
+				class: "play-row-fix",
+				attrs: { type: "button", "data-rule": String(ev.ord), title: ruled ? "Another ruling on this entry" : "Record a ruling anchored to this entry" },
+				text: "⚖",
+			}));
+		}
 		host.append(row);
 	}
 	if (!rows.length) {
 		host.append(el("li", { class: "play-row is-empty", text: "Nothing has happened yet — the first action is yours." }));
 	}
 	if (nearHead) logEl.scrollTop = 0; // newest-first: stick to the head unless reading history
+}
+
+/* ---------- the ruling log (MAD-338) ---------- */
+
+/** The ruling log's read: the game's history carrying its own rulings,
+    newest first like the log pane above it. A ruling is a human record
+    — it survives every rewind, anchored to the ordinal it concerns. */
+async function loadRulings() {
+	if (!gameID) return;
+	try {
+		const data = await api.gameRulings(gameID);
+		rulings = data.rulings || [];
+	} catch (_) {
+		rulings = [];
+	}
+	renderRulings();
+}
+
+function renderRulings() {
+	const pane = $("play-rulings");
+	if (!pane) return;
+	// The pen's holder sees the pane from the first entry onward — a
+	// ruling wants to be one tap from the dispute it settles. Readers
+	// see it once there is anything to read.
+	const live = state?.status === "active" || state?.status === "finished";
+	pane.hidden = !(rulings.length > 0 || (rulingDraft > 0 || (canRule() && live)));
+	$("play-rulings-hint").textContent = canRule() && rulings.length === 0
+		? "⚖ on a log entry anchors a ruling to it — rulings survive every rewind."
+		: "";
+	const form = $("play-ruling-form");
+	form.hidden = !rulingDraft;
+	if (rulingDraft) $("play-ruling-anchor").textContent = `#${rulingDraft}`;
+	const list = clear($("play-rulings-list"));
+	for (const r of rulings.slice().reverse()) {
+		list.append(el("li", { class: "play-ruling" },
+			el("b", { class: "play-ruling-ord", text: `#${r.ord}` }),
+			el("span", { class: "play-ruling-note", text: r.note }),
+			el("i", { class: "play-ruling-by", text: r.ruler || "judge" }),
+		));
+	}
+}
+
+/** ⚖ on a log entry: the ruling form opens anchored to that ordinal —
+    a bar under the list, never a modal, so the log keeps moving. */
+function startRulingAt(ord) {
+	rulingDraft = ord;
+	renderRulings();
+	const input = $("play-ruling-note");
+	input.value = "";
+	input.focus();
+}
+
+async function submitRuling() {
+	if (!rulingDraft) return;
+	const note = ($("play-ruling-note").value || "").trim();
+	if (!note) return;
+	try {
+		const data = await api.gameRulingAdd(gameID, rulingDraft, note);
+		if (data?.ruling && !rulings.some((x) => x.id === data.ruling.id)) rulings.push(data.ruling);
+		rulingDraft = 0;
+		renderRulings();
+		renderLog(); // the ⚖ marks ride the rows that carry rulings
+	} catch (err) {
+		$("play-rulings-hint").textContent = err.message;
+	}
 }
 
 /* ---------- the current action pane ---------- */
@@ -1252,8 +1408,8 @@ function renderCurrent() {
 		return;
 	}
 	text.textContent = actionSummary(batch.action, state || {}) || describeEvent(batch.events[0], state || {});
-	ok.disabled = edit.disabled = false;
-	pane.classList.toggle("is-fresh", batch.to > acknowledged);
+	ok.disabled = edit.disabled = isObserver(); // an observer reads the pane, the table corrects it
+	pane.classList.toggle("is-fresh", batch.to > acknowledged && !isObserver());
 	// The ladder's verdict rides the cause: an optimistic application
 	// stays highlighted as "worth a look" until ✓, even after the
 	// fresh-paint glow fades (MAD-331).
@@ -2114,8 +2270,24 @@ function wire() {
 			startEditAt(Number(amend.dataset.amend));
 			return;
 		}
+		const gavel = e.target.closest("[data-rule]");
+		if (gavel) {
+			startRulingAt(Number(gavel.dataset.rule));
+			return;
+		}
 		const btn = e.target.closest("[data-rewind]");
 		if (btn) rewindTo(Number(btn.dataset.rewind));
+	});
+
+	// The ruling pen (MAD-338): submit records anchored to the drafted
+	// ordinal; ✕ puts the pen away. A bar under the list, never a modal.
+	$("play-ruling-form").addEventListener("submit", (e) => {
+		e.preventDefault();
+		submitRuling();
+	});
+	$("play-ruling-cancel").addEventListener("click", () => {
+		rulingDraft = 0;
+		renderRulings();
 	});
 
 	// The trace panel's close (MAD-334).

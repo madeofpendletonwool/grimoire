@@ -23,6 +23,12 @@ func OwnerViewer() Viewer { return Viewer{Owner: true} }
 // rows. Duplicate seats are fine; the set semantics below absorb them.
 func SeatViewer(seats ...int) Viewer { return Viewer{Seats: seats} }
 
+// PublicViewer sees the public stream only — the judge's and the
+// spectator's entitlement (MAD-338). It is the zero Viewer, spelled:
+// every scoped read already degrades to exactly this, so the observer's
+// reads run the same WHERE clause a stranger's would, minus the 404.
+func PublicViewer() Viewer { return Viewer{} }
+
 // SeesSeat reports whether a seat's hidden zones are this viewer's to
 // read: the owner's, or one of the seats the viewer holds.
 func (v Viewer) SeesSeat(seat int) bool {

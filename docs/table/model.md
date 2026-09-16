@@ -68,6 +68,7 @@ And the tables around it:
      ├── mtg_pending           open questions — the unresolved tray
      ├── mtg_name_resolutions  per-game identity cache (never re-infer a name)
      ├── mtg_rulings           judge log, anchored to an ordinal
+     ├── mtg_observers         judges and spectators — the public-stream role rows
      └── mtg_seat_notes        private scratch, never another seat's view
 
  mtg_trigger_registry          cross-game, keyed by card name (5c)
@@ -332,6 +333,24 @@ seat's pad is the host's), reaches no other seat's view and no prompt at
 all, and is the one surface the owner's see-everything entitlement does
 not cover.
 
+### Judges and spectators (6b, MAD-338)
+
+The same code redeems a third kind of membership: `POST /api/games/join`
+with `role: judge | spectator` writes an `mtg_observers` row instead of a
+seat — at any point in the game's life, because a dispute is exactly when
+a judge arrives. Both roles read through the zero Viewer (`PublicViewer`):
+the public stream's own WHERE clause, no seat-visible row ever selected,
+so the 6a gate covers the observer's surfaces unchanged. The judge gets
+the Stage 5 tools pointed at that shared state — the rules judge (ask as
+the table itself, seat 0, whose prompt renders the public fold), the
+modifier traces, the log — and the ruling pen: `POST /api/games/{id}/rulings`
+records a ruling anchored to an ordinal into `mtg_rulings`, public to every
+entitled reader, delivered live on the stream's `ruling` frame, and never
+clobbered by the rewind it may itself have ordered. The spectator reads
+the same public game with no pen; a seated player asks the judge rather
+than ruling on their own game; the host may rule, a solo table's owner
+being its judge.
+
 The deterministic gate is `hidden_zone_leak` (`internal/table/engine`'s
 leak check): a join between the identities the full log makes private per
 seat and any rendered surface for any viewer — error severity when they
@@ -361,6 +380,7 @@ scanned at a seat's scope must fire).
 | `mtg_name_resolutions` | `game_id, spoken, card_name, method, confidence, resolved_at` | The per-game identity cache (4a/4c): `spoken` (normalized) → canonical name, `method` `deck_exact \| deck_fuzzy \| global \| manual \| llm`. The same mumble is **never re-inferred, never re-billed**. Survives rewind — a corrected card is still the resolution of that mumble. No FK to `cards(name)`: the card index is bulk-replaced on re-index; this cache is game history. |
 | `mtg_trigger_registry` | `card_name, event_kind, effect, origin, confirmed_by, created_at, updated_at` | Cross-game, install-wide (5c): card knowledge is universal, like the rules corpora. `event_kind` is from the registry's own vocabulary — `LAND_PLAYED`, `CREATURE_ETB`, `UPKEEP`, `OPPONENT_CASTS_SPELL`, `ATTACKS`, `DIES`, `END_STEP` — each with its scope fixed (whose land, whose upkeep, which deaths) so one column carries it honestly; `origin` is `declared` (a human typed it) or `confirmed` (model-proposed, human-confirmed) — the declared-vs-simulated line again. The engine loads the corpus as data on every write and fires `TRIGGER_FIRED` rows on matching structural events; a source off the battlefield fires nothing, except a dying source's own `DIES`. |
 | `mtg_rulings` | `id, game_id, ord, ruled_by, note, created_at` | The judge log (6b): a ruling anchored to the ordinal it concerns. **Survives rewind** — a human record is never clobbered by a truncate, the same semantics as a decided canon review. |
+| `mtg_observers` | `id, game_id, user_id, role, name, joined_at` | The non-playing participant (6b): `role` is `judge \| spectator`, one row per account per game, redeemed through the same join code a seat is — except an observer may join a live game, because a dispute is exactly when a judge arrives. Both roles read the public stream only; the ruling write is the judge's (and the host's, a solo table's owner being its judge). A seat outranks the row: joining as a player drops it. |
 | `mtg_seat_notes` | `game_id, seat, body, updated_at` | Private per-seat scratch (6a). Editable, latest-wins, and never enters another seat's view or another seat's prompt. |
 
 ## Migrations
