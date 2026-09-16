@@ -127,8 +127,8 @@ func (s *Server) resolveGame(w http.ResponseWriter, r *http.Request) *engine.Gam
 // holds no seat and reads the public stream — the client renders the
 // observer's read-only table off this.
 type gameViewer struct {
-	Owner bool  `json:"owner"`
-	Seats []int `json:"seats,omitempty"`
+	Owner bool   `json:"owner"`
+	Seats []int  `json:"seats,omitempty"`
 	Role  string `json:"role,omitempty"`
 }
 

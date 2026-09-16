@@ -151,7 +151,10 @@ func TestJudgeSpectatorSurfacesLeakNothing(t *testing.T) {
 	spec := joinObserver(t, f, "podwatch", "spectator")
 	x := f.leakIndex(t)
 
-	for _, who := range []struct{ label string; cookie *http.Cookie }{
+	for _, who := range []struct {
+		label  string
+		cookie *http.Cookie
+	}{
 		{"judge", judge}, {"spectator", spec},
 	} {
 		get := func(path string) string {
