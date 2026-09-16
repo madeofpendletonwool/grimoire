@@ -1341,6 +1341,40 @@ export const api = {
 
 	gameNudges: (id) =>
 		fetch(`/api/games/${encodeURIComponent(id)}/nudges`).then(json),
+
+	// Deck-aware play (MAD-336): the derived library composition, exact
+	// draw odds over it, outs search against a board object, and the
+	// opt-in mulligan advice. Deterministic maths, no model in the path.
+	gameLibrary: (id, seat) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/library?seat=${seat}`).then(json),
+
+	gameOdds: (id, body) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/odds`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	gameOuts: (id, body) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/outs`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(json),
+
+	gameMulligan: (id, seat, hand) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/mulligan`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ seat, hand }),
+		}).then(json),
+
+	gameSettings: (id, settings) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/settings`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(settings),
+		}).then(json),
 };
 
 /**

@@ -1649,8 +1649,10 @@
 					<button type="button" class="enc-btn" id="play-draw" title="Draw a card">Draw</button>
 					<button type="button" class="enc-btn" id="play-untap-all" title="Untap the acting seat's permanents">Untap all</button>
 					<button type="button" class="enc-btn" id="play-resolve-combat" hidden>Resolve combat</button>
-					<button type="button" class="enc-btn" id="play-judge" hidden
-						title="Ask the rules judge — carries the live board, stack and priority with the question">⚖ judge</button>
+				<button type="button" class="enc-btn" id="play-judge" hidden
+					title="Ask the rules judge — carries the live board, stack and priority with the question">⚖ judge</button>
+				<button type="button" class="enc-btn" id="play-odds" hidden
+					title="Deck odds — exact probabilities, outs and mulligan advice over the attached deck">🎴 odds</button>
 				</div>
 			</div>
 
@@ -1677,6 +1679,39 @@
 					<button type="button" class="enc-btn" id="play-judge-stop" hidden>Stop</button>
 				</form>
 			<div class="play-judge-thread" id="play-judge-thread" aria-live="polite"></div>
+		</section>
+
+			<!-- Deck-aware odds (MAD-336): exact probabilities over the
+			     library the log derived, outs against a board object,
+			     and opt-in mulligan advice. Pure maths over the fold —
+			     no model in the path — and the composition is never an
+			     order: order-dependent questions are refused out loud.
+			     A row above the panes like the judge, never a modal. -->
+			<section class="play-judge f-stone" id="play-odds-panel" hidden aria-label="Deck odds">
+				<header class="play-judge-head">
+					<b class="play-judge-title">🎴 deck odds</b>
+					<span class="play-judge-sub">exact maths over the library the log derived — composition, never order</span>
+					<button type="button" class="play-question-x" id="play-odds-close" title="Close the odds">✕</button>
+				</header>
+				<div class="play-judge-quick" id="play-odds-quick"></div>
+				<form class="play-judge-form" id="play-odds-form" autocomplete="off">
+					<span class="play-talk-icon" aria-hidden="true">%</span>
+					<input class="enc-field play-talk-input" id="play-odds-q" type="text" maxlength="300"
+						placeholder="chance of a land in the next three · a board wipe by turn nine · my outs against an enchantment"
+						aria-label="Deck odds question">
+					<button type="submit" class="enc-btn primary" id="play-odds-ask">Ask</button>
+				</form>
+				<form class="play-odds-mull" id="play-odds-mull-form" autocomplete="off">
+					<label class="play-odds-mull-toggle">
+						<input type="checkbox" id="play-mulligan-advice">
+						mulligan advice (opt-in per game)
+					</label>
+					<input class="enc-field play-talk-input" id="play-odds-hand" type="text" maxlength="400"
+						placeholder="Opening hand, comma-separated — Forest, Island, Sol Ring, …"
+						aria-label="Opening hand for mulligan advice">
+					<button type="submit" class="enc-btn" id="play-odds-mull-ask" title="Keep or mulligan, with the arithmetic">Advise</button>
+				</form>
+			<div class="play-judge-thread" id="play-odds-thread" aria-live="polite"></div>
 		</section>
 
 			<!-- The provenance panel (MAD-334): the deterministic half of

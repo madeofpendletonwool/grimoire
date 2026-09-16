@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
+	"github.com/madeofpendletonwool/grimoire/internal/table/odds"
 	"github.com/madeofpendletonwool/grimoire/internal/table/universe"
 )
 
@@ -74,8 +75,9 @@ func (s *Server) universeEnabled(w http.ResponseWriter) bool {
 }
 
 // writeGameError maps the engine's sentinels onto HTTP statuses: a
-// missing game is 404, a rejected action is 400 (it wrote nothing), and
-// anything else surfaces as 500 without its SQL traceback.
+// missing game is 404, a rejected action is 400 (it wrote nothing),
+// the odds layer's missing card index is 503, and anything else
+// surfaces as 500 without its SQL traceback.
 func writeGameError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, engine.ErrNotFound):
@@ -83,6 +85,13 @@ func writeGameError(w http.ResponseWriter, err error) {
 	case errors.Is(err, engine.ErrInvalid):
 		writeError(w, http.StatusBadRequest, err)
 	case errors.Is(err, universe.ErrInvalid):
+		writeError(w, http.StatusBadRequest, err)
+	case errors.Is(err, odds.ErrNoCardData):
+		writeError(w, http.StatusServiceUnavailable, err)
+	case errors.Is(err, odds.ErrOrderDependent),
+		errors.Is(err, odds.ErrNoParse):
+		// The order refusal is the product talking: 400 so the client
+		// renders the engine's own words verbatim.
 		writeError(w, http.StatusBadRequest, err)
 	default:
 		writeError(w, http.StatusInternalServerError, err)
@@ -107,16 +116,17 @@ func (s *Server) resolveGame(w http.ResponseWriter, r *http.Request) *engine.Gam
 /* ---------- views ---------- */
 
 type gameView struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Format       string  `json:"format"`
-	StartingLife int     `json:"starting_life"`
-	Status       string  `json:"status"`
-	LatestOrd    int64   `json:"latest_ord"`
-	CreatedAt    string  `json:"created_at"`
-	UpdatedAt    string  `json:"updated_at"`
-	StartedAt    *string `json:"started_at,omitempty"`
-	EndedAt      *string `json:"ended_at,omitempty"`
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Format       string         `json:"format"`
+	StartingLife int            `json:"starting_life"`
+	Status       string         `json:"status"`
+	LatestOrd    int64          `json:"latest_ord"`
+	Settings     map[string]any `json:"settings,omitempty"`
+	CreatedAt    string         `json:"created_at"`
+	UpdatedAt    string         `json:"updated_at"`
+	StartedAt    *string        `json:"started_at,omitempty"`
+	EndedAt      *string        `json:"ended_at,omitempty"`
 	// Seats is the setup-pane read: the mtg_seats rows while the game is
 	// still setup, so a reloaded client can rebuild an unfinished table.
 	// Once play begins the fold's GAME_STARTED echo is the seating and
@@ -127,7 +137,7 @@ type gameView struct {
 func toGameView(g *engine.Game, latest int64) gameView {
 	v := gameView{
 		ID: g.ID, Name: g.Name, Format: g.Format, StartingLife: g.StartingLife,
-		Status: string(g.Status), LatestOrd: latest,
+		Status: string(g.Status), LatestOrd: latest, Settings: g.Settings,
 		CreatedAt: g.CreatedAt.Format(http.TimeFormat),
 		UpdatedAt: g.UpdatedAt.Format(http.TimeFormat),
 	}

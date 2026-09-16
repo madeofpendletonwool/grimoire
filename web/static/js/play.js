@@ -777,6 +777,10 @@ function renderStrip() {
 	// The judge reads the live fold: offered once there is one, kept for
 	// finished games (disputes outlast the last attack).
 	$("play-judge").hidden = !(state?.status === "active" || state?.status === "finished");
+	// Deck odds reads the attached deck through the fold: offered on the
+	// same terms as the judge — a deckless game answers honestly, so
+	// the button is not gated on one.
+	$("play-odds").hidden = !(state?.status === "active" || state?.status === "finished");
 	if (!active) return;
 
 	$("play-turnline").textContent = turnLine(game, state);
@@ -1624,6 +1628,178 @@ function judgeRow(kind, text) {
 	return row;
 }
 
+/* ---------- deck-aware odds (MAD-336) ---------- */
+
+// Exact probabilities over the library the log derived, outs against a
+// board object, and opt-in mulligan advice — pure maths, no model. The
+// refusal the engine returns for order-dependent questions renders
+// verbatim: "library order is never modelled" is the product talking.
+
+const ODDS_QUICK = [
+	"chance of a land in the next three",
+	"chance of a board wipe by turn nine",
+	"what are my outs against an enchantment",
+];
+
+function toggleOdds() {
+	const panel = $("play-odds-panel");
+	if (panel.hidden) {
+		panel.hidden = false;
+		syncMulliganToggle();
+		$("play-odds-q").focus();
+	} else {
+		closeOdds();
+	}
+}
+
+function closeOdds() {
+	$("play-odds-panel").hidden = true;
+	clear($("play-odds-thread"));
+	$("play-odds-q").value = "";
+}
+
+/** One odds thread row: the question asked, the answer given, a note. */
+function oddsRow(kind, text) {
+	const row = el("div", { class: `play-judge-row is-${kind}` });
+	if (text) row.append(el("span", { class: "play-judge-row-q", text }));
+	return row;
+}
+
+function oddsScroll() {
+	const thread = $("play-odds-thread");
+	thread.scrollTop = thread.scrollHeight;
+}
+
+/** The typed question: outs shapes route to the outs endpoint, every
+    other shape to the odds gate. */
+async function askOdds(question) {
+	const q = (question || "").trim();
+	if (!q || !gameID) return;
+	const outs = q.match(/\bouts\b\s*(?:against|for|to|vs\.?)\s+(.+)/i);
+	if (outs) {
+		await askOuts(outs[1].replace(/[?.!]+$/, ""));
+		return;
+	}
+	const row = oddsRow("q", q);
+	$("play-odds-thread").append(row);
+	oddsScroll();
+	try {
+		const data = await api.gameOdds(gameID, { seat: actingSeat(), question: q });
+		renderOddsAnswer(data, row);
+	} catch (err) {
+		row.append(el("p", { class: "drawer-note", text: err.message }));
+	}
+	oddsScroll();
+}
+
+/** "What are my outs?" against a card or a type — real cards from the
+    actual remaining library, each with why it answers. */
+async function askOuts(target) {
+	if (!gameID) return;
+	const row = oddsRow("q", `outs against ${target}`);
+	$("play-odds-thread").append(row);
+	oddsScroll();
+	try {
+		const data = await api.gameOuts(gameID, { seat: actingSeat(), target, draws: 3 });
+		if (data.known === false) {
+			row.append(el("p", { class: "drawer-note", text: data.note || "the library composition is unknown" }));
+			return;
+		}
+		const o = data.outs || {};
+		const body = el("div", { class: "play-odds-answer" });
+		if (!o.outs?.length) {
+			body.append(el("p", { text: "Nothing left in the library answers that." }));
+		} else {
+			body.append(el("p", {
+				text: `${o.k_hits} out${o.k_hits === 1 ? "" : "s"} remaining — ${(o.probability * 100).toFixed(1)}% to draw one in the next ${o.draws || 1} (${o.rational})`,
+			}));
+			const list = el("ul", { class: "play-odds-outs" });
+			for (const out of o.outs) {
+				list.append(el("li", {},
+					el("b", { text: out.count > 1 ? `${out.name} ×${out.count}` : out.name }),
+					el("span", { class: "drawer-note", text: ` — ${(out.reasons || []).join("; ")}` }),
+				));
+			}
+			body.append(list);
+		}
+		if (o.note) body.append(el("p", { class: "drawer-note", text: o.note }));
+		row.append(body);
+	} catch (err) {
+		row.append(el("p", { class: "drawer-note", text: err.message }));
+	}
+	oddsScroll();
+}
+
+/** One exact probability, rendered with its receipt: the percent a
+    table argues with, the rational a debugger checks, the hits the
+    composition actually counted. */
+function renderOddsAnswer(data, row) {
+	if (data.known === false) {
+		row.append(el("p", { class: "drawer-note", text: data.note || "the library composition is unknown" }));
+		return;
+	}
+	const a = data.answer || {};
+	const body = el("div", { class: "play-odds-answer" });
+	const subject = a.card || a.category || "that";
+	body.append(el("p", {
+		text: `${(a.percent ?? 0).toFixed(1)}% — ${a.k_hits ?? 0} of ${a.n ?? 0} cards that answer “${subject}”, over the next ${a.draws ?? 1} draw${a.draws === 1 ? "" : "s"} (${a.rational || "0"})`,
+	}));
+	const hits = Object.entries(a.hits || {});
+	if (hits.length) {
+		hits.sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
+		const names = hits.slice(0, 6).map(([name, n]) => (n > 1 ? `${name} ×${n}` : name));
+		const more = hits.length - names.length;
+		body.append(el("p", {
+			class: "drawer-note",
+			text: names.join(", ") + (more > 0 ? ` · ${more} more` : ""),
+		}));
+	}
+	if (a.note) body.append(el("p", { class: "drawer-note", text: a.note }));
+	row.append(body);
+}
+
+/** The opt-in sync: the checkbox writes the per-game setting, and the
+    game view's settings are its truth on open. */
+function syncMulliganToggle() {
+	const box = $("play-mulligan-advice");
+	if (box) box.checked = !!(game?.settings?.mulligan_advice);
+}
+
+async function setMulliganAdvice(on) {
+	try {
+		await api.gameSettings(gameID, { mulligan_advice: on });
+		if (game?.settings) game.settings.mulligan_advice = on;
+		else if (game) game.settings = { mulligan_advice: on };
+	} catch (err) {
+		$("play-mulligan-advice").checked = !on;
+		currentMeta(err.message, true);
+	}
+}
+
+/** Keep or mulligan over a spoken opening hand, with the arithmetic
+    shown. Off until the table opts in — some tables will not want it. */
+async function adviseMulligan(text) {
+	const hand = (text || "").split(",").map((s) => s.trim()).filter(Boolean);
+	if (!hand.length || !gameID) return;
+	const row = oddsRow("q", hand.join(", "));
+	$("play-odds-thread").append(row);
+	oddsScroll();
+	try {
+		const data = await api.gameMulligan(gameID, actingSeat(), hand);
+		const a = data.advice || {};
+		const body = el("div", { class: "play-odds-answer" });
+		body.append(el("p", {}, el("b", { text: a.verdict === "keep" ? "Keep." : "Mulligan." }),
+			el("span", { text: ` ${a.lands} lands — bottom ${(a.land_percentile * 100).toFixed(1)}% of ${a.hand_size}-card hands for land count` })));
+		const reasons = el("ul", { class: "play-odds-outs" });
+		for (const r of a.reasons || []) reasons.append(el("li", { text: r }));
+		body.append(reasons);
+		row.append(body);
+	} catch (err) {
+		row.append(el("p", { class: "drawer-note", text: err.message }));
+	}
+	oddsScroll();
+}
+
 /* ---------- provenance traces (MAD-334) ---------- */
 
 // The deterministic half of the reasoning layer: every computed value
@@ -1887,6 +2063,36 @@ function wire() {
 			on: { click: () => askJudge(q) },
 		}));
 	}
+
+	// Deck odds (MAD-336): the exact-probability sibling of the judge.
+	// Chips carry the shapes the gate parses; typed questions route
+	// through the same gate, outs shapes to the outs endpoint.
+	$("play-odds").addEventListener("click", toggleOdds);
+	$("play-odds-close").addEventListener("click", closeOdds);
+	$("play-odds-form").addEventListener("submit", (e) => {
+		e.preventDefault();
+		const input = $("play-odds-q");
+		const text = input.value;
+		input.value = "";
+		askOdds(text);
+	});
+	for (const q of ODDS_QUICK) {
+		$("play-odds-quick").append(el("button", {
+			class: "chip play-judge-chip",
+			attrs: { type: "button" },
+			text: q,
+			on: { click: () => askOdds(q) },
+		}));
+	}
+	$("play-mulligan-advice").addEventListener("change", (e) => {
+		setMulliganAdvice(e.target.checked);
+	});
+	$("play-odds-mull-form").addEventListener("submit", (e) => {
+		e.preventDefault();
+		const input = $("play-odds-hand");
+		const text = input.value;
+		adviseMulligan(text);
+	});
 
 	$("play-card").addEventListener("input", cardSearchDebounced);
 	$("play-card").addEventListener("keydown", (e) => {

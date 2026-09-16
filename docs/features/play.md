@@ -243,6 +243,43 @@ itself), `POST /api/games/{id}/triggers/propose` (the model's
 candidate, gated onto the vocabulary — nothing is written until the
 confirm tap), and `GET /api/games/{id}/nudges` (the strip's read).
 
+## Deck odds — outs, exact probabilities, mulligan advice
+
+With a deck attached and the log recording every card that left the
+library — drawn, played, milled, exiled — the remaining library is
+**derived, never guessed**: it is the fold's composition bookkeeping,
+and the `🎴 odds` panel does exact arithmetic over it. No model in the
+path; every answer is a hypergeometric with its rational shown, so the
+same question over the same game answers byte-identically twice.
+
+- **Draw probabilities** — "chance of a land in the next three",
+  "chance of finding a board wipe by turn nine" (one draw per own
+  turn, stated in the answer). Categories reuse the deck report's own
+  classification — lands, board wipes, ramp, draw, interaction — and a
+  named card counts its own copies.
+- **Outs** — "what are my outs against an enchantment": the card
+  index's full-text search proposes candidates over type line and
+  oracle text, the remaining library vetoes everything not still in
+  it, and the local pass labels why each survivor answers. A card that
+  was drawn is not an out; a sweeper of creatures does not answer an
+  enchantment.
+- **Mulligan advice** — type the opening hand, get keep-or-mulligan
+  with the arithmetic: the hand's land percentile (exact), ramp and
+  interaction in hand, early castability. It is **opt-in per game**
+  (`mulligan_advice` in the game's settings, off by default) because
+  some tables will not want it.
+- **Composition, never order** — a library is a multiset. Questions
+  that depend on order ("what's my next card?", "when will I draw a
+  Wrath?", "top card?") are refused out loud: *library order is never
+  modelled*. Aggregate horizons are composition; positions are not.
+
+The surfaces: `GET /api/games/{id}/library` (the derived composition),
+`POST /api/games/{id}/odds` (question or structured shape),
+`POST /api/games/{id}/outs` (a board object id or free text), and
+`POST /api/games/{id}/mulligan` behind the opt-in. An install without
+the card index still answers named-card odds from the composition
+alone and says what is missing for the rest.
+
 ## Honesty rules the surface inherits
 
 - **Unknown is a value.** A hand the tracker was never told about reads

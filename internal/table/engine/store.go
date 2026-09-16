@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,6 +58,10 @@ func (s *Store) DB() *sql.DB { return s.db }
 
 // Game is one mtg_games row: the container. Lifecycle metadata only —
 // current turn, phase, priority, who is alive are folds, never stored.
+// Settings is the row's typed-options payload (mtg_games.settings):
+// opt-in features a table flips per game, like mulligan advice
+// (MAD-336) — absence is off, the same default-off discipline the
+// campaign settings keys keep.
 type Game struct {
 	ID           string
 	OwnerID      string
@@ -64,11 +69,17 @@ type Game struct {
 	Format       string
 	StartingLife int
 	Status       Status
+	Settings     map[string]any
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	StartedAt    *time.Time
 	EndedAt      *time.Time
 }
+
+// SettingsKeyMulliganAdvice is the settings key that opts a game into
+// mulligan advice. Advice is opt-in per game because some tables will
+// not want it; the odds layer checks the flag before advising.
+const SettingsKeyMulliganAdvice = "mulligan_advice"
 
 // CreateGame writes a setup game. Format defaults to commander and life
 // to 40: the engine underneath is format-agnostic, the defaults are the
@@ -101,11 +112,12 @@ func (s *Store) GetGame(ctx context.Context, id string) (*Game, error) {
 		status           string
 		created, updated int64
 		started, ended   sql.NullInt64
+		settings         string
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at
+		SELECT owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at, settings
 		  FROM mtg_games WHERE id = ?`, id).
-		Scan(&g.OwnerID, &g.Name, &g.Format, &g.StartingLife, &status, &created, &updated, &started, &ended)
+		Scan(&g.OwnerID, &g.Name, &g.Format, &g.StartingLife, &status, &created, &updated, &started, &ended, &settings)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("mtg game %s: %w", id, ErrNotFound)
 	}
@@ -113,6 +125,7 @@ func (s *Store) GetGame(ctx context.Context, id string) (*Game, error) {
 		return nil, fmt.Errorf("get mtg game: %w", err)
 	}
 	g.Status = Status(status)
+	g.Settings = parseSettings(settings)
 	g.CreatedAt, g.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	if started.Valid {
 		t := time.UnixMilli(started.Int64).UTC()
@@ -125,6 +138,40 @@ func (s *Store) GetGame(ctx context.Context, id string) (*Game, error) {
 	return g, nil
 }
 
+// parseSettings decodes the settings JSON column, tolerating an empty
+// or malformed value as no settings — the fold never depends on it.
+func parseSettings(raw string) map[string]any {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// UpdateSettings replaces the game's settings payload — the per-game
+// opt-in write (MAD-336). Strictly a row update: settings are table
+// configuration, not game events, so the log is untouched.
+func (s *Store) UpdateSettings(ctx context.Context, gameID string, settings map[string]any) error {
+	b, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("encode mtg game settings: %w", err)
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE mtg_games SET settings = ?, updated_at = ? WHERE id = ?`,
+		string(b), s.now().UnixMilli(), gameID)
+	if err != nil {
+		return fmt.Errorf("update mtg game settings: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("mtg game %s: %w", gameID, ErrNotFound)
+	}
+	s.notify(gameID)
+	return nil
+}
+
 // ErrNotFound marks a game id that does not exist for the caller.
 var ErrNotFound = errors.New("mtg game not found")
 
@@ -133,7 +180,7 @@ var ErrNotFound = errors.New("mtg game not found")
 // not filtered after the fact.
 func (s *Store) ListGames(ctx context.Context, owner string) ([]*Game, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at
+		SELECT id, owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at, settings
 		  FROM mtg_games WHERE owner_id = ? ORDER BY updated_at DESC, id`, owner)
 	if err != nil {
 		return nil, fmt.Errorf("list mtg games: %w", err)
@@ -146,12 +193,14 @@ func (s *Store) ListGames(ctx context.Context, owner string) ([]*Game, error) {
 			status           string
 			created, updated int64
 			started, ended   sql.NullInt64
+			settings         string
 		)
 		if err := rows.Scan(&g.ID, &g.OwnerID, &g.Name, &g.Format, &g.StartingLife, &status,
-			&created, &updated, &started, &ended); err != nil {
+			&created, &updated, &started, &ended, &settings); err != nil {
 			return nil, err
 		}
 		g.Status = Status(status)
+		g.Settings = parseSettings(settings)
 		g.CreatedAt, g.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 		if started.Valid {
 			t := time.UnixMilli(started.Int64).UTC()

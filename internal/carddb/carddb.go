@@ -530,6 +530,49 @@ func ftsQuery(s string) string {
 	return strings.Join(parts, " OR ")
 }
 
+// SearchText returns cards whose type line or oracle text matches the
+// query, text first — the deck builder's SearchNames inverted: there
+// the name carries the weight because a written card name is being
+// looked up, here the rules text carries it because the query
+// describes what a card should do ("destroy enchantment"). The same
+// cards_fts index and the same sanitized OR-of-prefix grammar, with
+// bm25's name column zeroed; an empty result falls back to a substring
+// scan over the oracle text so a lone unusual word still hits. The
+// Magic table's outs search (MAD-336) reads through this.
+func (s *Store) SearchText(ctx context.Context, q string, limit int) ([]*Card, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if match := ftsQuery(q); match != "" {
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT c.name, c.mana_cost, c.mana_value, c.type_line, c.oracle_text,
+			       c.color_identity, c.edhrec_rank, c.edhrec_saltiness,
+			       c.commander_legal, c.legal_commander, c.game_changer
+			  FROM cards_fts f JOIN cards c ON c.name = f.name
+			 WHERE cards_fts MATCH ?
+			 ORDER BY bm25(cards_fts, 0, 3.0, 1.0) LIMIT ?`, match, limit)
+		if err == nil {
+			out, err := scanCards(rows)
+			if err != nil {
+				return nil, err
+			}
+			if len(out) > 0 {
+				return out, nil
+			}
+		}
+	}
+	// Fallback: substring over the oracle text.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+cardColumns+` FROM cards
+		 WHERE oracle_text LIKE ? COLLATE NOCASE
+		 ORDER BY edhrec_rank IS NULL, edhrec_rank LIMIT ?`,
+		"%"+sanitizeToken(q)+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanCards(rows)
+}
+
 // sanitizeToken reduces free text to a bare lowercase alnum token for the
 // LIKE fallback.
 func sanitizeToken(s string) string {

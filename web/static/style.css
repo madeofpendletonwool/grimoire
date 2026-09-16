@@ -2966,6 +2966,34 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .play-judge-row .thinking { color: var(--ink-soft); font-style: italic; }
 .play-judge-row .citations { margin-top: var(--sp-1); }
 
+/* Deck odds (MAD-336): the judge's exact-maths sibling — reuses its
+   frame and thread, adds the mulligan strip and the outs lists. */
+.play-odds-mull {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1) var(--sp-2);
+	font-size: var(--fs-xs);
+}
+.play-odds-mull-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sp-1);
+	color: var(--ink-soft);
+	white-space: nowrap;
+}
+.play-odds-mull .play-talk-input { flex: 1; min-width: 16em; }
+.play-odds-answer p { font-size: var(--fs-sm); }
+.play-odds-answer .drawer-note { display: block; }
+.play-odds-outs {
+	margin: var(--sp-1) 0 0;
+	padding-left: 1.2em;
+	font-size: var(--fs-xs);
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-1);
+}
+
 /* The provenance panel (MAD-334): the same row-above-the-panes shape
    the judge uses — a tool on the table, never a modal over the log. */
 .play-trace {
