@@ -56,6 +56,9 @@ const (
 // facts from the mtg_seats row plus the attached deck's composition, so
 // the log alone rebuilds the game — including what each library held when
 // play began, which is where library composition knowledge starts.
+// Since the ADR 13 split (MAD-337) the public echo carries DeckSize —
+// a library's size is public information at the table — and the
+// composition itself rides each seat's private DECK_KNOWN row.
 type SeatConfig struct {
 	Seat         int            `json:"seat"`
 	Name         string         `json:"name,omitempty"`
@@ -64,6 +67,7 @@ type SeatConfig struct {
 	Commander    string         `json:"commander,omitempty"`
 	StartingLife int            `json:"starting_life,omitempty"`
 	Deck         map[string]int `json:"deck,omitempty"`
+	DeckSize     int            `json:"deck_size,omitempty"`
 }
 
 // AttackAssignment is one creature declared as attacking a seat or a

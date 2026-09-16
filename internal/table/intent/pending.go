@@ -37,12 +37,14 @@ type pendingContext struct {
 
 // PendingRow is one tray row as the surface reads it: the question, its
 // tappable options when it was asked, the spoken span, and the ordinal
-// it was asked at.
+// it was asked at. AskSeat is the seat that spoke — public fact, and
+// the key a scoped reader's options redaction hangs on (MAD-337).
 type PendingRow struct {
 	ID       string   `json:"id"`
 	Question string   `json:"question"`
 	Options  []Option `json:"options,omitempty"`
 	Spoken   string   `json:"spoken,omitempty"`
+	AskSeat  int      `json:"ask_seat,omitempty"`
 	Ord      int64    `json:"ord,omitempty"`
 	Status   string   `json:"status"`
 }
@@ -95,7 +97,7 @@ func scanPending(row pendingScanner) (*PendingRow, error) {
 	if context != "" {
 		var c pendingContext
 		if err := json.Unmarshal([]byte(context), &c); err == nil {
-			r.Spoken, r.Ord = c.Spoken, c.Ord
+			r.Spoken, r.AskSeat, r.Ord = c.Spoken, c.Seat, c.Ord
 		}
 	}
 	return &r, nil

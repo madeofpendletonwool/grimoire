@@ -92,6 +92,11 @@ func (m llmModel) Complete(ctx context.Context, system, user string) (Completion
 // satisfies it.
 type Resolver interface {
 	ResolveGame(ctx context.Context, st *engine.State, gameID string, seat int, spoken string) (universe.Resolution, error)
+	// ResolveGameFor is the viewer-scoped walk (MAD-337): a scoped
+	// caller resolves against its own fold and reads only public-tier
+	// cache rows, so no other seat's deck composition rides a
+	// resolution.
+	ResolveGameFor(ctx context.Context, st *engine.State, gameID string, seat int, spoken string, scoped bool) (universe.Resolution, error)
 	Record(ctx context.Context, gameID, spoken, card string) error
 	RecordLLM(ctx context.Context, gameID, spoken, card string, confidence float64) error
 }
@@ -177,15 +182,19 @@ func (s *Store) ModelName() string {
 // cachedNames is the grammar's name seam over the per-game cache and
 // the tier walk: the grammar resolves names through the same resolver
 // the resolve endpoint uses, so a cached answer is the grammar's answer
-// too and no name is re-inferred behind the grammar's back.
+// too and no name is re-inferred behind the grammar's back. scoped
+// carries the viewer's entitlement through (MAD-337): a seated reader's
+// resolution walks its own deck and the index, never another seat's
+// deck, and the cache serves it public-tier rows only.
 type cachedNames struct {
 	resolve Resolver
 	gameID  string
 	st      *engine.State
+	scoped  bool
 }
 
 func (n cachedNames) ResolveName(ctx context.Context, seat int, spoken string) grammar.NameInfo {
-	r, err := n.resolve.ResolveGame(ctx, n.st, n.gameID, seat, spoken)
+	r, err := n.resolve.ResolveGameFor(ctx, n.st, n.gameID, seat, spoken, n.scoped)
 	if err != nil || !r.Resolved() {
 		return grammar.NameInfo{}
 	}
@@ -197,6 +206,17 @@ func (n cachedNames) ResolveName(ctx context.Context, seat int, spoken string) g
 // ("grammar" for typed talk, "voice" for push-to-talk); which layer
 // answered is reported separately in Reply.From.
 func (s *Store) Interpret(ctx context.Context, gameID string, seat int, utterance string, source string) (*Reply, error) {
+	return s.InterpretFor(ctx, gameID, seat, utterance, source, engine.OwnerViewer())
+}
+
+// InterpretFor is Interpret at a viewer's scope (MAD-337). The grammar,
+// the fallback's prompt and the gate all read the viewer's own fold:
+// the owner's parse sees every deck, and a seated account's parse —
+// the only kind a pod produces — physically cannot quote another
+// seat's hidden zones, because its fold does not contain them. The
+// applied half is unchanged: Submit folds the full log, because the
+// writer was never the reader's business.
+func (s *Store) InterpretFor(ctx context.Context, gameID string, seat int, utterance string, source string, viewer engine.Viewer) (*Reply, error) {
 	utterance = strings.TrimSpace(utterance)
 	if utterance == "" {
 		return nil, fmt.Errorf("%w: nothing was said", engine.ErrInvalid)
@@ -204,7 +224,7 @@ func (s *Store) Interpret(ctx context.Context, gameID string, seat int, utteranc
 	if source == "" {
 		source = "grammar"
 	}
-	st, err := s.games.State(ctx, gameID)
+	st, err := s.games.StateFor(ctx, gameID, viewer)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +233,7 @@ func (s *Store) Interpret(ctx context.Context, gameID string, seat int, utteranc
 	}
 
 	// Layer 1: the grammar, over the cached resolver.
-	names := cachedNames{resolve: s.resolve, gameID: gameID, st: st}
+	names := cachedNames{resolve: s.resolve, gameID: gameID, st: st, scoped: !viewer.Owner}
 	from := "grammar"
 	var action engine.Action
 	if res := grammar.Parse(ctx, seat, utterance, st, names); res.OK {
@@ -318,9 +338,19 @@ func (s *Store) buildQuestion(ctx context.Context, gameID string, st *engine.Sta
 // text answer and applies nothing, because a parked question never
 // carried an action anyone could safely finish.
 func (s *Store) AnswerPending(ctx context.Context, gameID string, pendingID string, seat int, answer string) (*Reply, error) {
+	return s.AnswerPendingFor(ctx, gameID, pendingID, seat, answer, engine.OwnerViewer())
+}
+
+// AnswerPendingFor is AnswerPending at a viewer's scope (MAD-337): the
+// parked row's free-text resolution walks the viewer's own fold, and a
+// scoped viewer may only answer as a seat they hold.
+func (s *Store) AnswerPendingFor(ctx context.Context, gameID string, pendingID string, seat int, answer string, viewer engine.Viewer) (*Reply, error) {
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
 		return nil, fmt.Errorf("%w: an answer needs saying", engine.ErrInvalid)
+	}
+	if !viewer.SeesSeat(seat) {
+		return nil, fmt.Errorf("%w: seat %d is not yours to answer for", engine.ErrNotEntitled, seat)
 	}
 	row, err := s.loadPending(ctx, gameID, pendingID)
 	if err != nil {
@@ -334,9 +364,9 @@ func (s *Store) AnswerPending(ctx context.Context, gameID string, pendingID stri
 		// the span's resolution is cached at manual confidence — the
 		// next time that name is spoken, the grammar answers alone.
 		if row.Spoken != "" {
-			st, err := s.games.State(ctx, gameID)
+			st, err := s.games.StateFor(ctx, gameID, viewer)
 			if err == nil {
-				if res, rerr := s.resolve.ResolveGame(ctx, st, gameID, seat, answer); rerr == nil && res.Resolved() {
+				if res, rerr := s.resolve.ResolveGameFor(ctx, st, gameID, seat, answer, !viewer.Owner); rerr == nil && res.Resolved() {
 					_ = s.resolve.Record(ctx, gameID, row.Spoken, res.Card)
 				}
 			}
@@ -389,6 +419,16 @@ func (s *Store) Dismiss(ctx context.Context, gameID, pendingID string) error {
 // Open lists the game's open questions, oldest first — asked ones ride
 // the current-action pane, parked ones the tray.
 func (s *Store) Open(ctx context.Context, gameID string) ([]PendingRow, error) {
+	return s.OpenFor(ctx, gameID, engine.OwnerViewer())
+}
+
+// OpenFor is Open at a viewer's scope (MAD-337). The question itself is
+// table-audible — the asker spoke the span — but its tappable options
+// are completions drawn from the asking seat's own deck, and a deck's
+// contents are their owner's alone: a viewer who does not hold the
+// asking seat sees the question and none of its options. The owner sees
+// everything, as ever.
+func (s *Store) OpenFor(ctx context.Context, gameID string, viewer engine.Viewer) ([]PendingRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, question, options, context, status, created_at FROM mtg_pending
 		 WHERE game_id = ? AND status = 'open' ORDER BY created_at, id`, gameID)
@@ -401,6 +441,9 @@ func (s *Store) Open(ctx context.Context, gameID string) ([]PendingRow, error) {
 		r, err := scanPending(rows)
 		if err != nil {
 			return nil, err
+		}
+		if !viewer.SeesSeat(r.AskSeat) {
+			r.Options = nil
 		}
 		out = append(out, *r)
 	}

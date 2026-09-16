@@ -297,6 +297,37 @@ alone and says what is missing for the rest.
   announces rewinds and amends so every client re-folds rather than
   holding rows that no longer exist.
 
+## The pod: four players, four clients, one game
+
+A Commander table is more than one tracker, so a game is joinable:
+**the host shares a six-character code** (or a `?join=` link), a friend
+redeems it while the game is in setup, and they land in the next seat —
+their client becomes their chair. What each client sees is scoped in
+SQL, never on trust ([ADR 13](../decisions.md#adr-13-hidden-zones-are-authorization-in-sql-not-instruction)):
+
+- **Public to everyone** — the board, the stack, graveyards, exile, the
+  command zone, life and every counter, hand *counts*, library *sizes*,
+  and the whole public log.
+- **Your seat's alone** — your hand's known cards, your library's exact
+  composition, your decklist. The identification tiers and the
+  shared name cache answer you from your own deck and the global index,
+  never another seat's.
+- **Nobody's but your own** — your private notes pad, saved as you
+  type. Not even the game's host reads a seated player's pad; a local
+  seat's pad is the host's, because the host's client runs it.
+
+The host keeps the room: seating, decks, start, rewind, amend and the
+per-game settings are host controls; a participant talks, taps, asks the
+judge and takes their odds as their own seat. Correction for a
+participant is the current-action pane's one-tap accept/fix — the log's
+truncate controls are the host's, because the log is the shared game.
+
+The gate that keeps this honest runs in CI: the deterministic
+`hidden_zone_leak` check joins every rendered surface — responses,
+assembled prompts, the works — against per-seat entitlement, with
+marker decks, marker draws and marker notes planted so a missing filter
+fails the build instead of a friendship.
+
 ## Where the truth lives
 
 The board you see is the server's fold of the game's append-only event

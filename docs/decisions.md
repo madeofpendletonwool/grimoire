@@ -563,13 +563,37 @@ its own seat's rows.
 - The engine's fold includes seat-visible rows — it must, to serve a seat
   its own view — exactly as the campaign store holds secrets no player
   retrieval can reach. The gate is the query.
-- The reflection leak test pattern (MAD-304) is the hard gate here: walk the
-  response types and assert no hidden-zone field can reach a seat not
+- The reflection leak test pattern (MAD-304) is the hard gate here: walk
+  the response types and assert no hidden-zone field can reach a seat not
   entitled to it (MAD-337), plus a `hidden_zone_leak` deterministic check —
   a join, not a model call, so it is free.
-- Identity-bearing events (`CARD_KNOWN`, `LOOK`) choose their visibility at
+- Identity-bearing events (`CARD_KNOWN`, `LOOK`) choose visibility at
   submission: spoken at the table is public, typed on your own screen is
   seat-visible.
+- Enforced in MAD-337, the shape it took:
+  - **`DECK_KNOWN` rows.** Library composition is a hidden zone, so the
+    public `GAME_STARTED` echoes the seating deckless — with each deck's
+    *size*, which is table knowledge — and every deck rides its own
+    seat-visible `DECK_KNOWN` row. A seat folding its scoped stream seeds
+    only its own composition; the owner folds all of them.
+  - **Causes are redacted like payloads.** The Action JSON riding a row
+    never repeats an identity the row does not entitle its reader to: a
+    `START_GAME`'s rows carry no decks, a `DRAW`'s rows carry no cards.
+  - **Legacy games stay owner-only.** Rows written before the split carry
+    decks on public `GAME_STARTED` payloads; those games mint no join code
+    and cannot be joined. History is not rewritten.
+  - **The name cache is tier-scoped.** A deck-tier or llm-tier cache row
+    says "some attached deck contains this card" without saying whose, so
+    a seated reader is served only `global` and `manual` rows — mappings
+    any Magic player could derive.
+  - **Notes stop even the owner.** `mtg_seat_notes` belongs to the account
+    bound to the seat (a local seat's pad is the host's, since the host's
+    client runs it). "The owner sees everything" is about the game's
+    hidden zones; a player's pad is not a zone of the game.
+  - **Ordinals stay shared.** A seat's stream is selected in SQL, but the
+    ordinal space is one counter: a scoped reader can see that hidden rows
+    exist (counts and timing, never identities). Hand counts are public
+    events; ordinal arithmetic is structure, not zone contents.
 
 ---
 

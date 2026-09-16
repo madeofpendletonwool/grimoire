@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/madeofpendletonwool/grimoire/internal/table/engine"
@@ -75,13 +76,16 @@ func (s *Server) universeEnabled(w http.ResponseWriter) bool {
 }
 
 // writeGameError maps the engine's sentinels onto HTTP statuses: a
-// missing game is 404, a rejected action is 400 (it wrote nothing),
-// the odds layer's missing card index is 503, and anything else
-// surfaces as 500 without its SQL traceback.
+// missing game is 404, a rejected action is 400 (it wrote nothing), a
+// scope violation inside a visible game is 403, the odds layer's
+// missing card index is 503, and anything else surfaces as 500 without
+// its SQL traceback.
 func writeGameError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, engine.ErrNotFound):
 		writeError(w, http.StatusNotFound, err)
+	case errors.Is(err, engine.ErrNotEntitled):
+		writeError(w, http.StatusForbidden, err)
 	case errors.Is(err, engine.ErrInvalid):
 		writeError(w, http.StatusBadRequest, err)
 	case errors.Is(err, universe.ErrInvalid):
@@ -98,8 +102,10 @@ func writeGameError(w http.ResponseWriter, err error) {
 	}
 }
 
-// resolveGame loads the game in the path and enforces the account scope:
-// another owner's game answers exactly like a missing one.
+// resolveGame loads the game in the path and enforces the host's
+// scope: the owner only. Setup, start, rewind, amend and settings are
+// the host's controls — the pod's participants play; the host runs the
+// room. Another owner's game answers exactly like a missing one.
 func (s *Server) resolveGame(w http.ResponseWriter, r *http.Request) *engine.Game {
 	g, err := s.games.GetGame(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -113,6 +119,58 @@ func (s *Server) resolveGame(w http.ResponseWriter, r *http.Request) *engine.Gam
 	return g
 }
 
+// gameViewer is the read-side entitlement (MAD-337): the owner sees
+// everything (the DM analog), an account holding a seat sees the public
+// stream plus that seat's rows, and everyone else gets the same 404 a
+// missing game answers — not-found and not-yours are the same answer.
+type gameViewer struct {
+	Owner bool  `json:"owner"`
+	Seats []int `json:"seats,omitempty"`
+}
+
+// resolveGameAny loads the game for any entitled reader and returns
+// the viewer their reads are scoped to. Every game read a participant
+// may reach goes through here; the host-only controls above stay on
+// resolveGame.
+func (s *Server) resolveGameAny(w http.ResponseWriter, r *http.Request) (*engine.Game, engine.Viewer) {
+	g, err := s.games.GetGame(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeGameError(w, err)
+		return nil, engine.Viewer{}
+	}
+	if g.OwnerID == userID(r) {
+		return g, engine.OwnerViewer()
+	}
+	seats, err := s.games.SeatsForUser(r.Context(), g.ID, userID(r))
+	if err != nil {
+		writeGameError(w, err)
+		return nil, engine.Viewer{}
+	}
+	if len(seats) == 0 {
+		writeError(w, http.StatusNotFound, engine.ErrNotFound)
+		return nil, engine.Viewer{}
+	}
+	return g, engine.SeatViewer(seats...)
+}
+
+// viewerView shapes the entitlement for a response body — the client
+// learns which seat is its own, and that is all it learns.
+func viewerView(v engine.Viewer) gameViewer {
+	out := gameViewer{Owner: v.Owner}
+	out.Seats = append(out.Seats, v.Seats...)
+	return out
+}
+
+// seatGuard enforces that a request's seat parameter is a seat the
+// viewer holds: a pod participant acts and asks as themselves. The
+// owner passes every seat through.
+func seatGuard(v engine.Viewer, seat int) error {
+	if v.SeesSeat(seat) {
+		return nil
+	}
+	return fmt.Errorf("%w: seat %d is not yours to act as", engine.ErrNotEntitled, seat)
+}
+
 /* ---------- views ---------- */
 
 type gameView struct {
@@ -123,10 +181,14 @@ type gameView struct {
 	Status       string         `json:"status"`
 	LatestOrd    int64          `json:"latest_ord"`
 	Settings     map[string]any `json:"settings,omitempty"`
-	CreatedAt    string         `json:"created_at"`
-	UpdatedAt    string         `json:"updated_at"`
-	StartedAt    *string        `json:"started_at,omitempty"`
-	EndedAt      *string        `json:"ended_at,omitempty"`
+	// JoinCode is the pod's share code — owner-only in any response
+	// (MAD-337): a participant already joined, and a code in a seated
+	// client's hands is an invite the host never handed out.
+	JoinCode  string  `json:"join_code,omitempty"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
+	StartedAt *string `json:"started_at,omitempty"`
+	EndedAt   *string `json:"ended_at,omitempty"`
 	// Seats is the setup-pane read: the mtg_seats rows while the game is
 	// still setup, so a reloaded client can rebuild an unfinished table.
 	// Once play begins the fold's GAME_STARTED echo is the seating and
@@ -152,31 +214,41 @@ func toGameView(g *engine.Game, latest int64) gameView {
 	return v
 }
 
-// gameViewWithOrd folds the head ordinal in for a fresh row.
-func (s *Server) gameView(ctx context.Context, g *engine.Game) gameView {
+// toGameViewFor shapes the game for one viewer: the owner's copy carries
+// the join code, a participant's does not.
+func toGameViewFor(g *engine.Game, latest int64, v engine.Viewer) gameView {
+	view := toGameView(g, latest)
+	if v.Owner {
+		view.JoinCode = g.JoinCode
+	}
+	return view
+}
+
+// gameViewFor folds the head ordinal in for a fresh row, viewer-shaped.
+func (s *Server) gameViewFor(ctx context.Context, g *engine.Game, v engine.Viewer) gameView {
 	latest, err := s.games.LatestOrd(ctx, g.ID)
 	if err != nil {
 		latest = 0
 	}
-	return toGameView(g, latest)
+	return toGameViewFor(g, latest, v)
 }
 
 // gameViewWithSeats is the setup pane's read: the game plus the seat
 // rows, so a reloaded client can rebuild a table that has not started.
 // After start the fold owns the seating and the seats field stays unset.
-func (s *Server) gameViewWithSeats(ctx context.Context, g *engine.Game) gameView {
-	v := s.gameView(ctx, g)
+func (s *Server) gameViewWithSeats(ctx context.Context, g *engine.Game, v engine.Viewer) gameView {
+	view := s.gameViewFor(ctx, g, v)
 	if g.Status != engine.StatusSetup {
-		return v
+		return view
 	}
 	seats, err := s.games.Seats(ctx, g.ID)
 	if err != nil {
-		return v // the pane renders what it can; the error path is the list's
+		return view // the pane renders what it can; the error path is the list's
 	}
 	if len(seats) > 0 {
-		v.Seats = &seats
+		view.Seats = &seats
 	}
-	return v
+	return view
 }
 
 /* ---------- lifecycle ---------- */
@@ -202,43 +274,100 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"game": toGameView(g, 0)})
+	writeJSON(w, http.StatusCreated, map[string]any{"game": toGameViewFor(g, 0, engine.OwnerViewer())})
 }
 
-// handleListGames answers the caller's games, most recently updated
-// first. Another account's games are absent, not hidden.
+// handleListGames answers the caller's games — owned or seated in —
+// most recently updated first. Another account's games are absent, not
+// hidden, and each row is viewer-shaped: only games the caller owns
+// carry a join code.
 func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	games, err := s.games.ListGames(r.Context(), userID(r))
+	uid := userID(r)
+	games, err := s.games.ListGames(r.Context(), uid)
 	if err != nil {
 		writeGameError(w, err)
 		return
 	}
 	views := make([]gameView, 0, len(games))
 	for _, g := range games {
-		views = append(views, s.gameView(r.Context(), g))
+		v := engine.OwnerViewer()
+		if g.OwnerID != uid {
+			if seats, err := s.games.SeatsForUser(r.Context(), g.ID, uid); err == nil {
+				v = engine.SeatViewer(seats...)
+			}
+		}
+		views = append(views, s.gameViewFor(r.Context(), g, v))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"games": views})
 }
 
-// handleGetGame answers one game with its folded state — the board's
-// whole payload, since state is a fold and the fold is the truth.
-func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
+// handleJoinGame redeems a join code and binds the caller to a seat
+// (MAD-337): the pod's front door. The reply carries the game and the
+// seat the account now holds, so the client opens the table already
+// knowing which chair is its own. Redeeming a code you already redeemed
+// answers the same seat — a reloaded tab is a rejoin, not a new seat.
+func (s *Server) handleJoinGame(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
-	if g == nil {
+	var req struct {
+		Code string `json:"code"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %v", err))
 		return
 	}
-	state, err := s.games.State(r.Context(), g.ID)
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		if u, ok := userFrom(r.Context()); ok {
+			name = u.Username
+		}
+	}
+	g, seat, err := s.games.JoinGame(r.Context(), req.Code, userID(r), name)
 	if err != nil {
 		writeGameError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameViewWithSeats(r.Context(), g), "state": state})
+	v := engine.OwnerViewer()
+	if g.OwnerID != userID(r) {
+		if seats, err := s.games.SeatsForUser(r.Context(), g.ID, userID(r)); err == nil {
+			v = engine.SeatViewer(seats...)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"game":  s.gameViewWithSeats(r.Context(), g, v),
+		"seat":  seat,
+		"owner": g.OwnerID == userID(r),
+	})
+}
+
+// handleGetGame answers one game with the viewer's folded state — the
+// board's whole payload, scoped the way the store scopes it: the owner
+// folds everything, a seated account folds the public stream plus its
+// own seat's rows (ADR 13). The viewer block tells the client which
+// chair is its own.
+func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
+	if !s.gamesEnabled(w) {
+		return
+	}
+	g, viewer := s.resolveGameAny(w, r)
+	if g == nil {
+		return
+	}
+	state, err := s.games.StateFor(r.Context(), g.ID, viewer)
+	if err != nil {
+		writeGameError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"game":   s.gameViewWithSeats(r.Context(), g, viewer),
+		"state":  state,
+		"viewer": viewerView(viewer),
+	})
 }
 
 // handleSeatPlayer writes one seat: position in turn order, a display
@@ -277,7 +406,7 @@ func (s *Server) handleSeatPlayer(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"game": s.gameViewWithSeats(r.Context(), fresh)})
+	writeJSON(w, http.StatusCreated, map[string]any{"game": s.gameViewWithSeats(r.Context(), fresh, engine.OwnerViewer())})
 }
 
 // handleStartGame loads the seat table and submits START_GAME: the
@@ -301,7 +430,7 @@ func (s *Server) handleStartGame(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameView(r.Context(), fresh), "state": state, "events": evs})
+	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameViewFor(r.Context(), fresh, engine.OwnerViewer()), "state": state, "events": evs})
 }
 
 // handleResolveName is the identification half of the intent pipeline
@@ -315,7 +444,7 @@ func (s *Server) handleResolveName(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) || !s.universeEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -331,12 +460,20 @@ func (s *Server) handleResolveName(w http.ResponseWriter, r *http.Request) {
 	if req.Seat != nil {
 		seat = *req.Seat
 	}
-	state, err := s.games.State(r.Context(), g.ID)
+	// A pod participant resolves as a seat they hold: the tiers then
+	// walk their own deck and the index, and the shared cache serves
+	// them public-tier rows only — another seat's library composition
+	// cannot ride a resolution (ADR 13).
+	if err := seatGuard(viewer, seat); err != nil {
+		writeGameError(w, err)
+		return
+	}
+	state, err := s.games.StateFor(r.Context(), g.ID, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return
 	}
-	res, err := s.universe.ResolveGame(r.Context(), state, g.ID, seat, req.Spoken)
+	res, err := s.universe.ResolveGameFor(r.Context(), state, g.ID, seat, req.Spoken, !viewer.Owner)
 	if err != nil {
 		writeGameError(w, err)
 		return
@@ -349,12 +486,15 @@ func (s *Server) handleResolveName(w http.ResponseWriter, r *http.Request) {
 // handleSubmitAction is the writer's front door: the request body is the
 // Action JSON — the same shape the event row's cause column stores, so
 // amend prefills from the log itself. A rejected action answers 400 and
-// writes nothing, by the reducer's construction.
+// writes nothing, by the reducer's construction. A pod participant may
+// act only as a seat they hold (MAD-337); the host acts for anyone, as
+// the solo tracker always did. The response is viewer-shaped: events
+// the caller may not see never ride their own action's reply.
 func (s *Server) handleSubmitAction(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -367,6 +507,10 @@ func (s *Server) handleSubmitAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("an action needs a kind"))
 		return
 	}
+	if err := seatGuard(viewer, action.Seat); err != nil {
+		writeGameError(w, err)
+		return
+	}
 	if action.Source == "" {
 		action.Source = "manual" // API entry is a hand on the tracker
 	}
@@ -375,24 +519,29 @@ func (s *Server) handleSubmitAction(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": evs, "state": state})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events": engine.FilterEvents(viewer, evs),
+		"state":  engine.RedactFor(state, viewer),
+	})
 }
 
 // handleGameEvents answers the log window past an ordinal, oldest
 // first, with the head ordinal so an empty window still carries the
-// cursor's horizon — the REST replay the stream resumes from.
+// cursor's horizon — the REST replay the stream resumes from. The
+// window is the viewer's: selected in SQL, public rows plus the seats
+// they hold (ADR 13).
 func (s *Server) handleGameEvents(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
 	q := r.URL.Query()
 	after, _ := strconv.ParseInt(q.Get("after"), 10, 64)
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	evs, err := s.games.Events(r.Context(), g.ID, after, limit)
+	evs, err := s.games.EventsFor(r.Context(), g.ID, viewer, after, limit)
 	if err != nil {
 		writeGameError(w, err)
 		return
@@ -446,7 +595,7 @@ func (s *Server) handleRewindGame(w http.ResponseWriter, r *http.Request) {
 	if state != nil {
 		head = state.LastOrd
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameView(r.Context(), fresh), "state": state, "head": head})
+	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameViewFor(r.Context(), fresh, engine.OwnerViewer()), "state": state, "head": head})
 }
 
 /* ---------- the live stream ---------- */
@@ -498,7 +647,7 @@ func (s *Server) handleAmendGame(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameView(r.Context(), fresh), "events": evs, "state": state})
+	writeJSON(w, http.StatusOK, map[string]any{"game": s.gameViewFor(r.Context(), fresh, engine.OwnerViewer()), "events": evs, "state": state})
 }
 
 /* ---------- the ordinal stream ---------- */
@@ -517,7 +666,7 @@ func (s *Server) handleGameStream(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -578,7 +727,7 @@ func (s *Server) handleGameStream(w http.ResponseWriter, r *http.Request) {
 				return true // resynced; new events stream on the next pass
 			}
 		}
-		evs, err := s.games.Events(r.Context(), gameID, after, 200)
+		evs, err := s.games.EventsFor(r.Context(), gameID, viewer, after, 200)
 		if err != nil {
 			return false
 		}

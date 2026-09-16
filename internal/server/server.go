@@ -309,6 +309,7 @@ func (s *Server) Handler() http.Handler {
 	// another owner's game answers like a missing one.
 	mux.HandleFunc("GET /api/games", s.handleListGames)
 	mux.HandleFunc("POST /api/games", s.handleCreateGame)
+	mux.HandleFunc("POST /api/games/join", s.handleJoinGame)
 	mux.HandleFunc("GET /api/games/{id}", s.handleGetGame)
 	mux.HandleFunc("POST /api/games/{id}/seats", s.handleSeatPlayer)
 	mux.HandleFunc("POST /api/games/{id}/start", s.handleStartGame)
@@ -323,6 +324,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/games/{id}/stream", s.handleGameStream)
 	mux.HandleFunc("POST /api/games/{id}/rewind", s.handleRewindGame)
 	mux.HandleFunc("POST /api/games/{id}/amend", s.handleAmendGame)
+	mux.HandleFunc("GET /api/games/{id}/notes", s.handleSeatNoteGet)
+	mux.HandleFunc("PUT /api/games/{id}/notes", s.handleSeatNotePut)
 	mux.HandleFunc("GET /api/games/{id}/objects/{oid}/trace", s.handleObjectTrace)
 	mux.HandleFunc("GET /api/games/{id}/death/{ord}", s.handleDeathTrace)
 	mux.HandleFunc("GET /api/games/{id}/turns/{n}", s.handleTurnSlice)

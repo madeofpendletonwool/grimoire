@@ -1607,9 +1607,22 @@
 				<div class="camp-picker">
 					<select id="play-game" aria-label="Game"><option value="">No games yet…</option></select>
 				</div>
+				<input class="enc-field" id="play-join-code" type="text" maxlength="12"
+					placeholder="Join code" aria-label="Join code">
+				<button type="button" class="enc-btn" id="play-join">Join</button>
 				<button type="button" class="enc-btn" id="play-new">New game</button>
+				<button type="button" class="enc-btn" id="play-notes-btn" hidden>Notes</button>
 				<p class="study-meta" id="play-meta"></p>
 			</header>
+
+			<!-- The viewer's private pad (MAD-337): one seat's scratch,
+			     saved as it is typed, never another seat's view or prompt. -->
+			<div class="play-notes" id="play-notes" hidden>
+				<textarea class="enc-field" id="play-notes-body" rows="4" maxlength="65536"
+					placeholder="Private notes — only your seat sees this"
+					aria-label="Private seat notes"></textarea>
+				<p class="sess-hint" id="play-notes-hint"></p>
+			</div>
 
 			<!-- Setup: the table before the log begins. -->
 			<div class="play-setup" id="play-setup" hidden>
@@ -1626,11 +1639,15 @@
 					<button type="submit" class="enc-btn">Seat a player</button>
 				</form>
 				<ol class="play-seat-list" id="play-seat-list"></ol>
-				<p class="sess-hint" id="play-deck-hint" hidden>Attach decks and spoken card names resolve
-					near-exactly — optional, the tracker works without them.</p>
-				<div class="play-setup-actions">
-					<button type="button" class="enc-btn primary" id="play-start">Start the game</button>
-				</div>
+			<p class="sess-hint" id="play-deck-hint" hidden>Attach decks and spoken card names resolve
+				near-exactly — optional, the tracker works without them.</p>
+			<p class="sess-hint" id="play-share" hidden>
+				<span id="play-share-text"></span>
+				<button type="button" class="enc-btn" id="play-share-copy">Copy join link</button>
+			</p>
+			<div class="play-setup-actions">
+				<button type="button" class="enc-btn primary" id="play-start">Start the game</button>
+			</div>
 				</div>
 			</div>
 

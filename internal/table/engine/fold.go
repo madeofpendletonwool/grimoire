@@ -273,6 +273,14 @@ func (s *State) foldEvent(e Event) {
 				}
 			}
 		}
+	case EventDeckKnown:
+		// The seat-visible seeding row (ADR 13): the one place a deck
+		// composition enters the fold a seat is entitled to. A seat
+		// folding its scoped stream seeds only its own; the owner folds
+		// every seat's.
+		if p, ok := s.Seats[e.TargetSeat]; ok && len(e.Deck) > 0 {
+			p.seedDeck(e.Deck)
+		}
 	case EventCardRevealed, EventEffectDeclared:
 		// Public log surface; no state to derive.
 	case EventZoneCountSet:
@@ -324,21 +332,13 @@ func (s *State) foldGameStarted(e Event) {
 			HandKnown: []string{},
 		}
 		if len(sc.Deck) > 0 {
-			total := 0
-			comp := map[string]int{}
-			for name, n := range sc.Deck {
-				comp[name] = n
-				total += n
-			}
-			p.Library = KnownCount(total)
-			// Deck keeps the full echo and LibraryComp tracks what
-			// remains; they start equal but must never share a map,
-			// because the fold decrements the composition as named
-			// cards leave the library and the universe (MAD-329)
-			// reads Deck afterwards.
-			p.Deck = copyIntMap(comp)
-			p.LibraryComp = comp
-			p.LibraryExact = true
+			p.seedDeck(sc.Deck)
+		} else if sc.DeckSize > 0 {
+			// The public half of the ADR 13 split (MAD-337): the
+			// echo carries the size, the seat's own DECK_KNOWN carries
+			// the composition. A scoped reader folds the size and not
+			// the names; the owner folds both.
+			p.Library = KnownCount(sc.DeckSize)
 		}
 		s.Seats[sc.Seat] = p
 		order = append(order, sc.Seat)
@@ -351,6 +351,27 @@ func (s *State) foldGameStarted(e Event) {
 	}
 	sortSeats(order)
 	s.Order = order
+}
+
+// seedDeck installs a starting library composition on a seat: the
+// library's size becomes known, Deck keeps the full multiset and
+// LibraryComp tracks what remains. Deck and LibraryComp never share a
+// map, because the fold decrements the composition as named cards leave
+// the library and the universe (MAD-329) reads Deck afterwards. Called
+// from GAME_STARTED's legacy echo (rows written before the ADR 13
+// split carried decks on the public row) and from DECK_KNOWN, the
+// seat-visible row that is the only place a deck lives now.
+func (p *Player) seedDeck(deck map[string]int) {
+	total := 0
+	comp := map[string]int{}
+	for name, n := range deck {
+		comp[name] = n
+		total += n
+	}
+	p.Library = KnownCount(total)
+	p.Deck = copyIntMap(comp)
+	p.LibraryComp = comp
+	p.LibraryExact = true
 }
 
 func (s *State) foldObjectCreated(e Event) {

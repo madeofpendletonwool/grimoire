@@ -134,7 +134,7 @@ func TestUnresolvedIsNotCached(t *testing.T) {
 	if r.Resolved() {
 		t.Fatalf("Blorple Warp → %+v", r)
 	}
-	if _, ok := store.Cached(f.ctx, f.game, "Blorple Warp"); ok {
+	if _, ok := store.cached(f.ctx, f.game, "Blorple Warp", false); ok {
 		t.Fatal("unresolved name was cached")
 	}
 	if r, err = store.ResolveGame(f.ctx, f.state, f.game, 1, "Blorple Warp"); err != nil || r.Resolved() {
@@ -159,7 +159,7 @@ func TestCacheSurvivesRewind(t *testing.T) {
 	if _, err := s.RewindTo(f.ctx, f.game, 0); err != nil {
 		t.Fatalf("rewind: %v", err)
 	}
-	if r, ok := store.Cached(f.ctx, f.game, "Rhystic"); !ok || r.Card != "Rhystic Study" {
+	if r, ok := store.cached(f.ctx, f.game, "Rhystic", false); !ok || r.Card != "Rhystic Study" {
 		t.Fatalf("cache after rewind → %+v, %v", r, ok)
 	}
 }
@@ -190,7 +190,7 @@ func TestRecordLLMCapsAndCaches(t *testing.T) {
 	if err := store.RecordLLM(f.ctx, f.game, "the study thing", "Rhystic Study", 1.0); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	r, ok := store.Cached(f.ctx, f.game, "the study thing")
+	r, ok := store.cached(f.ctx, f.game, "the study thing", false)
 	if !ok || r.Card != "Rhystic Study" || r.Method != MethodLLM {
 		t.Fatalf("cached = %+v ok %v, want the llm-tier row", r, ok)
 	}
@@ -207,7 +207,7 @@ func TestRecordLLMCapsAndCaches(t *testing.T) {
 	if err := store.Record(f.ctx, f.game, "the study thing", "Mystic Study"); err != nil {
 		t.Fatalf("correct: %v", err)
 	}
-	if r, _ := store.Cached(f.ctx, f.game, "the study thing"); r.Method != MethodManual || r.Confidence != ConfManual {
+	if r, _ := store.cached(f.ctx, f.game, "the study thing", false); r.Method != MethodManual || r.Confidence != ConfManual {
 		t.Fatalf("after correction = %+v, want manual at full confidence", r)
 	}
 }

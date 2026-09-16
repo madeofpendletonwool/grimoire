@@ -57,6 +57,10 @@ let voiceMode = null;        // "web" | "server" | null — the hold-to-talk pat
 let talk = null;             // the live hold: {kind, seat, text, dead, session}
 let judgeAbort = null;       // the in-flight judge answer's stop handle (MAD-333)
 let traceAt = 0;             // the ordinal a trace snapshot rendered at (MAD-334)
+let viewer = null;           // this client's entitlement (MAD-337): {owner, seats}
+let notesOpen = false;       // the private pad drawer's open state
+let notesTimer = null;       // the pad's save debounce
+let notesLoaded = "";        // the pad body as last read or saved
 let wired = false;
 let mounted = false;
 let streamCtl = null;
@@ -104,6 +108,9 @@ async function openGame(id) {
 	acknowledged = 0;
 	nudges = [];
 	trigRows = new Map();
+	notesOpen = false; // the pad belongs to the seat, not the screen
+	clearTimeout(notesTimer);
+	notesLoaded = "";
 	gameID = id;
 	localStorage.setItem("grimoire-play-game", id);
 	try {
@@ -124,7 +131,21 @@ async function reloadGame() {
 	const data = await api.gameGet(gameID);
 	game = data.game;
 	state = data.state || null;
+	viewer = data.viewer || null;
 	await reloadLog();
+}
+
+/** The viewer's own seat — the chair this client speaks and asks from.
+    Zero when the client is the host with no seat of their own. */
+function mySeat() {
+	if (!viewer || viewer.owner) return 0;
+	return (viewer.seats || [])[0] || 0;
+}
+
+/** Host-only affordances render for the host; a participant's client
+    hides them and the server would refuse them anyway. */
+function isHost() {
+	return !viewer || !!viewer.owner;
 }
 
 /** The log pane's window: the newest LOG_WINDOW rows. */
@@ -673,6 +694,9 @@ async function deleteTrigger(card, kind) {
 
 function actingSeat() {
 	if (actingOverride && state?.seats?.[actingOverride]) return actingOverride;
+	// A pod participant speaks and asks from their own chair by default
+	// (MAD-337); the host's tracker keeps following priority.
+	if (mySeat()) return mySeat();
 	return defaultActingSeat(state) || (state?.order ? state.order[0] : 0);
 }
 
@@ -688,7 +712,95 @@ function render() {
 	renderQuestions();
 	renderNudges();
 	renderComposerTargets();
-	renderMeta();
+	renderViewer();
+}
+
+/** Viewer-shaped affordances (MAD-337): the host owns the log's history
+    and the table's setup; a participant gets their chair, their pad,
+    and the one-tap correction of the current-action pane. */
+function renderViewer() {
+	const host = isHost();
+	const undo = $("play-undo");
+	if (undo) undo.hidden = !host;
+	// A participant's acting chair is fixed: talk, asks and edits are
+	// theirs, and the server enforces the same rule anyway.
+	const acting = $("play-acting");
+	if (acting) acting.hidden = !host && !!mySeat();
+	$("play-notes-btn").hidden = !(mySeat() > 0);
+	$("play-notes").hidden = !notesOpen || !(mySeat() > 0);
+}
+
+/* ---------- the private pad (MAD-337) ---------- */
+
+async function toggleNotes() {
+	notesOpen = !notesOpen;
+	if (notesOpen) await loadNotes();
+	renderViewer();
+}
+
+async function loadNotes() {
+	try {
+		const data = await api.gameNotes(gameID);
+		notesLoaded = data.body || "";
+		$("play-notes-body").value = notesLoaded;
+		$("play-notes-hint").textContent = "Saved. Only your seat sees this pad — not even the host.";
+	} catch (err) {
+		$("play-notes-hint").textContent = err.message;
+	}
+}
+
+/** The pad saves as it is typed, debounced: scratch that must be
+    babysat is scratch nobody uses. */
+function notesTyped() {
+	const body = $("play-notes-body").value;
+	if (body === notesLoaded) return;
+	clearTimeout(notesTimer);
+	notesTimer = setTimeout(async () => {
+		try {
+			await api.gameNotesSave(gameID, body);
+			notesLoaded = body;
+			$("play-notes-hint").textContent = "Saved.";
+		} catch (err) {
+			$("play-notes-hint").textContent = err.message;
+		}
+	}, 800);
+}
+
+/* ---------- joining (MAD-337) ---------- */
+
+async function joinByCode() {
+	const code = ($("play-join-code").value || "").trim();
+	if (!code) return;
+	try {
+		const data = await api.gameJoin(code);
+		$("play-join-code").value = "";
+		await loadGames(data.game?.id || "");
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+/** A shared link carries ?join=CODE: consume it once, clean the URL,
+    land in the game. */
+async function consumeJoinLink() {
+	const code = (new URLSearchParams(location.search).get("join") || "").trim();
+	if (!code) return;
+	history.replaceState(null, "", location.pathname);
+	try {
+		const data = await api.gameJoin(code);
+		await loadGames(data.game?.id || "");
+	} catch (err) {
+		renderMeta(err.message, true);
+	}
+}
+
+function copyJoinLink() {
+	if (!game?.join_code) return;
+	const link = `${location.origin}/?join=${game.join_code}`;
+	navigator.clipboard?.writeText(link).then(
+		() => { $("play-share-text").textContent = `Link copied: ${link}`; },
+		() => { $("play-share-text").textContent = `Join at ${link} (code ${game.join_code})`; },
+	);
 }
 
 function renderMeta(message, warn) {
@@ -738,6 +850,20 @@ function renderSetup() {
 		return;
 	}
 	showSetup(game);
+	// The pod (MAD-337): the host builds the table and shares the code;
+	// a participant sees the table as it stands — seating, commanders,
+	// decks — and waits for play to begin.
+	const host = isHost();
+	$("play-seat-form").hidden = !host;
+	$("play-start").hidden = !host;
+	const share = $("play-share");
+	if (host && game.join_code) {
+		share.hidden = false;
+		$("play-share-text").textContent =
+			`Share the join code ${game.join_code} — your friends land in the next seat.`;
+	} else {
+		share.hidden = true;
+	}
 	if (game.status !== "setup") return;
 	// The attach picker: offered when saved decks exist, absent otherwise.
 	const pick = $("play-seat-deck");
@@ -1068,17 +1194,21 @@ function renderLog() {
 		}
 		// Every entry carries both halves of the correction contract:
 		// ✎ rewrites it (amend, two taps — the second is the composer's
-		// submit), ⟲ rewinds to it. Neither covers the log.
-		row.append(el("button", {
-			class: "play-row-fix",
-			attrs: { type: "button", "data-amend": String(ev.ord), title: "Not it — correct this entry" },
-			text: "✎",
-		}));
-		row.append(el("button", {
-			class: "play-row-rewind",
-			attrs: { type: "button", "data-rewind": String(ev.ord), title: `Rewind to #${ev.ord} — everything after it is undone` },
-			text: "⟲",
-		}));
+		// submit), ⟲ rewinds to it. Neither covers the log. The host
+		// owns the log's history — a participant's one-tap fix is the
+		// current-action pane, not the truncate controls (MAD-337).
+		if (isHost()) {
+			row.append(el("button", {
+				class: "play-row-fix",
+				attrs: { type: "button", "data-amend": String(ev.ord), title: "Not it — correct this entry" },
+				text: "✎",
+			}));
+			row.append(el("button", {
+				class: "play-row-rewind",
+				attrs: { type: "button", "data-rewind": String(ev.ord), title: `Rewind to #${ev.ord} — everything after it is undone` },
+				text: "⟲",
+			}));
+		}
 		host.append(row);
 	}
 	if (!rows.length) {
@@ -1759,10 +1889,14 @@ function renderOddsAnswer(data, row) {
 }
 
 /** The opt-in sync: the checkbox writes the per-game setting, and the
-    game view's settings are its truth on open. */
+    game view's settings are its truth on open. The setting is the
+    host's to write (MAD-337); participants see it, they do not flip it. */
 function syncMulliganToggle() {
 	const box = $("play-mulligan-advice");
-	if (box) box.checked = !!(game?.settings?.mulligan_advice);
+	if (box) {
+		box.checked = !!(game?.settings?.mulligan_advice);
+		box.disabled = !isHost();
+	}
 }
 
 async function setMulliganAdvice(on) {
@@ -1932,6 +2066,11 @@ function wire() {
 	$("play-new").addEventListener("click", createGame);
 	$("play-seat-form").addEventListener("submit", seatFormSubmit);
 	$("play-start").addEventListener("click", startGame);
+	$("play-join").addEventListener("click", joinByCode);
+	$("play-join-code").addEventListener("keydown", (e) => { if (e.key === "Enter") joinByCode(); });
+	$("play-share-copy").addEventListener("click", copyJoinLink);
+	$("play-notes-btn").addEventListener("click", toggleNotes);
+	$("play-notes-body").addEventListener("input", notesTyped);
 
 	$("play-advance").addEventListener("click", () => submit({ kind: "ADVANCE" }));
 	$("play-pass").addEventListener("click", () => submit({ kind: "PASS_PRIORITY" }));
@@ -2552,6 +2691,7 @@ export const tool = {
 		resolveVoiceMode();
 		ensureMeta().then(resolveVoiceMode);
 		loadDecks();
+		consumeJoinLink();
 		if (!games.length) loadGames();
 		else if (gameID && !streamCtl) openGame(gameID);
 		return {

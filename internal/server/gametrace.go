@@ -32,7 +32,7 @@ func (s *Server) handleObjectTrace(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -41,7 +41,7 @@ func (s *Server) handleObjectTrace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("the trace needs an object id"))
 		return
 	}
-	evs, err := s.games.Events(r.Context(), g.ID, 0, 0)
+	evs, err := s.games.EventsFor(r.Context(), g.ID, viewer, 0, 0)
 	if err != nil {
 		writeGameError(w, err)
 		return
@@ -86,7 +86,7 @@ func (s *Server) handleDeathTrace(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -95,7 +95,7 @@ func (s *Server) handleDeathTrace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("the death trace needs the DIED row's ordinal"))
 		return
 	}
-	evs, err := s.games.Events(r.Context(), g.ID, 0, 0)
+	evs, err := s.games.EventsFor(r.Context(), g.ID, viewer, 0, 0)
 	if err != nil {
 		writeGameError(w, err)
 		return
@@ -116,7 +116,7 @@ func (s *Server) handleTurnSlice(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -125,7 +125,7 @@ func (s *Server) handleTurnSlice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("the turn slice needs a turn number"))
 		return
 	}
-	evs, err := s.games.Events(r.Context(), g.ID, 0, 0)
+	evs, err := s.games.EventsFor(r.Context(), g.ID, viewer, 0, 0)
 	if err != nil {
 		writeGameError(w, err)
 		return

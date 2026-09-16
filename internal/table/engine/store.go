@@ -70,10 +70,15 @@ type Game struct {
 	StartingLife int
 	Status       Status
 	Settings     map[string]any
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	StartedAt    *time.Time
-	EndedAt      *time.Time
+	// JoinCode is the shareable code a participant redeems at
+	// /api/games/join to bind to a seat (MAD-337). Empty on games
+	// created before the pod landed — those stay owner-only, because
+	// their public GAME_STARTED rows predate the deck split.
+	JoinCode  string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	StartedAt *time.Time
+	EndedAt   *time.Time
 }
 
 // SettingsKeyMulliganAdvice is the settings key that opts a game into
@@ -83,7 +88,8 @@ const SettingsKeyMulliganAdvice = "mulligan_advice"
 
 // CreateGame writes a setup game. Format defaults to commander and life
 // to 40: the engine underneath is format-agnostic, the defaults are the
-// product's first table.
+// product's first table. Every game mints a join code at creation —
+// the pod's whole sharing story is one short code (MAD-337).
 func (s *Store) CreateGame(ctx context.Context, owner, name, format string, startingLife int) (*Game, error) {
 	if format == "" {
 		format = "commander"
@@ -94,12 +100,23 @@ func (s *Store) CreateGame(ctx context.Context, owner, name, format string, star
 	now := s.now()
 	g := &Game{ID: uuid.NewString(), OwnerID: owner, Name: name, Format: format,
 		StartingLife: startingLife, Status: StatusSetup, CreatedAt: now, UpdatedAt: now}
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO mtg_games (id, owner_id, name, format, starting_life, status, settings, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?)`,
-		g.ID, g.OwnerID, g.Name, g.Format, g.StartingLife, string(g.Status),
-		g.CreatedAt.UnixMilli(), g.UpdatedAt.UnixMilli()); err != nil {
-		return nil, fmt.Errorf("insert mtg game: %w", err)
+	// A rare code collision surfaces as a constraint error on insert;
+	// one fresh mint resolves it — six characters of a 30-letter
+	// alphabet does not collide twice.
+	for attempt := 0; attempt < 3; attempt++ {
+		g.JoinCode = mintJoinCode()
+		var err error
+		_, err = s.db.ExecContext(ctx, `
+		INSERT INTO mtg_games (id, owner_id, name, format, starting_life, status, settings, join_code, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?, ?)`,
+			g.ID, g.OwnerID, g.Name, g.Format, g.StartingLife, string(g.Status),
+			g.JoinCode, g.CreatedAt.UnixMilli(), g.UpdatedAt.UnixMilli())
+		if err == nil {
+			break
+		}
+		if attempt == 2 || !isUniqueViolation(err) {
+			return nil, fmt.Errorf("insert mtg game: %w", err)
+		}
 	}
 	s.notify(g.ID)
 	return g, nil
@@ -112,12 +129,12 @@ func (s *Store) GetGame(ctx context.Context, id string) (*Game, error) {
 		status           string
 		created, updated int64
 		started, ended   sql.NullInt64
-		settings         string
+		settings, code   sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at, settings
-		  FROM mtg_games WHERE id = ?`, id).
-		Scan(&g.OwnerID, &g.Name, &g.Format, &g.StartingLife, &status, &created, &updated, &started, &ended, &settings)
+		SELECT owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at, settings, join_code
+	  FROM mtg_games WHERE id = ?`, id).
+		Scan(&g.OwnerID, &g.Name, &g.Format, &g.StartingLife, &status, &created, &updated, &started, &ended, &settings, &code)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("mtg game %s: %w", id, ErrNotFound)
 	}
@@ -126,6 +143,7 @@ func (s *Store) GetGame(ctx context.Context, id string) (*Game, error) {
 	}
 	g.Status = Status(status)
 	g.Settings = parseSettings(settings)
+	g.JoinCode = code.String
 	g.CreatedAt, g.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	if started.Valid {
 		t := time.UnixMilli(started.Int64).UTC()
@@ -140,12 +158,12 @@ func (s *Store) GetGame(ctx context.Context, id string) (*Game, error) {
 
 // parseSettings decodes the settings JSON column, tolerating an empty
 // or malformed value as no settings — the fold never depends on it.
-func parseSettings(raw string) map[string]any {
-	if strings.TrimSpace(raw) == "" {
+func parseSettings(raw sql.NullString) map[string]any {
+	if !raw.Valid || strings.TrimSpace(raw.String) == "" {
 		return nil
 	}
 	var out map[string]any
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+	if err := json.Unmarshal([]byte(raw.String), &out); err != nil {
 		return nil
 	}
 	return out
@@ -175,13 +193,18 @@ func (s *Store) UpdateSettings(ctx context.Context, gameID string, settings map[
 // ErrNotFound marks a game id that does not exist for the caller.
 var ErrNotFound = errors.New("mtg game not found")
 
-// ListGames reads one owner's games, most recently updated first — the
-// account's game list. Another owner's games are absent from the rows,
+// ListGames reads the caller's games — owned or seated in — most
+// recently updated first. The pod made "my games" mean both (MAD-337):
+// the seat a participant holds is as much their game as the ones they
+// created. Games the caller has no part in are absent from the rows,
 // not filtered after the fact.
-func (s *Store) ListGames(ctx context.Context, owner string) ([]*Game, error) {
+func (s *Store) ListGames(ctx context.Context, user string) ([]*Game, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at, settings
-		  FROM mtg_games WHERE owner_id = ? ORDER BY updated_at DESC, id`, owner)
+		SELECT id, owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at, settings, join_code
+		  FROM mtg_games
+		 WHERE owner_id = ?
+		    OR EXISTS (SELECT 1 FROM mtg_seats WHERE game_id = mtg_games.id AND user_id = ?)
+		 ORDER BY updated_at DESC, id`, user, user)
 	if err != nil {
 		return nil, fmt.Errorf("list mtg games: %w", err)
 	}
@@ -193,14 +216,15 @@ func (s *Store) ListGames(ctx context.Context, owner string) ([]*Game, error) {
 			status           string
 			created, updated int64
 			started, ended   sql.NullInt64
-			settings         string
+			settings, code   sql.NullString
 		)
 		if err := rows.Scan(&g.ID, &g.OwnerID, &g.Name, &g.Format, &g.StartingLife, &status,
-			&created, &updated, &started, &ended, &settings); err != nil {
+			&created, &updated, &started, &ended, &settings, &code); err != nil {
 			return nil, err
 		}
 		g.Status = Status(status)
 		g.Settings = parseSettings(settings)
+		g.JoinCode = code.String
 		g.CreatedAt, g.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 		if started.Valid {
 			t := time.UnixMilli(started.Int64).UTC()
@@ -542,10 +566,23 @@ func (s *Store) append(ctx context.Context, gameID string, action Action, evs []
 // Submit, is what makes "the events one action produced" exactly
 // addressable afterwards: cause strings repeat for identical
 // consecutive actions, stamps never do.
+//
+// The cause a row carries never repeats an identity the row itself
+// does not already entitle its reader to (ADR 13, MAD-337): a DRAW's
+// public CARD_DRAWN row carries the action without its cards (the
+// identities live on the seat-visible CARD_KNOWN row's payload), and a
+// START_GAME's rows never repeat the decks (each composition lives on
+// its own seat's DECK_KNOWN payload). Redacting every row's cause is
+// the only sound rule — a seat-visible row's reader is entitled to the
+// row's own identities, not to the whole action's.
 func (s *Store) writeEvents(ctx context.Context, tx *sql.Tx, gameID string, action Action, evs []Event, firstOrd int64) ([]Event, bool, bool, error) {
 	cause, err := json.Marshal(action)
 	if err != nil {
 		return nil, false, false, fmt.Errorf("encode cause: %w", err)
+	}
+	redacted, err := redactedCause(action)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("encode redacted cause: %w", err)
 	}
 	batch := uuid.NewString()
 	now := s.now().UnixMilli()
@@ -559,6 +596,9 @@ func (s *Store) writeEvents(ctx context.Context, tx *sql.Tx, gameID string, acti
 		e.Batch = batch
 		if e.Cause == "" {
 			e.Cause = string(cause)
+			if redacted != "" {
+				e.Cause = redacted
+			}
 		}
 		switch e.Kind {
 		case EventGameStarted:
@@ -580,6 +620,55 @@ func (s *Store) writeEvents(ctx context.Context, tx *sql.Tx, gameID string, acti
 		out = append(out, e)
 	}
 	return out, hasStart, hasEnd, nil
+}
+
+// redactedCause marshals the action's public echo — the cause public
+// rows carry when the action itself holds identities another seat must
+// not read. Empty string means no redaction is needed: the action's own
+// JSON is already public-safe, and the caller keeps it verbatim.
+func redactedCause(a Action) (string, error) {
+	switch a.Kind {
+	case ActionStartGame:
+		decks := false
+		for _, sc := range a.Seats {
+			if len(sc.Deck) > 0 {
+				decks = true
+				break
+			}
+		}
+		if !decks {
+			return "", nil
+		}
+		c := a
+		c.Seats = append([]SeatConfig(nil), a.Seats...)
+		for i := range c.Seats {
+			c.Seats[i].Deck = nil
+		}
+		b, err := json.Marshal(c)
+		return string(b), err
+	case ActionDraw, ActionLook:
+		if len(a.Cards) == 0 {
+			return "", nil
+		}
+		c := a
+		c.Cards = nil
+		b, err := json.Marshal(c)
+		return string(b), err
+	}
+	return "", nil
+}
+
+// isUniqueViolation reports a uniqueness failure across the drivers in
+// play — SQLite's extended code and the github.com/mattn/go-sqlite3
+// message both say so in their own dialects.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "constraint failed: UNIQUE") ||
+		strings.Contains(msg, "2067")
 }
 
 // Events reads the log past an ordinal, oldest first. After 0 with
