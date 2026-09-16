@@ -228,6 +228,12 @@ func (s *Store) JoinGame(ctx context.Context, rawCode, userID, name string) (*Ga
 		uuid.NewString(), g.ID, g.ID, userID, name, s.now().UnixMilli()); err != nil {
 		return nil, 0, fmt.Errorf("join seat: %w", err)
 	}
+	// A seat outranks an observer row (MAD-338): a spectator who takes a
+	// chair stops being one, or the roster would count them twice.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM mtg_observers WHERE game_id = ? AND user_id = ?`, g.ID, userID); err != nil {
+		return nil, 0, fmt.Errorf("drop observer row: %w", err)
+	}
 	var seat int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT MAX(position) FROM mtg_seats WHERE game_id = ? AND user_id = ?`, g.ID, userID).Scan(&seat); err != nil {

@@ -328,6 +328,40 @@ assembled prompts, the works — against per-seat entitlement, with
 marker decks, marker draws and marker notes planted so a missing filter
 fails the build instead of a friendship.
 
+## Judges, spectators and the ruling log
+
+The same code opens a third door: **join as judge or spectator**, at any
+point in the game's life — seats close when play begins, but a dispute is
+exactly when a judge arrives. Both roles watch the public game: board,
+stack, event log, turn and priority. Neither sees any seat's hidden
+zones — the observer's read runs the same SQL scoping the pod built, so
+the CI leak gate covers the judge's screens exactly as it covers a
+seat's.
+
+The judge additionally holds the table's tools pointed at the shared
+state:
+
+- **The rules judge** — the ⚖ ask, made as the table itself: the prompt
+  carries the public fold, never a seat's private zones.
+- **The traces** — the ⓘ on any computed value, the why-did-it-die walk,
+  a turn's slice. Pure reads over the log the panes already render.
+- **The ruling pen** — ⚖ on any log entry records a ruling anchored to
+  that ordinal: *what the table decided and why*, straight against the
+  event it concerns rather than against memory. The ruling log rides
+  under the event log, lands on every attached client live, and
+  **survives every rewind** — including the one the ruling itself
+  ordered — because a human record is never clobbered by a truncate.
+
+A spectator watches with no pen; a seated player asks the judge rather
+than ruling on their own game; the host may rule too, a solo table's
+owner being its judge. An observer's client is honestly read-only: the
+writer surfaces hide, and the server would refuse them anyway.
+
+The surfaces: `POST /api/games/join` with `role` (`judge` \|
+`spectator`), `GET /api/games/{id}/rulings` for the log, `POST
+/api/games/{id}/rulings` (`{ord, note}`) for the pen — judge or host
+only — and the stream's `ruling` frame for live arrival.
+
 ## Where the truth lives
 
 The board you see is the server's fold of the game's append-only event

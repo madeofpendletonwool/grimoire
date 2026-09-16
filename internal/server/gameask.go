@@ -62,8 +62,10 @@ func (s *Server) handleGameAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	// The asker asks as a seat they hold (MAD-337): the judge's prompt
 	// renders the asker's scoped fold, whose only private zones are the
-	// asker's own.
-	if err := seatGuard(viewer, seat); err != nil {
+	// asker's own. A judge or spectator holds no seat, so they ask as
+	// the table itself (MAD-338) — seat 0, the public fold, whose
+	// private zones are nobody's.
+	if err := askGuard(viewer, seat); err != nil {
 		writeGameError(w, err)
 		return
 	}

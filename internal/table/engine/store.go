@@ -193,18 +193,19 @@ func (s *Store) UpdateSettings(ctx context.Context, gameID string, settings map[
 // ErrNotFound marks a game id that does not exist for the caller.
 var ErrNotFound = errors.New("mtg game not found")
 
-// ListGames reads the caller's games — owned or seated in — most
-// recently updated first. The pod made "my games" mean both (MAD-337):
-// the seat a participant holds is as much their game as the ones they
-// created. Games the caller has no part in are absent from the rows,
-// not filtered after the fact.
+// ListGames reads the caller's games — owned, seated in, or observing
+// (MAD-338) — most recently updated first. The pod made "my games" mean
+// all three: a judge returning to a live game finds it the way a
+// participant finds their table. Games the caller has no part in are
+// absent from the rows, not filtered after the fact.
 func (s *Store) ListGames(ctx context.Context, user string) ([]*Game, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, owner_id, name, format, starting_life, status, created_at, updated_at, started_at, ended_at, settings, join_code
 		  FROM mtg_games
 		 WHERE owner_id = ?
 		    OR EXISTS (SELECT 1 FROM mtg_seats WHERE game_id = mtg_games.id AND user_id = ?)
-		 ORDER BY updated_at DESC, id`, user, user)
+		    OR EXISTS (SELECT 1 FROM mtg_observers WHERE game_id = mtg_games.id AND user_id = ?)
+		 ORDER BY updated_at DESC, id`, user, user, user)
 	if err != nil {
 		return nil, fmt.Errorf("list mtg games: %w", err)
 	}

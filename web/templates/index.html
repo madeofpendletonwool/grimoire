@@ -1609,6 +1609,12 @@
 				</div>
 				<input class="enc-field" id="play-join-code" type="text" maxlength="12"
 					placeholder="Join code" aria-label="Join code">
+				<select class="enc-field" id="play-join-role" aria-label="Join as"
+					title="Join as a player in the next seat — or, while the game runs, as a judge or a spectator">
+					<option value="">Player</option>
+					<option value="judge">Judge</option>
+					<option value="spectator">Spectator</option>
+				</select>
 				<button type="button" class="enc-btn" id="play-join">Join</button>
 				<button type="button" class="enc-btn" id="play-new">New game</button>
 				<button type="button" class="enc-btn" id="play-notes-btn" hidden>Notes</button>
@@ -1655,11 +1661,15 @@
 				<!-- The turn strip: position, acting seat, the step controls. -->
 				<div class="play-strip" id="play-strip">
 					<span class="play-turnline" id="play-turnline"></span>
+					<!-- The observer's chip (MAD-338): watching as judge or
+					     spectator — the public game, no chair, and for the
+					     judge the ⚖ pen on the log. -->
+					<span class="play-obsv" id="play-obsv" hidden></span>
 					<label class="play-acting">
 						<span>acting as</span>
 						<select id="play-acting" aria-label="Acting seat"></select>
 					</label>
-				<div class="play-strip-controls" role="group" aria-label="Turn controls">
+				<div class="play-strip-controls" id="play-strip-controls" role="group" aria-label="Turn controls">
 					<button type="button" class="enc-btn" id="play-advance" title="Next step or phase">Next step</button>
 					<button type="button" class="enc-btn" id="play-pass" title="Pass priority">Pass</button>
 					<button type="button" class="enc-btn" id="play-give" hidden title="Rotate priority to the acting seat">Give priority →</button>
@@ -1757,13 +1767,34 @@
 							<ol class="play-stack" id="play-stack"></ol>
 						</div>
 					</div>
-					<div class="play-logcol">
-						<div class="play-log-head">
-							<h3 class="enc-heading">Log</h3>
-							<button type="button" class="enc-btn" id="play-undo" title="Rewind the last applied action">⟲ undo</button>
-						</div>
-						<ol class="play-log" id="play-log" aria-label="Event log"></ol>
+				<div class="play-logcol">
+					<div class="play-log-head">
+						<h3 class="enc-heading">Log</h3>
+						<button type="button" class="enc-btn" id="play-undo" title="Rewind the last applied action">⟲ undo</button>
 					</div>
+					<ol class="play-log" id="play-log" aria-label="Event log"></ol>
+					<!-- The ruling log (MAD-338): the game's history carrying
+					     its own rulings, each anchored to the ordinal it
+					     concerns and never clobbered by a rewind. The judge
+					     records from the log row itself — ⚖ on any entry —
+					     and the form is a bar under the list, never a modal;
+					     the log keeps moving above it. -->
+					<div class="play-rulings" id="play-rulings" hidden>
+						<div class="play-rulings-head">
+							<b class="enc-heading">⚖ rulings</b>
+							<span class="sess-hint" id="play-rulings-hint"></span>
+						</div>
+						<form class="play-ruling-form" id="play-ruling-form" autocomplete="off" hidden>
+							<span class="play-ruling-anchor" id="play-ruling-anchor"></span>
+							<input class="enc-field" id="play-ruling-note" type="text" maxlength="2000"
+								placeholder="The ruling — what the table decided and why"
+								aria-label="Ruling text">
+							<button type="submit" class="enc-btn primary" id="play-ruling-save">Record</button>
+							<button type="button" class="enc-btn" id="play-ruling-cancel">✕</button>
+						</form>
+						<ol class="play-rulings-list" id="play-rulings-list" aria-label="Rulings"></ol>
+					</div>
+				</div>
 				</div>
 
 			<!-- The current action: what the engine last applied, one tap
@@ -1771,7 +1802,7 @@
 			<div class="play-current" id="play-current">
 				<span class="play-current-label">current action</span>
 				<span class="play-current-text" id="play-current-text"></span>
-				<span class="play-current-actions">
+				<span class="play-current-actions" id="play-current-actions">
 					<button type="button" class="enc-btn" id="play-ok" title="Acknowledge — clears the highlight">✓ yes</button>
 					<button type="button" class="enc-btn" id="play-edit" title="Rewind here and re-submit a corrected action">✎ not it</button>
 				</span>

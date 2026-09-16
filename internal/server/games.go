@@ -123,15 +123,21 @@ func (s *Server) resolveGame(w http.ResponseWriter, r *http.Request) *engine.Gam
 // everything (the DM analog), an account holding a seat sees the public
 // stream plus that seat's rows, and everyone else gets the same 404 a
 // missing game answers — not-found and not-yours are the same answer.
+// Role (MAD-338) names the one exception: a judge or a spectator, who
+// holds no seat and reads the public stream — the client renders the
+// observer's read-only table off this.
 type gameViewer struct {
-	Owner bool  `json:"owner"`
-	Seats []int `json:"seats,omitempty"`
+	Owner bool   `json:"owner"`
+	Seats []int  `json:"seats,omitempty"`
+	Role  string `json:"role,omitempty"`
 }
 
 // resolveGameAny loads the game for any entitled reader and returns
 // the viewer their reads are scoped to. Every game read a participant
 // may reach goes through here; the host-only controls above stay on
-// resolveGame.
+// resolveGame. An observer (MAD-338) is the third entitlement: the
+// judge and the spectator read the public stream only, and the role
+// rides alongside for the handlers that gate on it.
 func (s *Server) resolveGameAny(w http.ResponseWriter, r *http.Request) (*engine.Game, engine.Viewer) {
 	g, err := s.games.GetGame(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -146,17 +152,40 @@ func (s *Server) resolveGameAny(w http.ResponseWriter, r *http.Request) (*engine
 		writeGameError(w, err)
 		return nil, engine.Viewer{}
 	}
-	if len(seats) == 0 {
-		writeError(w, http.StatusNotFound, engine.ErrNotFound)
+	if len(seats) > 0 {
+		return g, engine.SeatViewer(seats...)
+	}
+	role, err := s.games.ObserverRole(r.Context(), g.ID, userID(r))
+	if err != nil {
+		writeGameError(w, err)
 		return nil, engine.Viewer{}
 	}
-	return g, engine.SeatViewer(seats...)
+	if role != "" {
+		return g, engine.PublicViewer()
+	}
+	writeError(w, http.StatusNotFound, engine.ErrNotFound)
+	return nil, engine.Viewer{}
+}
+
+// viewerRole answers the caller's observer role at a game — "" for the
+// owner and every seated player, whose entitlement the viewer block
+// already carries.
+func (s *Server) viewerRole(r *http.Request, g *engine.Game, v engine.Viewer) string {
+	if v.Owner || len(v.Seats) > 0 {
+		return ""
+	}
+	role, err := s.games.ObserverRole(r.Context(), g.ID, userID(r))
+	if err != nil {
+		return ""
+	}
+	return role
 }
 
 // viewerView shapes the entitlement for a response body — the client
-// learns which seat is its own, and that is all it learns.
-func viewerView(v engine.Viewer) gameViewer {
-	out := gameViewer{Owner: v.Owner}
+// learns which seat is its own (or that it is judging), and that is all
+// it learns.
+func viewerView(v engine.Viewer, role string) gameViewer {
+	out := gameViewer{Owner: v.Owner, Role: role}
 	out.Seats = append(out.Seats, v.Seats...)
 	return out
 }
@@ -169,6 +198,20 @@ func seatGuard(v engine.Viewer, seat int) error {
 		return nil
 	}
 	return fmt.Errorf("%w: seat %d is not yours to act as", engine.ErrNotEntitled, seat)
+}
+
+// askGuard is the ask-side seat rule: like seatGuard, except that an
+// observer — a judge or a spectator holding no seat (MAD-338) — asks as
+// the table itself. Seat 0 over the public fold is exactly their
+// entitlement: the prompt renders what they may see and nothing more.
+func askGuard(v engine.Viewer, seat int) error {
+	if v.SeesSeat(seat) {
+		return nil
+	}
+	if seat == 0 && !v.Owner && len(v.Seats) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: seat %d is not yours to ask as", engine.ErrNotEntitled, seat)
 }
 
 /* ---------- views ---------- */
@@ -277,10 +320,10 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"game": toGameViewFor(g, 0, engine.OwnerViewer())})
 }
 
-// handleListGames answers the caller's games — owned or seated in —
-// most recently updated first. Another account's games are absent, not
-// hidden, and each row is viewer-shaped: only games the caller owns
-// carry a join code.
+// handleListGames answers the caller's games — owned, seated in, or
+// observing (MAD-338) — most recently updated first. Another account's
+// games are absent, not hidden, and each row is viewer-shaped: only
+// games the caller owns carry a join code.
 func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
@@ -295,7 +338,8 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 	for _, g := range games {
 		v := engine.OwnerViewer()
 		if g.OwnerID != uid {
-			if seats, err := s.games.SeatsForUser(r.Context(), g.ID, uid); err == nil {
+			v = engine.PublicViewer() // seat or observer; the role is the get-game read's to carry
+			if seats, err := s.games.SeatsForUser(r.Context(), g.ID, uid); err == nil && len(seats) > 0 {
 				v = engine.SeatViewer(seats...)
 			}
 		}
@@ -309,6 +353,11 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 // seat the account now holds, so the client opens the table already
 // knowing which chair is its own. Redeeming a code you already redeemed
 // answers the same seat — a reloaded tab is a rejoin, not a new seat.
+//
+// A role of judge or spectator (MAD-338) redeems the same code the
+// other way: no seat, the public stream, and — for the judge — the
+// ruling pen. Observers may join a live game, because a dispute is
+// exactly when a judge arrives.
 func (s *Server) handleJoinGame(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
@@ -316,6 +365,7 @@ func (s *Server) handleJoinGame(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Code string `json:"code"`
 		Name string `json:"name"`
+		Role string `json:"role"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %v", err))
@@ -326,6 +376,28 @@ func (s *Server) handleJoinGame(w http.ResponseWriter, r *http.Request) {
 		if u, ok := userFrom(r.Context()); ok {
 			name = u.Username
 		}
+	}
+	if req.Role == engine.RoleJudge || req.Role == engine.RoleSpectator {
+		g, err := s.games.ObserveGame(r.Context(), req.Code, userID(r), name, req.Role)
+		if err != nil {
+			writeGameError(w, err)
+			return
+		}
+		role := req.Role
+		if g.OwnerID == userID(r) {
+			role = "" // the host sees everything; the observer row is for nobody
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"game":  s.gameViewWithSeats(r.Context(), g, engine.PublicViewer()),
+			"seat":  0,
+			"role":  role,
+			"owner": g.OwnerID == userID(r),
+		})
+		return
+	}
+	if req.Role != "" && req.Role != "player" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: join as player, judge or spectator", engine.ErrInvalid))
+		return
 	}
 	g, seat, err := s.games.JoinGame(r.Context(), req.Code, userID(r), name)
 	if err != nil {
@@ -348,8 +420,9 @@ func (s *Server) handleJoinGame(w http.ResponseWriter, r *http.Request) {
 // handleGetGame answers one game with the viewer's folded state — the
 // board's whole payload, scoped the way the store scopes it: the owner
 // folds everything, a seated account folds the public stream plus its
-// own seat's rows (ADR 13). The viewer block tells the client which
-// chair is its own.
+// own seat's rows, an observer folds the public stream (ADR 13, MAD-338).
+// The viewer block tells the client which chair is its own, or that it
+// is judging; the observers roster is the room's public fact.
 func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
@@ -363,10 +436,19 @@ func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, err)
 		return
 	}
+	observers, err := s.games.Observers(r.Context(), g.ID)
+	if err != nil {
+		writeGameError(w, err)
+		return
+	}
+	if observers == nil {
+		observers = []engine.Observer{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"game":   s.gameViewWithSeats(r.Context(), g, viewer),
-		"state":  state,
-		"viewer": viewerView(viewer),
+		"game":      s.gameViewWithSeats(r.Context(), g, viewer),
+		"state":     state,
+		"viewer":    viewerView(viewer, s.viewerRole(r, g, viewer)),
+		"observers": observers,
 	})
 }
 
@@ -702,6 +784,17 @@ func (s *Server) handleGameStream(w http.ResponseWriter, r *http.Request) {
 	wake, stop := s.games.Subscribe(gameID)
 	defer stop()
 
+	// Rulings ride the stream as their own frames (MAD-338): the judge
+	// records, the table sees it land. Rulings recorded before this
+	// connection opened are the client's initial GET's to carry, so
+	// they are marked sent here and only new rows stream.
+	sentRulings := map[string]bool{}
+	if existing, err := s.games.Rulings(r.Context(), gameID); err == nil {
+		for _, ru := range existing {
+			sentRulings[ru.ID] = true
+		}
+	}
+
 	sendNew := func() bool {
 		// The rewind sentinel: the row at the cursor must still exist
 		// and still be the one this stream last saw there.
@@ -736,6 +829,21 @@ func (s *Server) handleGameStream(w http.ResponseWriter, r *http.Request) {
 				return false
 			}
 			after, lastID = evs[i].Ord, evs[i].ID
+		}
+		// New rulings since the last pass — a few rows at most, and a
+		// map read for the common case of none.
+		rulings, err := s.games.Rulings(r.Context(), gameID)
+		if err != nil {
+			return false
+		}
+		for _, ru := range rulings {
+			if sentRulings[ru.ID] {
+				continue
+			}
+			if err := sse.send("ruling", map[string]any{"ruling": ru}); err != nil {
+				return false
+			}
+			sentRulings[ru.ID] = true
 		}
 		return true
 	}

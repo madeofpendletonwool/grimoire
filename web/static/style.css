@@ -3294,6 +3294,76 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .play-row-rewind:focus-visible, .play-row-fix:focus-visible { opacity: 1; }
 .play-row-rewind:hover, .play-row-fix:hover { color: var(--gold-bright); }
 .play-row.is-empty { color: var(--ink-soft); font-style: italic; }
+.play-row.is-ruled .play-row-ord { color: var(--gold-bright); }
+
+/* The ruling log (MAD-338): the game's history carrying its own
+   rulings, under the log it annotates. A judge records from the log
+   row itself; the form is a bar, never a modal. */
+.play-rulings {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-1);
+	padding: var(--sp-2) var(--sp-3);
+	max-height: 14rem;
+	overflow-y: auto;
+	border-top: 1px solid var(--stone-line);
+	font-family: var(--font-prose);
+}
+.play-rulings-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--sp-2);
+}
+.play-rulings-head .sess-hint { font-size: var(--fs-xs); text-align: right; }
+.play-ruling-form { display: flex; align-items: center; gap: var(--sp-1); flex-wrap: wrap; }
+.play-ruling-anchor {
+	flex: none;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--gold-bright);
+}
+.play-ruling-form .enc-field { flex: 1; min-width: 8rem; }
+.play-rulings-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.play-ruling {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-2);
+	font-size: var(--fs-sm);
+	font-family: var(--font-prose);
+	color: var(--parchment);
+	line-height: 1.45;
+}
+.play-ruling-ord {
+	flex: none;
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--gold-dim);
+	min-width: 2.4em;
+	text-align: right;
+}
+.play-ruling-note { flex: 1; min-width: 0; }
+.play-ruling-by { flex: none; font-size: var(--fs-xs); color: var(--ink-soft); }
+
+/* The observer's chip (MAD-338): judging or watching, public view. */
+.play-obsv {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--gold-dim);
+	border: 1px solid currentColor;
+	border-radius: var(--r-pill);
+	padding: 0 0.5em;
+	align-self: center;
+	white-space: nowrap;
+}
 
 /* The current action: fresh until acknowledged, one tap from correction. */
 .play-current {

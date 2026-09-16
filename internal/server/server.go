@@ -322,6 +322,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/games/{id}/pending/{pid}", s.handlePendingAnswer)
 	mux.HandleFunc("GET /api/games/{id}/events", s.handleGameEvents)
 	mux.HandleFunc("GET /api/games/{id}/stream", s.handleGameStream)
+	mux.HandleFunc("GET /api/games/{id}/rulings", s.handleRulingList)
+	mux.HandleFunc("POST /api/games/{id}/rulings", s.handleRulingRecord)
 	mux.HandleFunc("POST /api/games/{id}/rewind", s.handleRewindGame)
 	mux.HandleFunc("POST /api/games/{id}/amend", s.handleAmendGame)
 	mux.HandleFunc("GET /api/games/{id}/notes", s.handleSeatNoteGet)
