@@ -230,11 +230,37 @@ func applyStartGame(s *State, a Action) ([]Event, error) {
 	if life == 0 {
 		life = 40
 	}
+	// GAME_STARTED is public, so the seating it echoes carries no deck:
+	// library composition is its owner's to read (ADR 13, MAD-337). Each
+	// attached deck rides its own seat-visible DECK_KNOWN row right
+	// behind the echo, so a seat folding its own stream still seeds
+	// Deck/LibraryComp and the owner (who reads every row) folds exactly
+	// what a public echo used to carry. The size stays public — a
+	// library's card count is table knowledge, not composition.
+	echo := make([]SeatConfig, len(a.Seats))
+	copy(echo, a.Seats)
+	for i := range echo {
+		size := 0
+		for _, n := range echo[i].Deck {
+			size += n
+		}
+		echo[i].DeckSize = size
+		echo[i].Deck = nil
+	}
 	evs := []Event{
-		a.stamp(Event{Kind: EventGameStarted, Seats: a.Seats, Format: format, StartingLife: life}),
+		a.stamp(Event{Kind: EventGameStarted, Seats: echo, Format: format, StartingLife: life}),
+	}
+	for _, sc := range a.Seats {
+		if len(sc.Deck) == 0 {
+			continue
+		}
+		evs = append(evs, a.stamp(Event{Kind: EventDeckKnown, TargetSeat: sc.Seat,
+			Deck: sc.Deck}.seatVisible(sc.Seat)))
+	}
+	evs = append(evs,
 		a.stamp(Event{Kind: EventTurnStarted, Turn: 1, TurnSeat: order[0]}),
 		a.stamp(Event{Kind: EventStepEntered, Phase: "beginning", Step: "untap"}),
-	}
+	)
 	return evs, nil
 }
 

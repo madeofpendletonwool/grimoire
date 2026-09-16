@@ -131,10 +131,18 @@ func (s *Store) TriggerRegistry(ctx context.Context) (TriggerRegistry, error) {
 // deterministic query the pure State.Nudges answers, with the corpus
 // attached.
 func (s *Store) Nudges(ctx context.Context, gameID string) ([]Nudge, error) {
+	return s.NudgesFor(ctx, gameID, OwnerViewer())
+}
+
+// NudgesFor is Nudges at a viewer's scope (MAD-337): the fold is the
+// viewer's own, so a nudge can only ever concern surfaces the viewer
+// may see. The reminders themselves are table-audible — a Rhystic
+// left unpaid is the table's business, not one seat's secret.
+func (s *Store) NudgesFor(ctx context.Context, gameID string, v Viewer) ([]Nudge, error) {
 	if _, err := s.GetGame(ctx, gameID); err != nil {
 		return nil, err
 	}
-	st, err := s.State(ctx, gameID)
+	st, err := s.StateFor(ctx, gameID, v)
 	if err != nil {
 		return nil, err
 	}

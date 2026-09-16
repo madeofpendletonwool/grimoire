@@ -48,6 +48,12 @@ const (
 	EventCardRevealed      EventKind = "CARD_REVEALED"
 	EventEffectDeclared    EventKind = "EFFECT_DECLARED"
 	EventZoneCountSet      EventKind = "ZONE_COUNT_SET"
+	// EventDeckKnown is the seat-visible half of what GAME_STARTED used
+	// to carry whole: the deck composition a seat's library began as,
+	// visible to that seat alone (ADR 13, MAD-337). GAME_STARTED stays
+	// public and echoes the seating deckless; this row seeds the fold's
+	// Deck/LibraryComp for the one seat entitled to it.
+	EventDeckKnown EventKind = "DECK_KNOWN"
 )
 
 // Structural reports the ★ kinds — fixed by the CR, independent of card
@@ -173,6 +179,11 @@ type Event struct {
 	Cards      []string `json:"cards,omitempty"`
 	Identified bool     `json:"identified,omitempty"`
 	Drawn      bool     `json:"drawn,omitempty"`
+
+	// DECK_KNOWN: the seat's starting library composition, a name →
+	// count multiset. Rides a seat-visible row (ADR 13); the public
+	// GAME_STARTED carries no deck.
+	Deck map[string]int `json:"deck,omitempty"`
 
 	// TRIGGER_FIRED / EFFECT_DECLARED: the declared spec or prose.
 	Effect string `json:"effect,omitempty"`

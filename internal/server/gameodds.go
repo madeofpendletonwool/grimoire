@@ -45,12 +45,15 @@ func (s *Server) gameLookup() odds.Lookup {
 
 // handleGameLibrary answers the derived read: what is still in a
 // seat's library, as a multiset, with the exactness flag. Composition
-// never order — the shape itself is the refusal.
+// never order — the shape itself is the refusal. A pod participant
+// asks for a seat they hold (MAD-337): the composition folds from
+// their scoped stream, and another seat's library is not theirs to
+// read.
 func (s *Server) handleGameLibrary(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -59,7 +62,11 @@ func (s *Server) handleGameLibrary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("the library read needs a seat"))
 		return
 	}
-	state, err := s.games.State(r.Context(), g.ID)
+	if err := seatGuard(viewer, seat); err != nil {
+		writeGameError(w, err)
+		return
+	}
+	state, err := s.games.StateFor(r.Context(), g.ID, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return
@@ -115,7 +122,7 @@ func (s *Server) handleGameOdds(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -142,6 +149,10 @@ func (s *Server) handleGameOdds(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("the question needs a seat"))
 		return
 	}
+	if err := seatGuard(viewer, seat); err != nil {
+		writeGameError(w, err)
+		return
+	}
 
 	// The gate: order-dependent phrasings are refused before anything
 	// else runs — the mandated rule, out loud.
@@ -160,7 +171,7 @@ func (s *Server) handleGameOdds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, err := s.games.State(r.Context(), g.ID)
+	state, err := s.games.StateFor(r.Context(), g.ID, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return
@@ -226,7 +237,7 @@ func (s *Server) handleGameOuts(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -248,6 +259,10 @@ func (s *Server) handleGameOuts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("the outs search needs a seat"))
 		return
 	}
+	if err := seatGuard(viewer, seat); err != nil {
+		writeGameError(w, err)
+		return
+	}
 	if req.Object == nil && req.Target == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("the outs search needs a board object or a target to answer"))
 		return
@@ -256,7 +271,7 @@ func (s *Server) handleGameOuts(w http.ResponseWriter, r *http.Request) {
 		writeGameError(w, odds.ErrNoCardData)
 		return
 	}
-	state, err := s.games.State(r.Context(), g.ID)
+	state, err := s.games.StateFor(r.Context(), g.ID, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return
@@ -313,7 +328,7 @@ func (s *Server) handleGameMulligan(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -342,7 +357,11 @@ func (s *Server) handleGameMulligan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("the advice needs a seat"))
 		return
 	}
-	state, err := s.games.State(r.Context(), g.ID)
+	if err := seatGuard(viewer, seat); err != nil {
+		writeGameError(w, err)
+		return
+	}
+	state, err := s.games.StateFor(r.Context(), g.ID, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return

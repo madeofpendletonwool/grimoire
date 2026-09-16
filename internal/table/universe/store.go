@@ -51,12 +51,31 @@ var ErrInvalid = errors.New("universe: invalid request")
 // cache first, then the tiers. The universe is rebuilt from the fold on
 // every miss — it is cheap, derived, and always current with the log.
 func (s *Store) ResolveGame(ctx context.Context, st *engine.State, gameID string, seat int, spoken string) (Resolution, error) {
+	return s.ResolveGameFor(ctx, st, gameID, seat, spoken, false)
+}
+
+// ResolveGameFor is ResolveGame with the viewer's scope on the table
+// (MAD-337). An unscoped caller — the game's owner, whose fold carries
+// every deck — reads and writes the cache as before. A scoped caller
+// folds only its own seat's hidden zones, so the universe the tiers
+// walk is already own-deck-then-global; the shared cache additionally
+// serves such a reader only rows any Magic player could derive: the
+// global index's mapping and a correction spoken at the table. A
+// deck-tier or llm-tier row says "some attached deck contains this
+// card" without saying whose, and that inference is library
+// composition by another door — it stays the owner's.
+//
+// Writes are unchanged: a row a scoped resolution produces names a card
+// from the reader's own deck or the index, and no scoped reader is ever
+// served another's deck-tier rows, so the cache stays honest for
+// everyone it answers.
+func (s *Store) ResolveGameFor(ctx context.Context, st *engine.State, gameID string, seat int, spoken string, scoped bool) (Resolution, error) {
 	spoken = strings.TrimSpace(spoken)
 	if spoken == "" {
 		return Resolution{}, fmt.Errorf("%w: nothing spoken", ErrInvalid)
 	}
 	key := carddb.NormalizeName(spoken)
-	if r, ok := s.Cached(ctx, gameID, spoken); ok {
+	if r, ok := s.cached(ctx, gameID, spoken, scoped); ok {
 		return r, nil
 	}
 	res := FromState(st).Resolve(ctx, seat, spoken, s.global)
@@ -68,20 +87,33 @@ func (s *Store) ResolveGame(ctx context.Context, st *engine.State, gameID string
 	return res, nil
 }
 
-// Cached reads one cached resolution back, normalized spoken → card.
-func (s *Store) Cached(ctx context.Context, gameID, spoken string) (Resolution, bool) {
+// CachedFor reads one cached resolution back, normalized spoken →
+// card, at the caller's scope: an unscoped reader (the owner) may hit
+// every row; a scoped reader is served only the public-tier rows —
+// global (the index any player knows) and manual (a correction spoken
+// at the table).
+func (s *Store) CachedFor(ctx context.Context, gameID, spoken string, scoped bool) (Resolution, bool) {
+	return s.cached(ctx, gameID, spoken, scoped)
+}
+
+// cached reads one cached resolution back, normalized spoken → card. A
+// scoped reader is served only the public-tier rows: global (the index
+// any player knows) and manual (a correction spoken at the table).
+func (s *Store) cached(ctx context.Context, gameID, spoken string, scoped bool) (Resolution, bool) {
 	key := carddb.NormalizeName(spoken)
 	if key == "" {
 		return Resolution{}, false
+	}
+	q := `SELECT card_name, method, confidence FROM mtg_name_resolutions WHERE game_id = ? AND spoken = ?`
+	if scoped {
+		q += ` AND method IN ('global', 'manual')`
 	}
 	var (
 		card       string
 		method     string
 		confidence float64
 	)
-	err := s.db.QueryRowContext(ctx,
-		`SELECT card_name, method, confidence FROM mtg_name_resolutions WHERE game_id = ? AND spoken = ?`,
-		gameID, key).Scan(&card, &method, &confidence)
+	err := s.db.QueryRowContext(ctx, q, gameID, key).Scan(&card, &method, &confidence)
 	if err != nil {
 		return Resolution{}, false
 	}

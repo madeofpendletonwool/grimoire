@@ -1222,7 +1222,25 @@ export const api = {
 
 	gameList: () => fetch("/api/games").then(json),
 
+	// The pod's front door (MAD-337): redeem a join code, land in a seat.
+	gameJoin: (code) =>
+		fetch("/api/games/join", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ code }),
+		}).then(json),
+
 	gameGet: (id) => fetch(`/api/games/${encodeURIComponent(id)}`).then(json),
+
+	// The viewer's own seat pad — private scratch, never another seat's.
+	gameNotes: (id) => fetch(`/api/games/${encodeURIComponent(id)}/notes`).then(json),
+
+	gameNotesSave: (id, body) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/notes`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ body }),
+		}).then(json),
 
 	gameSeat: (id, seat) =>
 		fetch(`/api/games/${encodeURIComponent(id)}/seats`, {

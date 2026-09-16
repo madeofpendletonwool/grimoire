@@ -48,12 +48,15 @@ func (s *Server) WithIntent(store *intent.Store) *Server {
 // handleIntent is the talk entry point: one utterance by one seat,
 // through the grammar then the gated model fallback, onto the ladder.
 // The reply says what happened; applied actions carry their events so
-// the client paints without waiting on the stream.
+// the client paints without waiting on the stream. A pod participant
+// talks as a seat they hold, and the pipeline parses their own scoped
+// fold — the prompt cannot quote another seat's hidden zones because
+// the fold it renders does not contain them (MAD-337).
 func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
 	if !s.intentEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -70,29 +73,40 @@ func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
 	if req.Seat != nil {
 		seat = *req.Seat
 	}
+	if err := seatGuard(viewer, seat); err != nil {
+		writeGameError(w, err)
+		return
+	}
 	source := req.Source
 	if source != "voice" {
 		source = "" // typed talk is the default; the pipeline stamps "grammar"
 	}
-	reply, err := s.intent.Interpret(r.Context(), g.ID, seat, req.Text, source)
+	reply, err := s.intent.InterpretFor(r.Context(), g.ID, seat, req.Text, source, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return
+	}
+	if reply != nil {
+		reply.Events = engine.FilterEvents(viewer, reply.Events)
+		reply.State = engine.RedactFor(reply.State, viewer)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"reply": reply})
 }
 
 // handlePendingList answers the game's open questions, oldest first —
-// asked ones with their tappable options, parked ones without.
+// asked ones with their tappable answers, parked ones without, and a
+// participant's options redacted to nothing on questions another seat
+// asked: the completions came out of that seat's deck, and a deck's
+// contents are their owner's alone.
 func (s *Server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 	if !s.intentEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
-	open, err := s.intent.Open(r.Context(), g.ID)
+	open, err := s.intent.OpenFor(r.Context(), g.ID, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return
@@ -111,7 +125,7 @@ func (s *Server) handlePendingAnswer(w http.ResponseWriter, r *http.Request) {
 	if !s.intentEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -137,10 +151,14 @@ func (s *Server) handlePendingAnswer(w http.ResponseWriter, r *http.Request) {
 	if req.Seat != nil {
 		seat = *req.Seat
 	}
-	reply, err := s.intent.AnswerPending(r.Context(), g.ID, pid, seat, req.Answer)
+	reply, err := s.intent.AnswerPendingFor(r.Context(), g.ID, pid, seat, req.Answer, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return
+	}
+	if reply != nil {
+		reply.Events = engine.FilterEvents(viewer, reply.Events)
+		reply.State = engine.RedactFor(reply.State, viewer)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"reply": reply})
 }

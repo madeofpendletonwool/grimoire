@@ -299,8 +299,47 @@ prompt instruction; see
 
 The engine's own fold includes seat-visible rows (it must, to serve a seat
 its own view and to answer that seat's probability questions), exactly as the
-campaign's store holds secrets no player retrieval can reach. The gate is the
-query, and 6a's reflection leak test is the hard CI version of it.
+campaign's store holds secrets no player retrieval can reach. The gate is
+the query, and 6a's reflection leak test is the hard CI version of it.
+
+### The pod's contract (6a, MAD-337)
+
+Library composition is a hidden zone like the hand. A started game's
+seating therefore arrives in two pieces: the public `GAME_STARTED` echoes
+the seats **deckless, with each deck's size** (a library's card count is
+table knowledge), and every deck rides its own seat-visible `DECK_KNOWN`
+row right behind it. A seat folding its scoped stream seeds its own
+`Deck`/`LibraryComp` and folds everyone else's as size-only; the owner,
+who reads every row, folds what a public echo used to carry. Rows written
+before the split (decks on the public echo) belong to games that mint no
+join code — legacy games stay owner-only, and the redaction pass zeroes
+their decks for any scoped reader anyway.
+
+An Action's JSON rides its rows as `cause`, and the cause is redacted like
+the payload: a `START_GAME`'s rows carry no decks and a `DRAW`'s rows
+carry no cards, because a row's reader is entitled to the row's own
+identities, not the whole action's. Amendment prefills from the cause
+still work — a draw's count and seat survive; the identities were the
+row's payload all along.
+
+Joining is a code minted at game creation (six characters, the
+non-ambiguous alphabet), redeemed at `POST /api/games/join` while the game
+is setup; the joiner is bound to a seat, idempotently. Seating, decks and
+the host's controls (start, rewind, amend, settings) stay the host's; a
+participant acts and asks as a seat they hold. Private scratch —
+`mtg_seat_notes` — belongs to the account bound to the seat (a local
+seat's pad is the host's), reaches no other seat's view and no prompt at
+all, and is the one surface the owner's see-everything entitlement does
+not cover.
+
+The deterministic gate is `hidden_zone_leak` (`internal/table/engine`'s
+leak check): a join between the identities the full log makes private per
+seat and any rendered surface for any viewer — error severity when they
+meet. CI runs it as the hard gate: the store-level reflection sweep over
+every viewer-scoped read, and the handler-level sweep over every HTTP
+surface and both prompt assemblies, with marker decks, marker draws and
+marker notes planted so the gate has teeth (the owner's full payload
+scanned at a seat's scope must fire).
 
 ---
 
@@ -310,7 +349,7 @@ query, and 6a's reflection leak test is the hard CI version of it.
 
 | Table | Columns | Notes |
 |---|---|---|
-| `mtg_games` | `id, owner_id, name, format, starting_life, status, settings, created_at, updated_at, started_at, ended_at` | The container. `format` is open vocabulary — Commander first, the engine is format-agnostic underneath; `settings` JSON carries variant config the way `campaigns.settings` does. `status` is `setup \| active \| finished` — lifecycle only. **Prefix is `mtg_`**: `game_sessions` already means a D&D session and `sessions` already means a login session. |
+| `mtg_games` | `id, owner_id, name, format, starting_life, status, settings, join_code, created_at, updated_at, started_at, ended_at` | The container. `format` is open vocabulary — Commander first, the engine is format-agnostic underneath; `settings` JSON carries variant config the way `campaigns.settings` does. `status` is `setup \| active \| finished` — lifecycle only. `join_code` (migration 0041) is the pod's share code, minted at creation and redeemed at `POST /api/games/join`; NULL on legacy rows, which stay owner-only. **Prefix is `mtg_`**: `game_sessions` already means a D&D session and `sessions` already means a login session. |
 | `mtg_seats` | `id, game_id, position, user_id, name, deck_id, commander, starting_life, joined_at` | Turn order is `position` ascending. `user_id` nullable (local seat); `deck_id` attaches the known-card universe (4a) and sets library composition; `commander` denormalized for damage/tax bookkeeping. **Setup facts only — no play state.** |
 | `mtg_events` | `id, game_id, ord, kind, actor_seat, source, cause, payload, visibility, visible_seat, created_at` | **The only writer of state** ([ADR 9](../decisions.md#adr-9-the-event-log-is-the-only-writer-state-is-a-fold)). `ord` contiguous per game; `kind` from the taxonomy above; `source` is `tap \| grammar \| llm \| voice \| manual \| system` (audit and telemetry — how did actions get entered); `cause` is the Action JSON that produced the row; `visibility` + `visible_seat` enforce hidden zones ([ADR 13](../decisions.md#adr-13-hidden-zones-are-authorization-in-sql-not-instruction)). `UNIQUE (game_id, ord)` is the multiplayer story: one writer, ordinal replication, no conflict resolution. |
 

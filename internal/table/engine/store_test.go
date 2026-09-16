@@ -156,7 +156,10 @@ func TestStoreSubmitPersistsContiguousOrdinals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(start) != 3 {
+	if len(start) != 4 {
+		// GAME_STARTED, the seat's DECK_KNOWN (the ADR 13 split,
+		// MAD-337 — seat 2 has no deck, so only one), TURN_STARTED,
+		// STEP_ENTERED.
 		t.Fatalf("start events = %d", len(start))
 	}
 	var all []Event

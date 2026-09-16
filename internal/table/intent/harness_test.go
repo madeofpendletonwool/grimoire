@@ -180,10 +180,11 @@ func (f *fixture) latestOrd() int64 {
 	return ord
 }
 
-// cachedResolution reads the per-game identity cache.
+// cachedResolution reads the per-game identity cache, unscoped the way
+// the owner's reads always were.
 func (f *fixture) cachedResolution(spoken string) (universe.Resolution, bool) {
 	f.t.Helper()
-	return f.resolve.Cached(f.ctx, f.game, spoken)
+	return f.resolve.CachedFor(f.ctx, f.game, spoken, false)
 }
 
 // mustReplyAction unwraps a parsed reply's action.

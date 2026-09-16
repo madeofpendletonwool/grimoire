@@ -39,7 +39,7 @@ func (s *Server) handleGameAsk(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
@@ -60,7 +60,14 @@ func (s *Server) handleGameAsk(w http.ResponseWriter, r *http.Request) {
 	if req.Seat != nil {
 		seat = *req.Seat
 	}
-	state, err := s.games.State(r.Context(), g.ID)
+	// The asker asks as a seat they hold (MAD-337): the judge's prompt
+	// renders the asker's scoped fold, whose only private zones are the
+	// asker's own.
+	if err := seatGuard(viewer, seat); err != nil {
+		writeGameError(w, err)
+		return
+	}
+	state, err := s.games.StateFor(r.Context(), g.ID, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return

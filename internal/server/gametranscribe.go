@@ -51,7 +51,7 @@ func (s *Server) handleGameTranscribe(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, _ := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}

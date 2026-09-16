@@ -155,11 +155,11 @@ func (s *Server) handleNudges(w http.ResponseWriter, r *http.Request) {
 	if !s.gamesEnabled(w) {
 		return
 	}
-	g := s.resolveGame(w, r)
+	g, viewer := s.resolveGameAny(w, r)
 	if g == nil {
 		return
 	}
-	nudges, err := s.games.Nudges(r.Context(), g.ID)
+	nudges, err := s.games.NudgesFor(r.Context(), g.ID, viewer)
 	if err != nil {
 		writeGameError(w, err)
 		return
