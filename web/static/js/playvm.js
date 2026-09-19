@@ -609,6 +609,127 @@ export function actionSummary(action, state) {
 	}
 }
 
+/* ---------- replay (MAD-339) ---------- */
+
+/**
+ * The scrubber's turn map: one anchor per TURN_STARTED row, in log
+ * order. `end` is the ordinal of the TURN_ENDED that closed the turn,
+ * 0 when the log ends mid-turn — the boundary the step controls jump.
+ */
+export function turnAnchors(events) {
+	const anchors = [];
+	const byTurn = new Map();
+	for (const ev of events || []) {
+		if (ev.kind === "TURN_STARTED" && ev.turn) {
+			const a = { turn: ev.turn, seat: ev.turn_seat, ord: ev.ord, end: 0 };
+			anchors.push(a);
+			byTurn.set(ev.turn, a);
+		} else if (ev.kind === "TURN_ENDED" && ev.turn && byTurn.has(ev.turn)) {
+			byTurn.get(ev.turn).end = ev.ord;
+		}
+	}
+	return anchors;
+}
+
+/** Clamp a scrub position to the log's honest range. */
+export function clampOrd(at, head) {
+	return Math.max(0, Math.min(at, head));
+}
+
+/**
+ * The next position for a turn jump: dir 1 lands on the next turn's
+ * TURN_STARTED (or the head when no turn follows); dir -1 lands on the
+ * previous turn's start, or 0. Standing exactly on an anchor counts as
+ * being there, so double-taps keep moving.
+ */
+export function turnStepOrd(anchors, at, dir, head) {
+	const ords = (anchors || []).map((a) => a.ord);
+	if (dir > 0) {
+		for (const ord of ords) {
+			if (ord > at) return ord;
+		}
+		return head;
+	}
+	let prev = 0;
+	for (const ord of ords) {
+		if (ord < at) prev = ord;
+	}
+	return prev;
+}
+
+/** The one event step, clamped. */
+export function stepOrd(at, dir, head) {
+	return clampOrd(at + dir, head);
+}
+
+/**
+ * The replay headline — the position every pane agrees on while the
+ * scrub is parked: ordinal, turn, whose turn, step, and the honest
+ * spelling for the two edge positions.
+ */
+export function replayLine(st, at, head) {
+	if (!st) return `#${at}`;
+	if (at === 0) return "#0 — before anything happened";
+	const parts = [`#${at}`];
+	if (st.status === "finished" && at >= head) parts.push("the final position");
+	else if (st.turn) parts.push(`T${st.turn}`, `${seatName(st, st.turn_seat)}'s turn`, stepLabel(st.phase, st.step));
+	else if (st.status === "setup") parts.push("setting up");
+	return parts.join(" · ");
+}
+
+/* ---------- the post-game coach (MAD-339) ---------- */
+
+/**
+ * The coach panel's deterministic facts: the summary the server derived,
+ * as label → text rows the panel paints before any model prose arrives.
+ * These rows are the product — the interpretation reads them, it never
+ * replaces them.
+ */
+export function factRows(summary) {
+	if (!summary) return [];
+	const rows = [];
+	const game = summary.game || {};
+	const seat = summary.seat || {};
+	let line = `${game.status || "?"}`;
+	if (game.format) line += ` · ${game.format}`;
+	if (game.turns) line += ` · ${game.turns} turns`;
+	if (game.reason) line += ` · ended: ${game.reason}`;
+	rows.push({ label: "game", text: line });
+	if (game.seats?.length) {
+		rows.push({
+			label: "table",
+			text: game.seats.map((s) => {
+				const state = s.alive ? `${s.life} life` : `out${s.left_cause ? ` (${s.left_cause})` : ""}`;
+				return `${s.name}: ${state}`;
+			}).join(" · "),
+		});
+	}
+	rows.push({ label: "play", text: `${seat.turns_played ?? 0} turns · ${seat.casts ?? 0} casts · ${seat.lands_played ?? 0} lands · ${seat.drawn ?? 0} drawn` });
+	const hand = seat.hand_known_at_end ? String(seat.hand_at_end ?? 0) : "?";
+	rows.push({ label: "hand at end", text: `${hand} cards${seat.hand_known?.length ? ` — had seen ${seat.hand_known.join(", ")}` : ""}` });
+	rows.push({ label: "damage", text: `dealt ${seat.damage_dealt ?? 0} · taken ${seat.damage_taken ?? 0} · life lost ${seat.life_lost ?? 0} · gained ${seat.life_gained ?? 0}` });
+	const ft = seat.final_turn || {};
+	const sources = ft.lands_known ? String(ft.lands ?? 0) : "?";
+	rows.push({
+		label: `final turn (T${ft.turn ?? "?"})`,
+		text: `${sources} unspent mana sources · ${ft.land_drops ?? 0} land drop(s) · ${ft.hand ?? "?"} cards in hand${ft.ended_turn ? "" : " — the game ended during it"}`,
+		note: summary.mana_note,
+	});
+	const missed = seat.missed_triggers || [];
+	if (!missed.length) {
+		rows.push({ label: "missed triggers", text: "none derived — every match today's registry makes fired" });
+	} else {
+		rows.push({ label: "missed triggers", text: `${missed.length}, with today's registry — see the debrief`, note: "a registration that arrived after the game explains a gap" });
+	}
+	return rows;
+}
+
+/** One missed trigger, spelled for the facts list. */
+export function missedTriggerLine(mt) {
+	if (!mt) return "";
+	return `${mt.card}${mt.effect ? ` (${mt.effect})` : ""} — ${mt.happening || "a happening"} at #${mt.at}`;
+}
+
 /* ---------- card lookup → declared base ---------- */
 
 /**

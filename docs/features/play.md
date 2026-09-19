@@ -362,6 +362,69 @@ The surfaces: `POST /api/games/join` with `role` (`judge` \|
 /api/games/{id}/rulings` (`{ord, note}`) for the pen — judge or host
 only — and the stream's `ruling` frame for live arrival.
 
+## Replay — the log, played back
+
+State is a fold over an immutable event log, so **the board at any past
+ordinal is `fold(events[:n])`** — the prefix property the engine's own
+tests prove. Replay is therefore a viewer over data the log already
+holds: nothing new is stored, nothing is materialized, and every
+position is one cheap read the server folds for you (`GET
+/api/games/{id}/replay?at=N`, scoped in SQL like every other read — a
+seat scrubs its own stream, the host folds everything, a judge or
+spectator scrubs the public game).
+
+**▶ replay** in the turn strip opens the bar once a game has started —
+finished games are the natural home, but scrubbing a live game to ask
+"what did the board look like on turn 5?" is the same read:
+
+- **The slider** is the whole point: every ordinal is a position. The
+  board, stack and strip repaint the folded past; the log dims its
+  future rows and marks the row you sit on.
+- **Step and turn controls** — one event (◂ ▸), one turn boundary
+  (◂ turn / turn ▸), or ▶ to watch it play back event by event; from
+  the head, playback starts over at the beginning.
+- **The live game never leaves** — the stream keeps running under the
+  bar, the writer surfaces stand down while the panes show the past
+  (tapping one says so), and **✕ live** re-reads the server's fold and
+  puts every pane back on it. A rewind announced while you scrub
+  closes the bar for you: the log it was over no longer exists.
+
+## The post-game coach
+
+**🎓 coach** reads the recorded log the way a coach debriefs a game:
+the **deterministic facts arrive whole first**, then the model's
+interpretation streams after them — and the facts are the product, so
+an install with no LLM configured still gets the whole first half,
+with a plain note about what is missing.
+
+- **Per seat, private to that seat.** A seated player reads their own
+  report; the host reads any seat's (a solo table's chair is every
+  chair); a judge or spectator reads the table's public summary. The
+  privacy is construction, not filtering: the report folds the
+  asker's scoped stream, so another seat's rows were never read —
+  the same CI leak gate that covers every other surface covers the
+  coach's prompt and reply.
+- **Resource usage** — cards left in hand at the end (and the ones the
+  seat had seen), casts, lands, draws, damage dealt and taken, life
+  lost and gained, and the final-turn picture: unspent mana sources
+  at the turn's end, land drops, hand size. Honesty rule and all:
+  **floating mana is never modelled** — untapped lands are the read,
+  and the panel says so.
+- **Missed triggers** — today's trigger registry replayed over the
+  log, diffed against the `TRIGGER_FIRED` rows that actually landed:
+  *"Rhystic Study (may draw a card) — Bob casts Sol Ring at #412."* A
+  registration that arrived after the game explains a gap, and the
+  coach says so rather than blaming the player.
+- **The interpretation is an LLM read over a deterministic log.** It
+  interprets recorded facts — biggest mistakes, best play, the
+  turning point — cites ordinals, and never invents state; where the
+  log could not know something (unknown hands, unidentified cards),
+  it is told to report the gap rather than guess.
+
+The surface is `POST /api/games/{id}/analysis` (`{seat}`), streaming
+the judge's SSE framing: `meta` carries the deterministic summary,
+`delta` the debrief.
+
 ## Where the truth lives
 
 The board you see is the server's fold of the game's append-only event

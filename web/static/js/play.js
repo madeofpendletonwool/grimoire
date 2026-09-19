@@ -13,7 +13,7 @@
 // path, which is the whole easy-adjust contract.
 
 import { $, el, clear } from "./dom.js";
-import { api, streamGameAsk } from "./api.js";
+import { api, streamGameAsk, streamGameAnalysis } from "./api.js";
 import { state as appState } from "./state.js";
 import { webSpeechSupport, dictate, canRecordClip, recordClip } from "./voice.js";
 import { renderAnswer, bindRuleRefs, renderCitations } from "./render.js";
@@ -25,6 +25,7 @@ import {
 	ptRowText, ptRowMeta, changeRowText, deathHeadline, damageRowText, turnHeadline,
 	nudgeText, queueResolutionOrder, queueOrderAfterMove, triggerKindLabel, triggerRowText,
 	TRIGGER_KINDS,
+	turnAnchors, clampOrd, stepOrd, turnStepOrd, replayLine, factRows, missedTriggerLine,
 } from "./playvm.js";
 
 let games = [];
@@ -63,6 +64,8 @@ let rulingDraft = 0;         // the ordinal a ⚖ was tapped on — the ruling f
 let notesOpen = false;       // the private pad drawer's open state
 let notesTimer = null;       // the pad's save debounce
 let notesLoaded = "";        // the pad body as last read or saved
+let replay = null;           // the scrub's whole state (MAD-339): {events, head, at, state, playing, timer, seq}
+let coachAbort = null;       // the in-flight coach debrief's stop handle (MAD-339)
 let wired = false;
 let mounted = false;
 let streamCtl = null;
@@ -103,6 +106,8 @@ async function openGame(id) {
 	closeContext();
 	closeJudge();
 	closeTrace();
+	exitReplay(true);
+	closeCoach();
 	attackDraft = new Set();
 	blockDraft = new Map();
 	blockPick = 0;
@@ -183,8 +188,11 @@ async function reloadLog() {
 }
 
 /** The stream said something landed; re-read the fold (debounced — a
-    combat action lands a dozen rows at once and they are one paint). */
+    combat action lands a dozen rows at once and they are one paint).
+    A replay in progress owns the panes: the live fold re-reads when
+    the bar closes, so a mid-scrub wake repaints nothing. */
 function scheduleRefresh() {
+	if (replay) return;
 	clearTimeout(refreshTimer);
 	refreshTimer = setTimeout(async () => {
 		try {
@@ -251,6 +259,8 @@ function startStream() {
 		es.addEventListener("rewind", () => {
 			// The log this client holds no longer exists. Drop everything
 			// and re-read — folding stale rows would be worse than a blank.
+			// A replay over that log is over too: its rows are gone.
+			if (replay) exitReplay(true);
 			events = [];
 			seen = new Set();
 			cursor = 0;
@@ -299,6 +309,10 @@ function stopStream() {
     says why. */
 async function submit(action) {
 	if (isObserver()) return; // the observer's pen writes rulings, not actions
+	if (replay) {
+		currentMeta("showing the past — ✕ live returns the game", true);
+		return;
+	}
 	const seat = actingSeat();
 	if (!action.seat) action.seat = seat;
 	if (!action.source) action.source = "tap";
@@ -385,6 +399,10 @@ async function resolveTop() {
     source "voice" marks a push-to-talk utterance: the log's cause
     column records how it arrived. */
 async function say(text, source = "", seat) {
+	if (replay) {
+		currentMeta("showing the past — ✕ live returns the game", true);
+		return;
+	}
 	const trimmed = (text || "").trim();
 	if (!trimmed) return;
 	try {
@@ -754,6 +772,7 @@ function render() {
 	renderNudges();
 	renderComposerTargets();
 	renderViewer();
+	renderReplayBar();
 }
 
 /** Viewer-shaped affordances (MAD-337): the host owns the log's history
@@ -975,7 +994,7 @@ function renderSetup() {
 
 function renderStrip() {
 	const active = state?.status === "active";
-	$("play-strip").hidden = !active;
+	$("play-strip").hidden = !active && !replay;
 	// The judge reads the live fold: offered once there is one, kept for
 	// finished games (disputes outlast the last attack). A spectator
 	// watches — the tools are the judge's (MAD-338).
@@ -987,7 +1006,29 @@ function renderStrip() {
 	// over (MAD-338).
 	$("play-odds").hidden = !(state?.status === "active" || state?.status === "finished")
 		|| isObserver();
-	if (!active) return;
+	// The coach (MAD-339) reads the log, so it is offered wherever the
+	// judge is — and to spectators too: the table's report is a public
+	// read. Replay scrubs the same log once there is one to scrub.
+	const started = state?.status === "active" || state?.status === "finished";
+	$("play-coach").hidden = !started;
+	$("play-replay").hidden = !started || !!replay;
+	if (!active && !replay) return;
+
+	// A scrub in progress owns the strip: the headline is the position,
+	// and the turn controls mean nothing about a board that already
+	// happened.
+	if (replay) {
+		$("play-turnline").textContent = replayLine(state, replay.at, replay.head);
+		for (const id of ["play-advance", "play-pass", "play-draw", "play-untap-all", "play-give", "play-resolve-combat"]) {
+			const btn = $(id);
+			if (btn) btn.disabled = true;
+		}
+		return;
+	}
+	for (const id of ["play-advance", "play-pass", "play-draw", "play-untap-all", "play-give", "play-resolve-combat"]) {
+		const btn = $(id);
+		if (btn) btn.disabled = false;
+	}
 
 	$("play-turnline").textContent = turnLine(game, state);
 
@@ -1241,13 +1282,25 @@ function renderStack() {
 
 function renderLog() {
 	const host = clear($("play-log"));
-	const rows = events.slice().sort((a, b) => b.ord - a.ord);
+	// A scrub paints the replay's own copy of the log — the whole
+	// viewer-scoped stream, the future dimmed past the position, the
+	// current row marked — and no correction affordances: the past is
+	// not the host's to truncate from here.
+	const source = replay ? replay.events : events;
+	const rows = source.slice().sort((a, b) => b.ord - a.ord);
 	const logEl = $("play-log");
 	const nearHead = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 160;
 	for (const ev of rows) {
 		const ruled = rulings.some((r) => r.ord === ev.ord);
+		let cls = "play-row";
+		if (ev.visibility === "seat") cls += " is-private";
+		if (ruled) cls += " is-ruled";
+		if (replay) {
+			if (ev.ord > replay.at) cls += " is-future";
+			else if (ev.ord === replay.at) cls += " is-now";
+		}
 		const row = el("li", {
-			class: "play-row" + (ev.visibility === "seat" ? " is-private" : "") + (ruled ? " is-ruled" : ""),
+			class: cls,
 			attrs: { "data-ord": String(ev.ord) },
 		},
 			el("b", { class: "play-row-ord", text: String(ev.ord) }),
@@ -1255,6 +1308,10 @@ function renderLog() {
 		);
 		if (ev.source && ev.source !== "tap" && ev.source !== "system") {
 			row.append(el("i", { class: "play-row-src", text: ev.source }));
+		}
+		if (replay) {
+			host.append(row);
+			continue;
 		}
 		// Provenance affordances (MAD-334): a death walks back to the
 		// check that caused it and the rows in force; a turn row opens
@@ -1390,6 +1447,14 @@ function renderCurrent() {
 	const text = $("play-current-text");
 	const ok = $("play-ok");
 	const edit = $("play-edit");
+	// A scrub parks the pane on its position: the "current action" of a
+	// board that already happened is where the slider sits.
+	if (replay) {
+		text.textContent = replayLine(state, replay.at, replay.head);
+		ok.disabled = edit.disabled = true;
+		pane.classList.remove("is-fresh", "is-confirm", "is-listening");
+		return;
+	}
 	if (talk) {
 		// A hold is live: the pane is the interim transcript's stage —
 		// the one place every eye already sits — so a misheard word is
@@ -2215,6 +2280,300 @@ function traceStack(pt) {
 	return stack;
 }
 
+/* ---------- replay (MAD-339) ---------- */
+
+// State is a fold over an immutable log, so the board at any ordinal is
+// fold(events[:n]) and the scrub is a viewer: every position is one
+// cheap read, nothing is materialized, and the live game resumes the
+// moment the bar closes. While a scrub is parked the panes paint the
+// folded past — the log dims its future rows, the strip and the
+// current-action pane spell the position, and the writer surfaces are
+// parked with a note rather than silently writing to a board nobody is
+// looking at.
+
+/** Enter replay: pull the viewer's whole scoped log, park at the head,
+    and take over the panes. */
+async function enterReplay() {
+	if (replay || !gameID) return;
+	if (!state || state.status === "setup") {
+		renderMeta("nothing to replay — the log begins at start", true);
+		return;
+	}
+	try {
+		const data = await api.gameEvents(gameID, 0, 0);
+		const evs = data.events || [];
+		const head = data.latest || (evs.length ? evs[evs.length - 1].ord : 0);
+		if (!head) {
+			renderMeta("nothing to replay — the log is empty", true);
+			return;
+		}
+		replay = { events: evs, head, at: head, state: null, playing: false, timer: null, seq: 0 };
+		cancelEdit();
+		closeContext();
+		await scrubTo(head);
+	} catch (err) {
+		replay = null;
+		renderMeta(err.message, true);
+	}
+}
+
+/** Park at an ordinal: one read, the fold comes back, the panes paint
+    it. The seq token keeps a slow earlier read from overwriting a
+    newer position when the slider moves faster than the network. */
+async function scrubTo(at) {
+	if (!replay) return;
+	replay.seq++;
+	const seq = replay.seq;
+	const target = clampOrd(at, replay.head);
+	replay.at = target;
+	render(); // the position line and slider paint immediately
+	try {
+		const data = await api.gameReplay(gameID, target);
+		if (!replay || replay.seq !== seq) return;
+		replay.state = data.state;
+		state = data.state; // the panes paint the folded past; ✕ live re-reads
+		render();
+	} catch (err) {
+		if (replay) currentMeta(err.message, true);
+	}
+}
+
+function replayStep(dir) {
+	if (!replay) return;
+	stopReplayPlay();
+	scrubTo(stepOrd(replay.at, dir, replay.head));
+}
+
+function replayTurn(dir) {
+	if (!replay) return;
+	stopReplayPlay();
+	scrubTo(turnStepOrd(turnAnchors(replay.events), replay.at, dir, replay.head));
+}
+
+/** Play the game back event by event; from the head, playback starts
+    over at the beginning — the natural second watch. */
+function replayTogglePlay() {
+	if (!replay) return;
+	if (replay.playing) {
+		stopReplayPlay();
+		render();
+		return;
+	}
+	if (replay.at >= replay.head) replay.at = 0;
+	replay.playing = true;
+	replay.timer = setInterval(() => {
+		if (!replay || !replay.playing) return;
+		if (replay.at >= replay.head) {
+			stopReplayPlay();
+			render();
+			return;
+		}
+		scrubTo(replay.at + 1);
+	}, 700);
+	render();
+}
+
+function stopReplayPlay() {
+	if (!replay) return;
+	if (replay.timer) clearInterval(replay.timer);
+	replay.timer = null;
+	replay.playing = false;
+}
+
+/** Close the bar and re-read the live game — the fold the panes return
+    to is the server's, never a guess. `quiet` skips the re-read for
+    callers (openGame, the rewind frame) about to do their own. */
+async function exitReplay(quiet) {
+	const wasReplaying = !!replay;
+	stopReplayPlay();
+	replay = null;
+	if (!wasReplaying) return;
+	if (!quiet) {
+		try { await reloadGame(); } catch (_) { /* the next wake retries */ }
+	}
+	render();
+}
+
+function renderReplayBar() {
+	const bar = $("play-replay-bar");
+	if (!bar) return;
+	bar.hidden = !replay;
+	if (!replay) {
+		document.getElementById("play-body")?.classList.remove("is-replaying");
+		return;
+	}
+	document.getElementById("play-body")?.classList.add("is-replaying");
+	const slider = $("play-replay-slider");
+	slider.max = String(replay.head);
+	slider.value = String(replay.at);
+	$("play-replay-pos").textContent = replayLine(replay.state, replay.at, replay.head);
+	$("play-replay-play").textContent = replay.playing ? "⏸" : "▶";
+}
+
+/* ---------- the post-game coach (MAD-339) ---------- */
+
+// The deterministic facts over the log — resource usage, damage
+// ledgers, missed triggers from today's registry — arrive whole, then
+// the model's read streams after them. Per seat and private to that
+// seat: the server folds the asker's scoped stream, so the report
+// physically cannot carry another seat's rows.
+
+function toggleCoach() {
+	const panel = $("play-coach-panel");
+	if (panel.hidden) {
+		panel.hidden = false;
+		renderCoachSeats();
+	} else {
+		closeCoach();
+	}
+}
+
+function closeCoach() {
+	if (coachAbort) coachAbort.abort();
+	coachAbort = null;
+	const panel = $("play-coach-panel");
+	if (panel) panel.hidden = true;
+	const thread = $("play-coach-thread");
+	if (thread) clear(thread);
+	syncCoachForm();
+}
+
+function syncCoachForm(streaming) {
+	const ask = $("play-coach-ask");
+	const stop = $("play-coach-stop");
+	if (!ask || !stop) return;
+	ask.hidden = !!streaming;
+	stop.hidden = !streaming;
+}
+
+/** Whose reports this client may read: the host's chair is every chair,
+    a participant's is their own, an observer's is the table's public
+    read (seat 0). */
+function renderCoachSeats() {
+	const sel = clear($("play-coach-seat"));
+	const options = [];
+	if (isObserver()) {
+		options.push({ value: "0", label: "the table (public read)" });
+	} else if (isHost()) {
+		for (const seat of state?.order || []) {
+			options.push({ value: String(seat), label: seatName(state, seat) });
+		}
+	} else {
+		const seat = mySeat();
+		if (seat) options.push({ value: String(seat), label: seatName(state, seat) });
+	}
+	for (const opt of options) {
+		sel.append(el("option", { text: opt.label, attrs: { value: opt.value } }));
+	}
+	if (!options.length) {
+		sel.append(el("option", { text: "no seats", attrs: { value: "" } }));
+	}
+}
+
+/** One missed trigger, spelled — the facts list carries the count, the
+    debrief carries the rows. */
+function coachFactRows(summary) {
+	const host = el("div", { class: "play-coach-facts" });
+	for (const row of factRows(summary)) {
+		const line = el("p", { class: "play-coach-fact" },
+			el("b", { text: `${row.label}: ` }),
+			el("span", { text: row.text }));
+		if (row.note) line.append(el("i", { class: "play-coach-note", text: ` — ${row.note}` }));
+		host.append(line);
+	}
+	const missed = summary?.seat?.missed_triggers || [];
+	for (const mt of missed) {
+		host.append(el("p", { class: "play-coach-fact is-missed", text: missedTriggerLine(mt) }));
+	}
+	return host;
+}
+
+/** Ask for the debrief: the facts paint the moment meta lands — the
+    product works with no model configured — and the read streams after
+    them. */
+async function askCoach() {
+	if (coachAbort || !gameID) return;
+	if (!state || state.status === "setup") {
+		const thread = $("play-coach-thread");
+		thread.append(el("p", { class: "drawer-note", text: "Start the game first — the coach reads the recorded log." }));
+		return;
+	}
+	const seat = Number($("play-coach-seat").value || 0);
+	const thread = $("play-coach-thread");
+	const who = seat ? seatName(state, seat) : "the table";
+	thread.append(el("div", { class: "play-judge-row is-q" },
+		el("span", { class: "play-judge-row-q", text: `debrief — ${who}` })));
+	const answer = el("div", { class: "play-judge-row is-a" });
+	const facts = el("span", { class: "thinking", text: "deriving the facts…" });
+	const prose = el("div", { class: "prose" });
+	answer.append(prose);
+	thread.append(answer);
+	thread.scrollTop = thread.scrollHeight;
+
+	const controller = new AbortController();
+	coachAbort = controller;
+	syncCoachForm(true);
+	let text = "";
+	let painted = false;
+	let lastSummary = null;
+
+	const paintFacts = (summary) => {
+		if (painted || !summary) return;
+		painted = true;
+		lastSummary = summary;
+		prose.innerHTML = "";
+		prose.append(coachFactRows(summary));
+		prose.append(el("hr"));
+		const lead = el("p", { class: "thinking", text: "the coach is reading the log…" });
+		prose.append(lead);
+		prose.dataset.lead = "1";
+	};
+
+	try {
+		await streamGameAnalysis(gameID, seat, {
+			onMeta: (payload) => { lastSummary = payload.summary; paintFacts(payload.summary); },
+			onDelta: (chunk) => {
+				if (prose.dataset.lead) {
+					prose.innerHTML = "";
+					delete prose.dataset.lead;
+				}
+				text += chunk;
+				renderAnswer(prose, text, "mtg");
+				thread.scrollTop = thread.scrollHeight;
+			},
+			onDone: () => {
+				if (prose.dataset.lead && !text) {
+					prose.innerHTML = "";
+					prose.append(el("p", { class: "drawer-note", text: "The facts above are the whole deterministic read." }));
+				} else {
+					renderAnswer(prose, text, "mtg");
+				}
+			},
+			onError: (message) => {
+				if (prose.dataset.lead) {
+					// The facts stand alone: the deterministic half is the
+					// product, and the panel says what is missing rather
+					// than folding up.
+					prose.innerHTML = "";
+					prose.append(coachFactRows(lastSummary));
+					prose.append(el("p", { class: "drawer-note", text: message }));
+				} else {
+					answer.append(el("p", { class: "drawer-note", text: message }));
+				}
+			},
+		}, controller.signal);
+	} catch (err) {
+		if (err.name !== "AbortError") {
+			prose.innerHTML = "";
+			prose.append(el("p", { text: `The coach could not be reached: ${err.message}` }));
+		}
+	} finally {
+		if (coachAbort === controller) coachAbort = null;
+		syncCoachForm(false);
+		thread.scrollTop = thread.scrollHeight;
+	}
+}
+
 /* ---------- wiring ---------- */
 
 function wire() {
@@ -2403,6 +2762,34 @@ function wire() {
 		const input = $("play-odds-hand");
 		const text = input.value;
 		adviseMulligan(text);
+	});
+
+	// Replay (MAD-339): the scrub's controls. The slider is the whole
+	// point — every ordinal is a rewind point — and the step buttons
+	// walk one event or one turn through the same read.
+	$("play-replay").addEventListener("click", enterReplay);
+	$("play-replay-exit").addEventListener("click", () => exitReplay());
+	$("play-replay-start").addEventListener("click", () => { stopReplayPlay(); scrubTo(0); });
+	$("play-replay-end").addEventListener("click", () => { stopReplayPlay(); scrubTo(replay?.head || 0); });
+	$("play-replay-back").addEventListener("click", () => replayStep(-1));
+	$("play-replay-fwd").addEventListener("click", () => replayStep(1));
+	$("play-replay-prev").addEventListener("click", () => replayTurn(-1));
+	$("play-replay-next").addEventListener("click", () => replayTurn(1));
+	$("play-replay-play").addEventListener("click", replayTogglePlay);
+	$("play-replay-slider").addEventListener("input", (e) => {
+		stopReplayPlay();
+		scrubTo(Number(e.target.value));
+	});
+
+	// The post-game coach (MAD-339): facts on meta, the read on delta.
+	$("play-coach").addEventListener("click", toggleCoach);
+	$("play-coach-close").addEventListener("click", closeCoach);
+	$("play-coach-form").addEventListener("submit", (e) => {
+		e.preventDefault();
+		askCoach();
+	});
+	$("play-coach-stop").addEventListener("click", () => {
+		if (coachAbort) coachAbort.abort();
 	});
 
 	$("play-card").addEventListener("input", cardSearchDebounced);
@@ -2875,6 +3262,9 @@ export const tool = {
 			cancelTalk();
 			closeJudge();
 			closeTrace();
+			closeCoach();
+			stopReplayPlay();
+			replay = null;
 			stopStream();
 			},
 		};

@@ -3296,6 +3296,52 @@ mark { background: var(--gold-bright); color: #1a1208; border-radius: 2px; paddi
 .play-row.is-empty { color: var(--ink-soft); font-style: italic; }
 .play-row.is-ruled .play-row-ord { color: var(--gold-bright); }
 
+/* Replay (MAD-339): the scrub's log positions. Future rows dim under
+   the position; the row the scrub sits on carries the marker the live
+   log never needed. */
+.play-row.is-future { opacity: 0.38; }
+.play-row.is-now .play-row-ord { color: var(--gold-bright); }
+.play-row.is-now .play-row-text { font-weight: 600; }
+
+/* The replay bar: the scrub's controls above the panes, never a modal.
+   The slider is the whole point — every ordinal is a rewind point. */
+.play-replay {
+	flex: none;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--sp-2);
+	padding: var(--sp-2) var(--sp-3);
+	box-shadow: var(--shadow-1);
+}
+.play-replay-controls { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.play-replay-pos {
+	font-family: var(--font-pixel);
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	flex: none;
+}
+#play-replay-slider { flex: 1; min-width: 10rem; }
+/* While a scrub is parked the writer surfaces stand down visibly: the
+   panes paint the past, and a submit from there would land on a board
+   nobody is looking at. The guards still say so on tap. */
+.play-body.is-replaying .play-talk,
+.play-body.is-replaying .play-compose,
+.play-body.is-replaying .play-strip-controls { opacity: 0.45; }
+
+/* The coach's deterministic facts (MAD-339): the rows the model reads,
+   painted before any prose arrives — the product works with no model. */
+.play-coach-facts { display: flex; flex-direction: column; gap: var(--sp-1); }
+.play-coach-fact {
+	margin: 0;
+	font-size: var(--fs-sm);
+	font-family: var(--font-prose);
+	color: var(--parchment);
+}
+.play-coach-fact b { color: var(--gold-bright); font-weight: 600; }
+.play-coach-note { color: var(--ink-soft); font-style: italic; }
+.play-coach-fact.is-missed { color: var(--gold-dim); }
+
 /* The ruling log (MAD-338): the game's history carrying its own
    rulings, under the log it annotates. A judge records from the log
    row itself; the form is a bar, never a modal. */
