@@ -483,3 +483,96 @@ test("describeEvent spells the registry's rows", () => {
 	assert.equal(actionSummary({ kind: "ORDER_TRIGGERS", seat: 1 }, state),
 		"Collin orders the waiting triggers");
 });
+
+/* ---------- replay and the coach (MAD-339) ---------- */
+
+import {
+	turnAnchors, clampOrd, stepOrd, turnStepOrd, replayLine,
+	factRows, missedTriggerLine,
+} from "../web/static/js/playvm.js";
+
+const replayLog = [
+	{ kind: "GAME_STARTED", ord: 1 },
+	{ kind: "TURN_STARTED", ord: 2, turn: 1, turn_seat: 1 },
+	{ kind: "STEP_ENTERED", ord: 3, phase: "beginning", step: "upkeep" },
+	{ kind: "LAND_PLAYED", ord: 4, card: "Forest" },
+	{ kind: "TURN_ENDED", ord: 5, turn: 1 },
+	{ kind: "TURN_STARTED", ord: 6, turn: 2, turn_seat: 2 },
+	{ kind: "CAST", ord: 7, card: "Sol Ring" },
+	// turn 2 never closes — the log ends mid-turn
+];
+
+test("turnAnchors maps the scrubber's turn boundaries", () => {
+	const anchors = turnAnchors(replayLog);
+	assert.equal(anchors.length, 2);
+	assert.deepEqual(anchors[0], { turn: 1, seat: 1, ord: 2, end: 5 });
+	assert.deepEqual(anchors[1], { turn: 2, seat: 2, ord: 6, end: 0 });
+	assert.deepEqual(turnAnchors([]), []);
+});
+
+test("clampOrd and stepOrd keep the scrub in the log's honest range", () => {
+	assert.equal(clampOrd(-4, 10), 0);
+	assert.equal(clampOrd(14, 10), 10);
+	assert.equal(stepOrd(5, -1, 10), 4);
+	assert.equal(stepOrd(10, 1, 10), 10);
+	assert.equal(stepOrd(0, -1, 10), 0);
+});
+
+test("turnStepOrd lands on turn boundaries, not past the head", () => {
+	const anchors = turnAnchors(replayLog);
+	// Forward from before the first turn: the first anchor.
+	assert.equal(turnStepOrd(anchors, 0, 1, 7), 2);
+	// Forward from inside turn 1: turn 2's start.
+	assert.equal(turnStepOrd(anchors, 4, 1, 7), 6);
+	// Forward off the end: the head.
+	assert.equal(turnStepOrd(anchors, 6, 1, 7), 7);
+	// Back from inside turn 2: turn 2's own start replays.
+	assert.equal(turnStepOrd(anchors, 7, -1, 7), 6);
+	// Back from inside turn 1: turn 1's start — a chapter button, the
+	// second tap reaches past it.
+	assert.equal(turnStepOrd(anchors, 3, -1, 7), 2);
+	assert.equal(turnStepOrd(anchors, 2, -1, 7), 0);
+});
+
+test("replayLine spells the position every pane agrees on", () => {
+	assert.equal(replayLine(state, 0, 400), "#0 — before anything happened");
+	const mid = { ...state, turn: 4, turn_seat: 2, phase: "combat", step: "declare_attackers" };
+	assert.equal(replayLine(mid, 412, 500), "#412 · T4 · Bob's turn · declare attackers");
+	const fin = { status: "finished" };
+	assert.equal(replayLine(fin, 500, 500), "#500 · the final position");
+});
+
+test("factRows carries the deterministic facts the model reads", () => {
+	const summary = {
+		game: { status: "finished", format: "commander", turns: 9, reason: "last_standing",
+			seats: [
+				{ seat: 1, name: "Collin", life: 22, alive: true },
+				{ seat: 2, name: "Bob", life: 0, alive: false, left_cause: "sba_zero_life" },
+			] },
+		seat: {
+			seat: 1, name: "Collin", turns_played: 9, casts: 14, lands_played: 9, drawn: 22,
+			hand_known_at_end: true, hand_at_end: 3, hand_known: ["Cyclonic Rift"],
+			damage_dealt: 31, damage_taken: 18, life_lost: 18, life_gained: 0,
+			final_turn: { turn: 9, ended_turn: true, lands: 2, lands_known: true, land_drops: 1, hand: 3 },
+			missed_triggers: [{ card: "Rhystic Study", effect: "may draw a card", at: 412, happening: "Bob casts Sol Ring" }],
+		},
+		mana_note: "floating mana is never modelled",
+	};
+	const rows = factRows(summary);
+	const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]));
+	assert.match(byLabel.game.text, /finished · commander · 9 turns · ended: last_standing/);
+	assert.match(byLabel.table.text, /Collin: 22 life/);
+	assert.match(byLabel.table.text, /Bob: out \(sba_zero_life\)/);
+	assert.match(byLabel["hand at end"].text, /3 cards — had seen Cyclonic Rift/);
+	assert.match(byLabel["final turn (T9)"].text, /2 unspent mana sources/);
+	assert.equal(byLabel["missed triggers"].text, "1, with today's registry — see the debrief");
+	assert.equal(rows[rows.length - 1].label, "missed triggers");
+
+	// The clean case: no misses is its own fact, not a missing one.
+	const clean = { ...summary, seat: { ...summary.seat, missed_triggers: [] } };
+	const cleanRows = factRows(clean);
+	assert.match(cleanRows[cleanRows.length - 1].text, /none derived/);
+
+	assert.equal(missedTriggerLine(summary.seat.missed_triggers[0]),
+		"Rhystic Study (may draw a card) — Bob casts Sol Ring at #412");
+});

@@ -329,6 +329,7 @@ func TestGamePodSurfacesLeakNothing(t *testing.T) {
 			"nudges":    get("/api/games/" + f.game + "/nudges"),
 			"notes":     get("/api/games/" + f.game + "/notes"),
 			"turns":     get("/api/games/" + f.game + "/turns/1"),
+			"replay":    get("/api/games/" + f.game + "/replay?after=0"),
 			"game-list": get("/api/games"),
 		}
 		for name, body := range surfaces {
@@ -375,6 +376,21 @@ func TestGamePodSurfacesLeakNothing(t *testing.T) {
 		for _, body := range f.rec.all()[beforeBodies:] {
 			assertClean(t, x, seat, "ask-prompt", body)
 			assertNoNoteMarkers(t, seat, "ask-prompt", body, f)
+		}
+		// The post-game coach (MAD-339): the seat's own report and the
+		// prompt it was interpreted from — the scoped stream is the
+		// report's whole input, and the gate proves it.
+		beforeCoach := len(f.rec.all())
+		rec = hit(t, f.s, http.MethodPost, "/api/games/"+f.game+"/analysis",
+			fmt.Sprintf(`{"seat":%d}`, seat), cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("analysis: %d %s", rec.Code, rec.Body)
+		}
+		assertClean(t, x, seat, "analysis-reply", rec.Body.String())
+		assertNoNoteMarkers(t, seat, "analysis-reply", rec.Body.String(), f)
+		for _, body := range f.rec.all()[beforeCoach:] {
+			assertClean(t, x, seat, "analysis-prompt", body)
+			assertNoNoteMarkers(t, seat, "analysis-prompt", body, f)
 		}
 	}
 	// Both prompt assemblies really fired, or the gates above were

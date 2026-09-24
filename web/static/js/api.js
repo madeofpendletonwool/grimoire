@@ -1304,6 +1304,18 @@ export const api = {
 			body: JSON.stringify({ at, action }),
 		}).then(json),
 
+	// Replay (MAD-339): the viewer's stream folded to an ordinal — the
+	// board as it stood the moment that row landed. at 0 is the game
+	// before anything happened; omitted reads the present.
+	gameReplay: (id, at = -1) =>
+		fetch(`/api/games/${encodeURIComponent(id)}/replay${at >= 0 ? `?at=${at}` : ""}`).then(json),
+
+	// The post-game coach (MAD-339): one seat's deterministic report on
+	// meta, the model's interpretation streaming after it — the judge's
+	// SSE framing, consumed the same way.
+	streamGameAnalysis: (gameID, seat, handlers, signal) =>
+		postSSE(`/api/games/${encodeURIComponent(gameID)}/analysis`, { seat }, handlers, signal),
+
 	// Table talk (MAD-331): one utterance through the intent pipeline —
 	// grammar first, the model fallback behind it, the confirmation
 	// ladder over both.

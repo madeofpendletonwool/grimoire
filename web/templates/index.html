@@ -1676,12 +1676,60 @@
 					<button type="button" class="enc-btn" id="play-draw" title="Draw a card">Draw</button>
 					<button type="button" class="enc-btn" id="play-untap-all" title="Untap the acting seat's permanents">Untap all</button>
 					<button type="button" class="enc-btn" id="play-resolve-combat" hidden>Resolve combat</button>
-				<button type="button" class="enc-btn" id="play-judge" hidden
-					title="Ask the rules judge — carries the live board, stack and priority with the question">⚖ judge</button>
-				<button type="button" class="enc-btn" id="play-odds" hidden
-					title="Deck odds — exact probabilities, outs and mulligan advice over the attached deck">🎴 odds</button>
+			<button type="button" class="enc-btn" id="play-judge" hidden
+				title="Ask the rules judge — carries the live board, stack and priority with the question">⚖ judge</button>
+			<button type="button" class="enc-btn" id="play-odds" hidden
+				title="Deck odds — exact probabilities, outs and mulligan advice over the attached deck">🎴 odds</button>
+				<button type="button" class="enc-btn" id="play-coach" hidden
+					title="The post-game coach — deterministic facts from the log, interpreted per seat and private to that seat">🎓 coach</button>
+				<button type="button" class="enc-btn" id="play-replay" hidden
+					title="Replay — scrub the log, fold to any ordinal, watch the game play back turn by turn">▶ replay</button>
 				</div>
 			</div>
+
+			<!-- The post-game coach (MAD-339): the deterministic read over
+			     the log — resource usage, damage ledgers, missed
+			     triggers from today's registry — with the model's
+			     interpretation streamed after the facts. Per seat and
+			     private to that seat: a seated player reads their own
+			     report, the host any seat, a judge the table's. A row
+			     above the panes like the judge, never a modal. -->
+			<section class="play-judge f-stone" id="play-coach-panel" hidden aria-label="Post-game coach">
+				<header class="play-judge-head">
+					<b class="play-judge-title">🎓 coach</b>
+					<span class="play-judge-sub">deterministic facts over the log, then the read — per seat, private to that seat</span>
+					<button type="button" class="play-question-x" id="play-coach-close" title="Close the coach">✕</button>
+				</header>
+				<form class="play-judge-form" id="play-coach-form" autocomplete="off">
+					<span class="play-talk-icon" aria-hidden="true">🎓</span>
+					<select class="enc-field" id="play-coach-seat" aria-label="Report for seat"></select>
+					<button type="submit" class="enc-btn primary" id="play-coach-ask">Debrief</button>
+					<button type="button" class="enc-btn" id="play-coach-stop" hidden>Stop</button>
+				</form>
+			<div class="play-judge-thread" id="play-coach-thread" aria-live="polite"></div>
+		</section>
+
+			<!-- Replay (MAD-339): state is a fold over an immutable log,
+			     so the board at any ordinal is fold(log[:n]) and nothing
+			     new is stored. Scrub with the slider, step one event or
+			     one turn, or let it play. The panes paint the folded
+			     past; the live game resumes the moment the bar closes. -->
+			<div class="play-replay f-stone" id="play-replay-bar" hidden>
+				<div class="play-replay-controls" role="group" aria-label="Replay controls">
+					<button type="button" class="enc-btn" id="play-replay-start" title="To the beginning">⏮</button>
+					<button type="button" class="enc-btn" id="play-replay-prev" title="Back one turn">◂ turn</button>
+					<button type="button" class="enc-btn" id="play-replay-back" title="Back one event">◂</button>
+					<button type="button" class="enc-btn" id="play-replay-play" title="Play back event by event">▶</button>
+					<button type="button" class="enc-btn" id="play-replay-fwd" title="Forward one event">▸</button>
+					<button type="button" class="enc-btn" id="play-replay-next" title="Forward one turn">turn ▸</button>
+					<button type="button" class="enc-btn" id="play-replay-end" title="To the final position">⏭</button>
+				</div>
+				<input type="range" id="play-replay-slider" min="0" max="0" value="0" step="1"
+					aria-label="Replay position">
+				<span class="play-replay-pos" id="play-replay-pos"></span>
+				<button type="button" class="enc-btn" id="play-replay-exit" title="Close replay and return to the live game">✕ live</button>
+			</div>
+
 
 			<!-- The rules judge (MAD-333): ask anything about the game
 			     being played. The live board, stack, priority holder and

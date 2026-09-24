@@ -344,6 +344,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/games/{id}/odds", s.handleGameOdds)
 	mux.HandleFunc("POST /api/games/{id}/outs", s.handleGameOuts)
 	mux.HandleFunc("POST /api/games/{id}/mulligan", s.handleGameMulligan)
+	// Replay and the post-game coach (MAD-339): the board folded to any
+	// ordinal, and the deterministic-facts-plus-interpretation read over
+	// the same log, per seat and private to that seat.
+	mux.HandleFunc("GET /api/games/{id}/replay", s.handleGameReplay)
+	mux.HandleFunc("POST /api/games/{id}/analysis", s.handleGameAnalysis)
 	mux.HandleFunc("GET /api/encounters", s.handleListEncounters)
 	mux.HandleFunc("POST /api/encounters", s.handleCreateEncounter)
 	mux.HandleFunc("GET /api/encounters/{id}", s.handleGetEncounter)
